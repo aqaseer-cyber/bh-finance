@@ -44,6 +44,18 @@ def export_fundamentals_csv(d: DashboardData, path: str) -> None:
         ("ebit_reported_usd", d.ebit_reported),
         ("ebit_economic_usd", d.ebit_economic),
         ("fy_end_close_usd", d.fy_prices),
+        # Phase-2 unit economics
+        ("days_inventory_dsi", d.dsi),
+        ("days_sales_outstanding_dso", d.dso),
+        ("days_payables_dpo", d.dpo),
+        ("cash_conversion_cycle_days", d.ccc),
+        ("incremental_op_margin", d.incremental_op_margin),
+        ("roic", d.roic),
+        ("roe", d.roe),
+        ("nim_proxy_on_avg_assets", d.nim_proxy),
+        ("loss_ratio", d.loss_ratio),
+        ("combined_ratio", d.combined_ratio),
+        ("net_earned_premiums_usd", d.premiums_earned),
     ]
 
     def cell(v: Optional[float]) -> str:
@@ -61,6 +73,14 @@ def export_fundamentals_csv(d: DashboardData, path: str) -> None:
             w.writerow([f"# note: {note}"])
         if d.share_cagr_3y is not None:
             w.writerow([f"# diluted_share_cagr_3y = {d.share_cagr_3y:.6f}"])
+        if d.thesis:
+            w.writerow([f"# thesis: {d.thesis}"])
+        if d.terminal_risk:
+            w.writerow([f"# terminal_risk: {d.terminal_risk}"])
+        if d.adjusted_ni is not None:
+            w.writerow([f"# adjusted_ni = {d.adjusted_ni:.2f}"])
+        if d.adjustment_burden is not None:
+            w.writerow([f"# adjustment_burden = {d.adjustment_burden:.6f}"])
         w.writerow(["metric"] + d.fy_labels)
         w.writerow(["fiscal_year_end"] + [e.isoformat() for e in d.fy_ends])
         for name, series in rows:

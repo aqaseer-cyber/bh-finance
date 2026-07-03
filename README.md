@@ -9,6 +9,7 @@ value calculator** with margin of safety vs the current price — built from
 primary sources (as-filed SEC XBRL) with a CSV audit trail.
 
 ![Demo dashboard](docs/demo_dashboard.png)
+![Demo unit economics](docs/demo_dashboard_unit.png)
 ![Demo health checks](docs/demo_dashboard_health.png)
 ![Demo intrinsic value](docs/demo_dashboard_valuation.png)
 
@@ -56,7 +57,25 @@ run **`build_exe_windows.bat`** once; the binary lands in `dist\`.
 | **Diluted shares** | Dilution vs buyback over the window |
 | **Balance sheet** | Total borrowings vs cash & equivalents |
 
-**Page 2 — Phase-3 forensic health checks (master prompt §3):**
+**Page 2 — Phase-2 unit economics (master prompt §2), track-aware:**
+
+| Track | Panels |
+|---|---|
+| **Standard / SOTP** | Working-capital cycle (DSI = avg inventory/COGS × 365, DSO, DPO — §2.2), cash conversion cycle, **the marginal unit** (incremental operating margin ΔEBIT/Δrevenue vs overall), ROIC vs the auto-built WACC |
+| **Bank** | NIM on the avg-total-assets proxy (earning assets aren't tagged — labeled), PCL trend, ROE |
+| **Insurance** | Loss ratio (benefits/NEP) and combined ratio where UW expense is tagged (100% break-even line), net earned premiums, ROE |
+| **REIT** | Revenue growth, ROE, plus an honest note: NOI/same-store/FFO→AFFO are non-GAAP — analyst input |
+
+The header carries the **investment thesis (§2.4)** and the **Terminal Risk
+(§2.3, anchors the Phase-5 rating)** — judgment by definition, so they're
+analyst inputs (the **Analyst inputs…** dialog or `--thesis` /
+`--terminal-risk`), printed verbatim on the report and in the CSV. §2.1
+revenue architecture (segments, geography, ≥10% customer concentration) is
+**dimensional XBRL that the companyfacts API doesn't return** — the page says
+so instead of pretending; LTV/CAC and take rates need customer/GMV disclosures
+that aren't in XBRL either.
+
+**Page 3 — Phase-3 forensic health checks (master prompt §3):**
 
 | Check | Definition / threshold |
 |---|---|
@@ -82,7 +101,7 @@ filter…** button (or `--adjusted-ni`) takes adjusted net income and the app
 computes |Adjusted − GAAP| / |GAAP|, flagging > 20% on the health-page KPI row.
 NIM and insurance reserve development remain analyst work.
 
-**Page 3 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
+**Page 4 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
 
 Click **Intrinsic value…** in the GUI (or use `--value` on the CLI). Pick the
 method — the app pre-selects it from the SIC code, and you override it when the

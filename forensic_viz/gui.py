@@ -14,14 +14,15 @@ from pathlib import Path
 from typing import Optional
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from .cache import Cache
 from .dashboard import (
-    FIG_W, render_dashboard, render_health_report, render_valuation,
+    FIG_W, render_dashboard, render_health_report, render_unit_economics,
+    render_valuation,
 )
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
@@ -52,6 +53,7 @@ class App:
         self.queue: "queue.Queue[tuple]" = queue.Queue()
         self.data: Optional[DashboardData] = None
         self.fig = None
+        self.unit_fig = None
         self.health_fig = None
         self.valuation_fig = None
         self.valuation_res = None
@@ -80,8 +82,8 @@ class App:
         self.value_btn = ttk.Button(bar, text="Intrinsic value…",
                                      command=self.open_valuation, state=tk.DISABLED)
         self.value_btn.pack(side=tk.LEFT, padx=(16, 0))
-        self.fluff_btn = ttk.Button(bar, text="Fluff filter…",
-                                    command=self.fluff_filter, state=tk.DISABLED)
+        self.fluff_btn = ttk.Button(bar, text="Analyst inputs…",
+                                    command=self.analyst_inputs, state=tk.DISABLED)
         self.fluff_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.save_btn = ttk.Button(bar, text="Save PDF…", command=self.save_pdf,
                                    state=tk.DISABLED)
@@ -205,11 +207,13 @@ class App:
         viewport = self.view.winfo_width() or 1160
         dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
         fig = render_dashboard(data, dpi=dpi)
+        unit_fig = render_unit_economics(data, dpi=dpi)
         health_fig = render_health_report(data, dpi=dpi)
         for canvas in self.canvases:
             canvas.get_tk_widget().destroy()
         self.canvases = []
-        self.data, self.fig, self.health_fig = data, fig, health_fig
+        self.data, self.fig = data, fig
+        self.unit_fig, self.health_fig = unit_fig, health_fig
         self.valuation_fig = None  # a new ticker invalidates any prior valuation
         self.valuation_res = None
         self._render_pages()
@@ -223,7 +227,7 @@ class App:
         for canvas in self.canvases:
             canvas.get_tk_widget().destroy()
         self.canvases = []
-        pages = [self.fig, self.health_fig]
+        pages = [f for f in (self.fig, self.unit_fig, self.health_fig) if f is not None]
         if self.valuation_fig is not None:
             pages.append(self.valuation_fig)
         for f in pages:
@@ -238,7 +242,7 @@ class App:
 
     def save_pdf(self):
         # pin: a run finishing behind the modal dialog must not swap these
-        figs = [self.fig, self.health_fig, self.valuation_fig]
+        figs = [self.fig, self.unit_fig, self.health_fig, self.valuation_fig]
         data = self.data
         if figs[0] is None or data is None:
             return
@@ -295,47 +299,41 @@ class App:
         self.status_var.set(
             f"{self.data.company} — intrinsic value added below (page 3).")
 
+    def _screen_dpi(self) -> int:
+        viewport = self.view.winfo_width() or 1160
+        return max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+
     def _on_track_change(self):
         """Re-resolve the Logic Track and re-render the track-aware pages."""
         if self.data is None or self.busy:
             return
         apply_track(self.data, self.track_var.get())
         compute_altman(self.data)
-        viewport = self.view.winfo_width() or 1160
-        dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+        dpi = self._screen_dpi()
+        self.unit_fig = render_unit_economics(self.data, dpi=dpi)
         self.health_fig = render_health_report(self.data, dpi=dpi)
         self._render_pages()
         self.status_var.set(
             f"{self.data.company} — {self.data.track.title()} track applied.")
 
-    def fluff_filter(self):
-        """Fluff filter (§3.1): analyst supplies the non-GAAP net income."""
+    def analyst_inputs(self):
+        """Analyst judgment inputs: thesis (§2.4), terminal risk (§2.3), and
+        the fluff-filter adjusted NI (§3.1)."""
         if self.data is None or self.busy:
             return
-        gaap = None
-        for v in reversed(self.data.net_income):
-            if v is not None:
-                gaap = v
-                break
-        adjusted = simpledialog.askfloat(
-            "Fluff filter — adjustment burden (§3.1)",
-            "Adjusted (non-GAAP) net income for the latest fiscal year, in $.\n"
-            "From the earnings release — this figure is not in XBRL.\n"
-            f"GAAP net income for reference: {gaap:,.0f}" if gaap is not None
-            else "Adjusted (non-GAAP) net income for the latest fiscal year, in $.",
-            parent=self.root, initialvalue=gaap)
-        if adjusted is None:
-            return
-        set_adjusted_ni(self.data, adjusted)
-        viewport = self.view.winfo_width() or 1160
-        dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+        _AnalystInputsDialog(self.root, self.data, self._on_analyst_inputs)
+
+    def _on_analyst_inputs(self):
+        dpi = self._screen_dpi()
+        self.unit_fig = render_unit_economics(self.data, dpi=dpi)
         self.health_fig = render_health_report(self.data, dpi=dpi)
-        self._render_pages()
+        self._render_pages(scroll_to="top")
+        note = ""
         if self.data.adjustment_burden is not None:
             burden = self.data.adjustment_burden
-            flag = "  FLAG >20% (master §3.1)" if burden > 0.20 else ""
-            self.status_var.set(f"Adjustment burden {burden * 100:.1f}%{flag} — "
-                                "see the health page KPI row.")
+            flag = " FLAG >20%" if burden > 0.20 else ""
+            note = f"  Adjustment burden {burden * 100:.1f}%{flag}."
+        self.status_var.set(f"Analyst inputs applied.{note}")
 
     def _set_busy(self, busy: bool, status: str):
         self.busy = busy
@@ -542,6 +540,77 @@ class _ValuationDialog(tk.Toplevel):
             self.on_done(fig, res)
         except Exception:
             messagebox.showerror("Could not render the valuation page",
+                                 traceback.format_exc(limit=3), parent=self)
+            return
+        self.destroy()
+
+
+class _AnalystInputsDialog(tk.Toplevel):
+    """Judgment inputs the app can't automate: thesis (§2.4), terminal risk
+    (§2.3, anchors the Phase-5 rating), and adjusted NI for the fluff filter
+    (§3.1). All optional; blank clears."""
+
+    def __init__(self, parent, data: DashboardData, on_done):
+        super().__init__(parent)
+        self.data = data
+        self.on_done = on_done
+        self.title("Analyst inputs — thesis, terminal risk, fluff filter")
+        self.transient(parent)
+        self.resizable(False, False)
+        top = ttk.Frame(self, padding=(12, 12))
+        top.pack(fill=tk.BOTH, expand=True)
+
+        gaap = None
+        for v in reversed(data.net_income):
+            if v is not None:
+                gaap = v
+                break
+        hint = f" (GAAP NI for reference: {gaap:,.0f})" if gaap is not None else ""
+        ttk.Label(top, text=f"Adjusted (non-GAAP) net income, latest FY, $ — "
+                            f"from the earnings release{hint}:").grid(
+            row=0, column=0, sticky="w", pady=(0, 2))
+        self.adj_var = tk.StringVar(
+            value="" if data.adjusted_ni is None else f"{data.adjusted_ni:.0f}")
+        ttk.Entry(top, textvariable=self.adj_var, width=24).grid(
+            row=1, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Label(top, text="Investment thesis (§2.4, 3–4 sentences):").grid(
+            row=2, column=0, sticky="w", pady=(0, 2))
+        self.thesis_txt = tk.Text(top, width=78, height=4, wrap="word")
+        self.thesis_txt.grid(row=3, column=0, sticky="w", pady=(0, 10))
+        self.thesis_txt.insert("1.0", data.thesis)
+
+        ttk.Label(top, text="Terminal risk (§2.3, cite 10-K Item 1A — anchors "
+                            "the Phase-5 rating):").grid(
+            row=4, column=0, sticky="w", pady=(0, 2))
+        self.risk_txt = tk.Text(top, width=78, height=3, wrap="word")
+        self.risk_txt.grid(row=5, column=0, sticky="w", pady=(0, 10))
+        self.risk_txt.insert("1.0", data.terminal_risk)
+
+        btns = ttk.Frame(top)
+        btns.grid(row=6, column=0, sticky="e")
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="Apply", command=self._apply).pack(
+            side=tk.RIGHT, padx=(0, 8))
+        self.grab_set()
+
+    def _apply(self):
+        raw = self.adj_var.get().strip().replace(",", "")
+        try:
+            adjusted = float(raw) if raw else None
+            if adjusted is not None and not math.isfinite(adjusted):
+                raise ValueError("must be finite")
+        except ValueError as exc:
+            messagebox.showerror("Check the inputs",
+                                 f"Adjusted net income: {exc}", parent=self)
+            return
+        set_adjusted_ni(self.data, adjusted)
+        self.data.thesis = self.thesis_txt.get("1.0", "end").strip()
+        self.data.terminal_risk = self.risk_txt.get("1.0", "end").strip()
+        try:
+            self.on_done()
+        except Exception:
+            messagebox.showerror("Could not re-render",
                                  traceback.format_exc(limit=3), parent=self)
             return
         self.destroy()

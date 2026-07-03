@@ -109,6 +109,11 @@ def main(argv=None) -> int:
     parser.add_argument("--adjusted-ni", type=float,
                         help="fluff filter (§3.1): latest-FY non-GAAP net income in $ "
                              "from the earnings release; computes the adjustment burden")
+    parser.add_argument("--thesis",
+                        help="investment thesis (§2.4), printed on the unit-economics page")
+    parser.add_argument("--terminal-risk",
+                        help="terminal risk (§2.3, cite Item 1A), printed on the "
+                             "unit-economics page; anchors the Phase-5 rating")
 
     val = parser.add_argument_group("intrinsic value (Bear/Base/Bull)")
     val.add_argument("--value", choices=["dcf", "ri", "affo", "manual"],
@@ -156,14 +161,22 @@ def main(argv=None) -> int:
         if data.adjustment_burden is not None:
             flag = "  FLAG >20% (master §3.1)" if data.adjustment_burden > 0.20 else ""
             print(f"  adjustment burden {data.adjustment_burden * 100:.1f}%{flag}")
+    if args.thesis:
+        data.thesis = args.thesis
+    if args.terminal_risk:
+        data.terminal_risk = args.terminal_risk
 
-    from .dashboard import render_dashboard, render_health_report, render_valuation
+    from .dashboard import (
+        render_dashboard, render_health_report, render_unit_economics,
+        render_valuation,
+    )
     from .export import (
         export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
     )
     from .valuation import ValuationError
 
     fig_main = render_dashboard(data, dpi=args.dpi)
+    fig_unit = render_unit_economics(data, dpi=args.dpi)
     fig_health = render_health_report(data, dpi=args.dpi)
     fig_val, res = None, None
     if args.value:
@@ -180,6 +193,8 @@ def main(argv=None) -> int:
         base = out[:-4] if out.lower().endswith(".png") else out
         fig_main.savefig(out, dpi=args.dpi)
         print(f"wrote {out}")
+        fig_unit.savefig(base + "_unit.png", dpi=args.dpi)
+        print(f"wrote {base}_unit.png")
         fig_health.savefig(base + "_health.png", dpi=args.dpi)
         print(f"wrote {base}_health.png")
         if fig_val is not None:
@@ -190,7 +205,7 @@ def main(argv=None) -> int:
         if not out.lower().endswith(".pdf"):
             out += ".pdf"
         base = out[:-4]
-        export_pdf([fig_main, fig_health, fig_val], out)
+        export_pdf([fig_main, fig_unit, fig_health, fig_val], out)
         print(f"wrote {out}")
 
     if data.price_error:

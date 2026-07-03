@@ -65,6 +65,14 @@ def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
         "liabilities_total": [(0.50 + l) * r for l, r in zip(lev, rev)],
         "retained_earnings": [(0.28 + 0.01 * i) * r for i, r in enumerate(rev)],
         "equity": [(0.45 - l) * r for l, r in zip(lev, rev)],  # assets − liabilities
+        # Working-capital legs (§2.2): inventory builds into the flag year —
+        # DSI stretches while margins print strong, the classic channel-stuffing
+        # silhouette.
+        "inventory": [(0.14 + (0.05 if i in (FLAG, FLAG + 1) else 0)) * r
+                      for i, r in enumerate(rev)],
+        "accounts_receivable": [(0.12 + (0.04 if i == FLAG else 0)) * r
+                                for i, r in enumerate(rev)],
+        "accounts_payable": [0.09 * r for r in rev],
         "cash": [(0.18 if i not in (FLAG, FLAG + 1) else 0.10) * r
                  for i, r in enumerate(rev)],
         "lt_debt_noncurrent": [l * r for l, r in zip(lev, rev)],
@@ -88,6 +96,12 @@ def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
         generated=today,
         demo=True,
     )
+    d.thesis = ("Synthetic mid-cap compounding revenue ~13%/yr with expanding "
+                "operating margins; the bull case rests on the margin ramp "
+                "surviving the post-acquisition integration.")
+    d.terminal_risk = (f"FY{years[FLAG]} accruals/receivables spike suggests "
+                       "revenue pull-forward; if the channel is stuffed, the "
+                       "margin ramp reverses (synthetic Item 1A citation).")
     build_fundamental_metrics(fundamentals, d)
 
     # Deterministic weekly price path: growth, a crash aligned with the flag

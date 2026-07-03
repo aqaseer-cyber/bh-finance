@@ -106,6 +106,23 @@ class DashboardData:
     adjusted_ni: Optional[float] = None
     adjustment_burden: Optional[float] = None
 
+    # Phase-2 unit economics (aligned with fy_labels)
+    dsi: List[Optional[float]] = field(default_factory=list)   # days inventory
+    dso: List[Optional[float]] = field(default_factory=list)   # days sales out.
+    dpo: List[Optional[float]] = field(default_factory=list)   # days payables
+    ccc: List[Optional[float]] = field(default_factory=list)   # cash conv. cycle
+    incremental_op_margin: List[Optional[float]] = field(default_factory=list)
+    roic: List[Optional[float]] = field(default_factory=list)
+    roe: List[Optional[float]] = field(default_factory=list)
+    nim_proxy: List[Optional[float]] = field(default_factory=list)   # banks
+    loss_ratio: List[Optional[float]] = field(default_factory=list)  # insurance
+    combined_ratio: List[Optional[float]] = field(default_factory=list)
+    premiums_earned: List[Optional[float]] = field(default_factory=list)
+
+    # Phase-2 analyst inputs (§2.3/§2.4): judgment, printed on the report
+    thesis: str = ""
+    terminal_risk: str = ""
+
     # Altman inputs held until FY-end prices are known (see compute_altman)
     _z_parts: List[Optional[dict]] = field(default_factory=list)
     fy_prices: List[Optional[float]] = field(default_factory=list)
@@ -243,6 +260,7 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
         data.cash_conversion.append(_div(cfo, ni) if ni is not None and ni > 0 else None)
 
         _health_year(data, f, i, avg_assets)
+        _unit_economics_year(data, f, i, avg_assets, eff_tax)
 
     data.rnd_material = _rnd_is_material(data)
     if not data.rnd_material:  # audit applies only where R&D is material
@@ -360,6 +378,86 @@ def _health_year(data: DashboardData, f: AnnualFundamentals, i: int,
         })
     else:
         data._z_parts.append(None)
+
+
+def _unit_economics_year(data: DashboardData, f: AnnualFundamentals, i: int,
+                         avg_assets: Optional[float], eff_tax: float) -> None:
+    """Phase-2 marginal-unit metrics for one fiscal year (full-array index).
+
+    Working-capital days use average balances over (t-1, t), per the master's
+    DSI definition. NIM uses average TOTAL assets as the earning-assets proxy
+    (interest-earning assets aren't reliably tagged) — labeled on the panel.
+    """
+    n_all = len(f.fy_ends)
+
+    def g(concept: str, j: int) -> Optional[float]:
+        s = f.series.get(concept)
+        return s[j] if s is not None and 0 <= j < n_all else None
+
+    def avg(concept: str) -> Optional[float]:
+        now, prev = g(concept, i), g(concept, i - 1)
+        if now is None:
+            return None
+        return (now + prev) / 2.0 if prev is not None else now
+
+    rev, cogs = g("revenue", i), g("cost_of_revenue", i)
+    pos_rev = rev if rev is not None and rev > 0 else None
+    pos_cogs = cogs if cogs is not None and cogs > 0 else None
+
+    dsi = _div(avg("inventory"), pos_cogs)
+    dso = _div(avg("accounts_receivable"), pos_rev)
+    dpo = _div(avg("accounts_payable"), pos_cogs)
+    data.dsi.append(dsi * 365 if dsi is not None else None)
+    data.dso.append(dso * 365 if dso is not None else None)
+    data.dpo.append(dpo * 365 if dpo is not None else None)
+    data.ccc.append(
+        data.dsi[-1] + data.dso[-1] - data.dpo[-1]
+        if None not in (data.dsi[-1], data.dso[-1], data.dpo[-1]) else None)
+
+    # The marginal unit, Standard track: incremental operating margin
+    # ΔEBIT/ΔRevenue — only meaningful when revenue actually moved.
+    opinc, opinc_prev = g("operating_income", i), g("operating_income", i - 1)
+    rev_prev = g("revenue", i - 1)
+    inc = None
+    if (None not in (opinc, opinc_prev, rev, rev_prev) and rev_prev > 0
+            and abs(rev - rev_prev) >= 0.02 * rev_prev):
+        inc = (opinc - opinc_prev) / (rev - rev_prev)
+    data.incremental_op_margin.append(inc)
+
+    # Capital efficiency: ROIC = NOPAT / avg invested capital; ROE = NI / avg BV
+    ni, eq, eq_prev = g("net_income", i), g("equity", i), g("equity", i - 1)
+
+    def invested(j: int) -> Optional[float]:
+        e = g("equity", j)
+        if e is None or e <= 0:
+            return None
+        debt = g("lt_debt_noncurrent", j)
+        if debt is None:
+            debt = g("lt_debt_total", j)
+        return e + (debt or 0.0) + (g("lt_debt_current", j) or 0.0) \
+            + (g("st_borrowings", j) or 0.0) - (g("cash", j) or 0.0)
+
+    ic_now, ic_prev = invested(i), invested(i - 1)
+    avg_ic = ((ic_now + ic_prev) / 2.0 if ic_now is not None and ic_prev is not None
+              else ic_now)
+    data.roic.append(
+        _div(opinc * (1 - eff_tax), avg_ic)
+        if opinc is not None and avg_ic is not None and avg_ic > 0 else None)
+    avg_eq = ((eq + eq_prev) / 2.0 if eq is not None and eq_prev is not None else eq)
+    data.roe.append(_div(ni, avg_eq if avg_eq is not None and avg_eq > 0 else None))
+
+    # Banks: NIM on the avg-total-assets proxy (master §2.2)
+    data.nim_proxy.append(_div(g("net_interest_income", i), avg_assets))
+
+    # Insurance: loss / combined ratio on net earned premiums (master §2.2)
+    nep = g("premiums_earned", i)
+    pos_nep = nep if nep is not None and nep > 0 else None
+    benefits, uw = g("policy_benefits", i), g("underwriting_expense", i)
+    data.premiums_earned.append(nep)
+    data.loss_ratio.append(_div(benefits, pos_nep))
+    data.combined_ratio.append(
+        _div(benefits + uw, pos_nep)
+        if benefits is not None and uw is not None else None)
 
 
 TRACKS = ("auto", "standard", "bank", "insurance", "reit", "sotp")

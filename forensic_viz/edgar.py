@@ -98,6 +98,11 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "ProvisionForCreditLossExpenseReversal",
         "ProvisionForDoubtfulAccounts",
     ],
+    # Phase-2 unit economics (track-specific marginal unit, master §2.2)
+    "net_interest_income": ["InterestIncomeExpenseNet"],
+    "policy_benefits": ["PolicyholderBenefitsAndClaimsIncurredNet"],
+    "premiums_earned": ["PremiumsEarnedNet"],
+    "underwriting_expense": ["OtherUnderwritingExpense"],
 }
 
 # Instant (balance-sheet) concepts.
@@ -136,6 +141,13 @@ INSTANT_TAGS: Dict[str, List[str]] = {
         "FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
         "AllowanceForLoanAndLeaseLosses",
     ],
+    # Phase-2 working-capital cycle (master §2.2 Standard track)
+    "inventory": ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"],
+    "accounts_receivable": [
+        "AccountsReceivableNetCurrent",
+        "ReceivablesNetCurrent",
+    ],
+    "accounts_payable": ["AccountsPayableCurrent", "AccountsPayableTradeCurrent"],
 }
 
 _UNITS_BY_CONCEPT = {

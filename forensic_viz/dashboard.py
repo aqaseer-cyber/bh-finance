@@ -461,6 +461,371 @@ def _footer(fig, d: DashboardData):
                  color=P.INK_MUTED, va="bottom")
 
 
+# -------------------------------------------------- unit economics (page 2)
+
+def _fmt_days(v) -> str:
+    return "–" if v is None else f"{v:.0f}d"
+
+
+def _line_series(ax, fig, series, names, end_fmt=fmt_pct):
+    """Shared multi-line panel body: lines, end markers, dodged end labels."""
+    keep = [(s, n, P.SERIES[k]) for k, (s, n) in enumerate(zip(series, names))
+            if any(v is not None for v in s)]
+    if not keep:
+        return None
+    label_slots = []
+    for s, name, color in keep:
+        xs = [i for i, v in enumerate(s) if v is not None]
+        ys = [v for v in s if v is not None]
+        ax.plot(xs, ys, color=color, linewidth=1.6, solid_capstyle="round",
+                solid_joinstyle="round", zorder=3)
+        ax.plot(xs[-1], ys[-1], "o", color=color, markersize=5.6,
+                markeredgecolor=P.SURFACE, markeredgewidth=1.2, zorder=4)
+        label_slots.append([xs[-1], ys[-1], f"{name} {end_fmt(ys[-1])}"])
+    min_gap = _px_to_y(ax, fig, 15)
+    label_slots.sort(key=lambda t: t[1])
+    for j in range(1, len(label_slots)):
+        if label_slots[j][1] - label_slots[j - 1][1] < min_gap:
+            label_slots[j][1] = label_slots[j - 1][1] + min_gap
+    for x, y, text in label_slots:
+        _cap_label(ax, x, y, text, above=True, fig=fig, size=7.2)
+    if len(keep) > 1:
+        _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
+    return keep
+
+
+def _lines_panel_setup(ax, values, n_labels, labels, head=0.30, foot=0.06):
+    lo, hi = min(values + [0]), max(values + [0])
+    span = (hi - lo) or 1.0
+    ax.set_xlim(-0.5, n_labels - 0.5)
+    ax.set_ylim(lo - foot * span, hi + head * span)
+    ax.set_xticks(range(n_labels))
+    ax.set_xticklabels(labels)
+
+
+def _panel_wc_cycle(ax, fig, d: DashboardData):
+    _panel_title(ax, "Working-capital cycle",
+                 "DSI = avg inventory/COGS × 365 (§2.2) · DSO, DPO alike")
+    series = [d.dsi, d.dso, d.dpo]
+    flat = [v for s in series for v in s if v is not None]
+    if not flat:
+        _panel_note(ax, "Inventory / receivables / payables not reported in XBRL")
+        return
+    _lines_panel_setup(ax, flat, len(d.fy_labels), d.fy_labels)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}d"))
+    _line_series(ax, fig, series, ["DSI", "DSO", "DPO"], end_fmt=_fmt_days)
+
+
+def _panel_ccc(ax, fig, d: DashboardData):
+    _panel_title(ax, "Cash conversion cycle", "DSI + DSO − DPO, days")
+    vals = [v for v in d.ccc if v is not None]
+    if not vals:
+        _panel_note(ax, "Needs all three working-capital legs — see the left panel")
+        return
+    _category_panel_setup(ax, fig, d.fy_labels, vals)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}d"))
+    width, _ = _bar_geometry(ax, fig, 1)
+    for i, v in enumerate(d.ccc):
+        if v is not None:
+            _rounded_bar(ax, fig, i, v, width, P.SERIES[0])
+            _cap_label(ax, i, v, _fmt_days(v), above=v >= 0, fig=fig)
+
+
+def _panel_marginal_unit(ax, fig, d: DashboardData):
+    _panel_title(ax, "The marginal unit",
+                 "incremental operating margin ΔEBIT/Δrevenue vs overall margin")
+    flat = [v for s in (d.incremental_op_margin, d.operating_margin)
+            for v in s if v is not None]
+    if not flat:
+        _panel_note(ax, "Operating income not reported in XBRL")
+        return
+    _lines_panel_setup(ax, flat, len(d.fy_labels), d.fy_labels)
+    _pct_axis(ax)
+    ax.axhline(0, color=P.BASELINE, linewidth=0.9, zorder=2)
+    width, _ = _bar_geometry(ax, fig, 1)
+    for i, v in enumerate(d.incremental_op_margin):
+        if v is not None:
+            _rounded_bar(ax, fig, i, v, width, P.SERIES[0])
+    xs = [i for i, v in enumerate(d.operating_margin) if v is not None]
+    ys = [v for v in d.operating_margin if v is not None]
+    if xs:
+        ax.plot(xs, ys, color=P.SERIES[1], linewidth=1.6,
+                solid_capstyle="round", zorder=4)
+        _cap_label(ax, xs[-1], ys[-1], f"Op margin {fmt_pct(ys[-1])}", above=True,
+                   fig=fig, size=7.2)
+    _legend(ax, [_series_swatch(P.SERIES[0]), _series_swatch(P.SERIES[1])],
+            ["Incremental", "Overall"])
+
+
+def _panel_roic(ax, fig, d: DashboardData):
+    _panel_title(ax, "Return on invested capital",
+                 "NOPAT / avg invested capital · spread over WACC = value creation")
+    vals = [v for v in d.roic if v is not None]
+    if not vals:
+        _panel_note(ax, "Equity / debt inputs missing — ROIC not computable")
+        return
+    build = getattr(d, "wacc_build", None)
+    wacc = build.wacc if build is not None and build.wacc is not None else None
+    _lines_panel_setup(ax, vals + ([wacc] if wacc else []),
+                       len(d.fy_labels), d.fy_labels)
+    _pct_axis(ax)
+    if wacc:
+        ax.axhline(wacc, color=P.INK_MUTED, linewidth=0.8,
+                   linestyle=(0, (4, 3)), zorder=2)
+        _zone_label(ax, -0.48, wacc + _px_to_y(ax, fig, 2),
+                    f"WACC {fmt_pct(wacc)}")
+    _line_series(ax, fig, [d.roic], ["ROIC"])
+
+
+def _panel_roe(ax, fig, d: DashboardData):
+    _panel_title(ax, "Return on equity", "net income / avg book equity")
+    vals = [v for v in d.roe if v is not None]
+    if not vals:
+        _panel_note(ax, "Book equity not reported in XBRL")
+        return
+    _lines_panel_setup(ax, vals, len(d.fy_labels), d.fy_labels)
+    _pct_axis(ax)
+    _line_series(ax, fig, [d.roe], ["ROE"])
+
+
+def _panel_nim(ax, fig, d: DashboardData):
+    _panel_title(ax, "Net interest margin (proxy)",
+                 "NII / avg TOTAL assets — earning assets aren't tagged (§2.2)")
+    vals = [v for v in d.nim_proxy if v is not None]
+    if not vals:
+        _panel_note(ax, "InterestIncomeExpenseNet not reported in XBRL")
+        return
+    _lines_panel_setup(ax, vals, len(d.fy_labels), d.fy_labels)
+    _pct_axis(ax, decimals=1)
+    _line_series(ax, fig, [d.nim_proxy], ["NIM"])
+
+
+def _panel_pcl(ax, fig, d: DashboardData):
+    _panel_title(ax, "Provision for credit losses",
+                 "PCL trend (§2.2) — spikes lead the credit cycle")
+    vals = [v for v in d.credit_provision if v is not None]
+    if not vals:
+        _panel_note(ax, "Provision not tagged in XBRL — read the credit note")
+        return
+    _category_panel_setup(ax, fig, d.fy_labels, vals)
+    _money_axis(ax)
+    width, _ = _bar_geometry(ax, fig, 1)
+    for i, v in enumerate(d.credit_provision):
+        if v is not None:
+            _rounded_bar(ax, fig, i, v, width, P.SERIES[0])
+
+
+def _panel_underwriting(ax, fig, d: DashboardData):
+    _panel_title(ax, "Underwriting quality",
+                 "loss ratio = benefits/NEP; combined ratio when UW expense is tagged")
+    series = [d.loss_ratio, d.combined_ratio]
+    flat = [v for s in series for v in s if v is not None]
+    if not flat:
+        _panel_note(ax, "Premiums / benefits not tagged in XBRL")
+        return
+    _lines_panel_setup(ax, flat + [1.0], len(d.fy_labels), d.fy_labels)
+    _pct_axis(ax)
+    ax.axhline(1.0, color=P.INK_MUTED, linewidth=0.8, linestyle=(0, (4, 3)),
+               zorder=2)
+    _zone_label(ax, -0.48, 1.0 + _px_to_y(ax, fig, 2), "100% = break-even UW")
+    _line_series(ax, fig, series, ["Loss", "Combined"])
+
+
+def _panel_premiums(ax, fig, d: DashboardData):
+    _panel_title(ax, "Net earned premiums", "growth of the insurance book")
+    vals = [v for v in d.premiums_earned if v is not None]
+    if not vals:
+        _panel_note(ax, "PremiumsEarnedNet not tagged in XBRL")
+        return
+    _category_panel_setup(ax, fig, d.fy_labels, vals)
+    _money_axis(ax)
+    width, _ = _bar_geometry(ax, fig, 1)
+    for i, v in enumerate(d.premiums_earned):
+        if v is not None:
+            _rounded_bar(ax, fig, i, v, width, P.SERIES[0])
+
+
+def _panel_rev_yoy(ax, fig, d: DashboardData):
+    _panel_title(ax, "Revenue growth", "year over year")
+    vals = [v for v in d.revenue_yoy if v is not None]
+    if not vals:
+        _panel_note(ax, "Not enough revenue history")
+        return
+    _category_panel_setup(ax, fig, d.fy_labels, vals)
+    _pct_axis(ax)
+    ax.axhline(0, color=P.BASELINE, linewidth=0.9, zorder=2)
+    width, _ = _bar_geometry(ax, fig, 1)
+    for i, v in enumerate(d.revenue_yoy):
+        if v is None:
+            continue
+        color = P.SERIES[0] if v >= 0 else P.DIVERGING_POS_BAD
+        _rounded_bar(ax, fig, i, v, width, color)
+        _cap_label(ax, i, v, fmt_pct(v, signed=True), above=v >= 0, fig=fig,
+                   size=6.8)
+
+
+def _panel_segment_note(ax, fig, d: DashboardData):
+    _panel_title(ax, "Revenue architecture (§2.1)", "not automatable — here's why")
+    _panel_note(ax, "Segment, geography and customer-concentration (≥10% house\n"
+                    "flag) disclosures are dimensional XBRL — the companyfacts\n"
+                    "API returns only consolidated totals.\n\n"
+                    "Read the segment footnote and the concentration risk\n"
+                    "paragraph; organic vs acquired growth needs the deal\n"
+                    "footnotes (analyst input).")
+
+
+def _panel_reit_note(ax, fig, d: DashboardData):
+    _panel_title(ax, "REIT marginal unit (§2.2)", "not automatable — here's why")
+    _panel_note(ax, "NOI, same-store growth and the FFO→AFFO bridge are\n"
+                    "non-GAAP measures — not in XBRL. Take them from the\n"
+                    "supplemental package (analyst input), then use the\n"
+                    "AFFO-yield method on the valuation page.")
+
+
+_UNIT_PANELS = {
+    "standard": (_panel_wc_cycle, _panel_ccc, _panel_marginal_unit, _panel_roic),
+    "bank": (_panel_nim, _panel_pcl, _panel_roe, _panel_segment_note),
+    "insurance": (_panel_underwriting, _panel_premiums, _panel_roe,
+                  _panel_segment_note),
+    "reit": (_panel_rev_yoy, _panel_roe, _panel_reit_note, _panel_segment_note),
+    "sotp": (_panel_rev_yoy, _panel_roic, _panel_marginal_unit,
+             _panel_segment_note),
+}
+
+
+def _unit_kpis(ax, d: DashboardData):
+    ax.set_axis_off()
+    tiles = []
+    if d.track == "bank":
+        nim = _latest(d.nim_proxy)
+        if nim is not None:
+            tiles.append(("NIM (proxy)", fmt_pct(nim, decimals=2), "on avg assets", True))
+        pcl = _latest(d.credit_provision)
+        if pcl is not None:
+            tiles.append(("Provision (latest)", fmt_money(pcl), "PCL trend", True))
+    elif d.track == "insurance":
+        lr = _latest(d.loss_ratio)
+        if lr is not None:
+            tiles.append(("Loss ratio", fmt_pct(lr), "benefits / NEP", lr < 0.75))
+        cr = _latest(d.combined_ratio)
+        if cr is not None:
+            tiles.append(("Combined ratio", fmt_pct(cr),
+                          "UW profit <100%", cr < 1.0))
+    else:
+        ccc = _latest(d.ccc)
+        if ccc is not None:
+            first = next((v for v in d.ccc if v is not None), None)
+            delta = (f"{ccc - first:+.0f}d vs {d.fy_labels[0]}"
+                     if first is not None and d.fy_labels else "")
+            tiles.append(("Cash conversion", _fmt_days(ccc), delta,
+                          first is None or ccc <= first))
+        inc = _latest(d.incremental_op_margin)
+        if inc is not None:
+            om = _latest(d.operating_margin)
+            tiles.append(("Incremental margin", fmt_pct(inc),
+                          f"vs overall {fmt_pct(om)}" if om is not None else "",
+                          om is None or inc >= om))
+    roic = _latest(d.roic)
+    build = getattr(d, "wacc_build", None)
+    wacc = build.wacc if build is not None else None
+    if roic is not None:
+        tiles.append(("ROIC", fmt_pct(roic),
+                      f"vs WACC {fmt_pct(wacc)}" if wacc is not None else "NOPAT/avg IC",
+                      wacc is None or roic > wacc))
+    roe = _latest(d.roe)
+    if roe is not None:
+        tiles.append(("ROE", fmt_pct(roe), "NI / avg equity", roe > 0.10))
+    if d.revenue_cagr is not None:
+        tiles.append((f"Revenue CAGR {_fy_span(d)}y", fmt_pct(d.revenue_cagr, signed=True),
+                      "", d.revenue_cagr > 0))
+    _draw_kpi_row(ax, tiles[:6])
+
+
+def render_unit_economics(d: DashboardData, out_path: Optional[str] = None,
+                          dpi: int = DPI) -> Figure:
+    """Page 2 — Phase-2 unit economics: the track-specific marginal unit."""
+    import textwrap
+
+    matplotlib.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": P.FONT_STACK,
+        "text.color": P.INK_PRIMARY,
+        "figure.facecolor": P.SURFACE,
+        "savefig.facecolor": P.SURFACE,
+    })
+    fig = Figure(figsize=(FIG_W, 9.9), dpi=dpi)
+    fig.patch.set_facecolor(P.SURFACE)
+    gs = fig.add_gridspec(
+        4, 2, height_ratios=[1.12, 0.55, 1.9, 1.9],
+        left=0.055, right=0.965, top=0.965, bottom=0.065,
+        hspace=0.55, wspace=0.16,
+    )
+
+    ax_header = fig.add_subplot(gs[0, :])
+    ax_header.set_axis_off()
+    ax_header.text(0, 1.03, f"{d.company} — unit economics",
+                   fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
+                   transform=ax_header.transAxes, va="top")
+    sub = f"Phase-2 marginal unit · {d.ticker} · {d.track.title()} track"
+    if d.fy_labels:
+        sub += f" · fiscal years {d.fy_labels[0]}–{d.fy_labels[-1]}"
+    ax_header.text(0, 0.86, sub, fontsize=9, color=P.INK_SECONDARY,
+                   transform=ax_header.transAxes, va="top")
+    ax_header.text(1.0, 1.03, f"Generated {d.generated.isoformat()} · SEC EDGAR XBRL",
+                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
+                   va="top", ha="right")
+    if d.demo:
+        ax_header.text(1.0, 0.86, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
+                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
+                       transform=ax_header.transAxes, va="top", ha="right")
+    _unit_kpis(ax_header, d)
+
+    # Thesis + terminal risk (§2.3/2.4) — analyst judgment, printed verbatim,
+    # in their own band so long text never collides with the panels below.
+    ax_notes = fig.add_subplot(gs[1, :])
+    ax_notes.set_axis_off()
+    y = 0.92
+    if d.thesis:
+        text = textwrap.fill("Thesis (§2.4): " + d.thesis, width=175)
+        ax_notes.text(0, y, text, fontsize=7.8, color=P.INK_SECONDARY,
+                      transform=ax_notes.transAxes, va="top", linespacing=1.4)
+        y -= 0.30 * (text.count("\n") + 1) + 0.08
+    if d.terminal_risk:
+        text = textwrap.fill("Terminal risk (§2.3, anchors the Phase-5 rating): "
+                             + d.terminal_risk, width=175)
+        ax_notes.text(0, y, text, fontsize=7.8, color=P.DELTA_BAD,
+                      transform=ax_notes.transAxes, va="top", linespacing=1.4)
+    if not d.thesis and not d.terminal_risk:
+        ax_notes.text(0, y, "Thesis & terminal risk: analyst input (§2.3–2.4) — "
+                            "add via Analyst inputs… (GUI) or --thesis / "
+                            "--terminal-risk (CLI); the terminal risk anchors "
+                            "the Phase-5 rating.",
+                      fontsize=7.8, color=P.INK_MUTED,
+                      transform=ax_notes.transAxes, va="top")
+
+    panel_fns = _UNIT_PANELS.get(d.track, _UNIT_PANELS["standard"])
+    slots = (gs[2, 0], gs[2, 1], gs[3, 0], gs[3, 1])
+    for fn, spec in zip(panel_fns, slots):
+        ax = fig.add_subplot(spec)
+        _style_axes(ax)
+        if not d.fy_labels:
+            _panel_note(ax, "No annual fundamentals available")
+            continue
+        fn(ax, fig, d)
+
+    fig.text(0.055, 0.018,
+             "Working-capital days on average balances (§2.2). LTV/CAC and take "
+             "rates need customer/GMV disclosures — not in XBRL (analyst input).  "
+             "Not investment advice.",
+             fontsize=6.8, color=P.INK_MUTED, va="bottom")
+
+    if out_path:
+        fig.savefig(out_path, dpi=dpi)
+    return fig
+
+
 # ----------------------------------------------------- health report (page 2)
 
 def _zone_label(ax, x: float, y: float, text: str):

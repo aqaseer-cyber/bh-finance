@@ -37,6 +37,9 @@ LC = {y: REVENUE[y] * 0.3 for y in FY_YEARS}
 TL = {y: REVENUE[y] * 1.2 for y in FY_YEARS}
 RE = {y: REVENUE[y] * 0.6 for y in FY_YEARS}
 EQUITY = {y: REVENUE[y] * 0.8 for y in FY_YEARS}
+INV = {y: REVENUE[y] * 0.15 for y in FY_YEARS}
+AR = {y: REVENUE[y] * 0.12 for y in FY_YEARS}
+AP = {y: REVENUE[y] * 0.08 for y in FY_YEARS}
 LTD_NC = {y: 300e6 for y in FY_YEARS}
 LTD_C = {y: 50e6 for y in FY_YEARS}
 
@@ -109,6 +112,9 @@ def build_testco_companyfacts() -> dict:
         "Liabilities": usd_inst(TL),
         "RetainedEarningsAccumulatedDeficit": usd_inst(RE),
         "StockholdersEquity": usd_inst(EQUITY),
+        "InventoryNet": usd_inst(INV),
+        "AccountsReceivableNetCurrent": usd_inst(AR),
+        "AccountsPayableCurrent": usd_inst(AP),
         "CashAndCashEquivalentsAtCarryingValue": usd_inst(CASH),
         "LongTermDebtNoncurrent": usd_inst(LTD_NC),
         "LongTermDebtCurrent": usd_inst(LTD_C),
