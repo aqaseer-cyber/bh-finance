@@ -5,7 +5,6 @@ import datetime as dt
 import pytest
 
 from forensic_viz.dashboard import render_unit_economics
-from forensic_viz.demo_data import demo_dashboard_data
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import (
     DashboardData, apply_track, build_fundamental_metrics,
@@ -96,12 +95,12 @@ def test_render_unit_economics_all_tracks(tmp_path, testco_facts):
         assert len(fig.axes) >= 5  # header + four panels
 
 
-def test_demo_carries_unit_economics():
-    d = demo_dashboard_data(today=dt.date(2026, 7, 3))
-    assert any(v is not None for v in d.dsi)
-    assert any(v is not None for v in d.ccc)
-    assert any(v is not None for v in d.roic)
-    assert d.thesis and d.terminal_risk
-    # the planted receivables/inventory build must stretch the cycle
-    flag_i = d.fy_labels.index("FY2023")
-    assert d.ccc[flag_i] > d.ccc[flag_i - 1]
+def test_display_years_window(testco_facts):
+    d = DashboardData(ticker="T", company="T Inc", subtitle="",
+                      generated=dt.date(2026, 7, 3), display_years=5)
+    d.sic_code = "3571"
+    apply_track(d, "auto")
+    build_fundamental_metrics(parse_companyfacts(testco_facts, "T"), d)
+    assert d.fy_labels == [f"FY{y}" for y in range(2021, 2026)]
+    assert len(d.revenue) == 5
+    assert d.dsi[-1] is not None  # derived series follow the window

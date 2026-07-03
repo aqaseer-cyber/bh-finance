@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "ForensicStockViz"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 
 SEC_USER_AGENT = os.environ.get(
     "SEC_EDGAR_USER_AGENT",

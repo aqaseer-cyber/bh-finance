@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forensic-stock-viz"
-version = "1.0.0"
-description = "5-year stock performance dashboard from SEC EDGAR XBRL and daily prices"
+version = "2.0.0"
+description = "Forensic five-phase stock report (10y dashboard, unit economics, health checks, valuation, verdict) from SEC EDGAR XBRL"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.28", "matplotlib>=3.7", "openpyxl>=3.1"]
+dependencies = ["requests>=2.28", "matplotlib>=3.7", "openpyxl>=3.1", "pypdf>=4", "plotly>=5.18"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

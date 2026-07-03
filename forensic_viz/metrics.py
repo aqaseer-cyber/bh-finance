@@ -46,6 +46,11 @@ class DashboardData:
     subtitle: str
     generated: dt.date
     demo: bool = False
+    display_years: int = config.DISPLAY_YEARS
+
+    # Analyst consensus growth estimates (Yahoo), prefill for the valuation
+    # dialog: Base <- avg, Bear <- low, Bull <- high. Always editable.
+    analyst_estimates: Optional[dict] = None
 
     # Fundamentals (aligned lists, oldest -> newest, DISPLAY_YEARS long)
     fy_labels: List[str] = field(default_factory=list)
@@ -176,9 +181,9 @@ def _cagr(first: Optional[float], last: Optional[float], years: int) -> Optional
 
 
 def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> None:
-    """Reduce FETCH_YEARS as-filed years to DISPLAY_YEARS of derived series."""
+    """Reduce FETCH_YEARS as-filed years to `data.display_years` of series."""
     n_all = len(f.fy_ends)
-    show = min(config.DISPLAY_YEARS, n_all)
+    show = min(max(1, data.display_years), config.DISPLAY_YEARS, n_all)
     off = n_all - show  # index of the first displayed year in the full arrays
 
     def full(concept: str) -> List[Optional[float]]:

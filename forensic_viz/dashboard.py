@@ -2,7 +2,7 @@
 
 Layout (portrait):
   header  — company identity + KPI tile row
-  price   — 5y split-adjusted daily close (line + wash)
+  price   — split-adjusted daily close (line + wash)
   drawdown— % below rolling peak
   grid    — revenue | margins
             earnings quality (NI vs CFO vs FCF) | accruals ratio

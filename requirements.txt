@@ -1,3 +1,5 @@
 requests>=2.28
 matplotlib>=3.7
 openpyxl>=3.1
+pypdf>=4
+plotly>=5.18

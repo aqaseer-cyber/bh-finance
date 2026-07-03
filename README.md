@@ -21,25 +21,30 @@ untouched, and a to-do list of the analyst cells with suggested sources
 1. Install Python 3.10+ from <https://www.python.org/downloads/>
    (tick **"Add python.exe to PATH"** during setup).
 2. Double-click **`run_windows.bat`**. The first run creates a local
-   virtual environment and installs the two dependencies (`requests`,
-   `matplotlib`); later runs start instantly.
-3. Type a ticker (e.g. `AAPL`) and press **Analyze**. Use **Save PNG…** /
-   **Export CSV…** for the deliverables, or **Offline demo** to verify the
-   install without touching the network.
+   virtual environment and installs the dependencies; later runs start
+   instantly.
+3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10) and
+   **Track**, press **Analyze**. The report opens as tabs (Dashboard / Unit
+   economics / Health / Valuation / Verdict); **Interactive report ↗** opens
+   the zoomable, hover-tooltip HTML rendition in your browser, and
+   **Save PDF (A4)…** / **Export CSV…** / **Fill workbook…** produce the
+   deliverables.
 
 Command line (same launcher):
 
 ```bat
-run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf + CSVs
+run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf (A4) + CSVs
+run_windows.bat AAPL --years 5    :: 5-year window
+run_windows.bat AAPL --html       :: interactive HTML report (plotly, offline)
 run_windows.bat AAPL --png        :: per-page PNGs instead of the PDF
-run_windows.bat --demo -o demo.pdf
 run_windows.bat MSFT --no-cache   :: bypass the local cache
 run_windows.bat WFC --track bank  :: override the Logic Track (auto = from SIC)
 run_windows.bat AAPL --adjusted-ni 105e9  :: fluff filter (non-GAAP NI, from the release)
 
-:: intrinsic value (Bear/Base/Bull) — WACC auto-builds when --wacc is omitted
-run_windows.bat AAPL --value dcf ^
-    --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
+:: intrinsic value — WACC auto-builds; omitted dcf cases pre-fill from analyst
+:: consensus (Bear <- low, Base <- average, Bull <- high; terminal g 2.0%)
+run_windows.bat AAPL --value dcf --rating Buy
+run_windows.bat AAPL --value dcf --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
 ```
 
 To produce a standalone `ForensicStockViz.exe` (no Python on the target PC),
@@ -128,10 +133,15 @@ economic engine differs from the vendor code:
 | **AFFO yield** (§4.C, REITs) | FV/sh = AFFO per share ÷ target yield | AFFO per share, target yield (analyst-supplied) |
 | **Manual / SOTP** | analyst-supplied FV per share | FV per share (segment economics aren't in XBRL) |
 
-The app returns FV per share and **margin of safety vs the last close** for all
-three cases, drawn as a football field against the price line, with the
-**reverse-DCF sanity frame (§4.D)** printed under the case table: what growth
-the market EV implies on the same base, vs the 3.5% GDP cap.
+For the DCF, the growth cases **pre-fill from analyst consensus revenue
+estimates** (Yahoo `earningsTrend`, +1y vs 0y): Bear ← the low estimate,
+Base ← the average, Bull ← the high, with terminal g at the 2.0% house
+default — every value editable in the dialog, and the source + analyst count
+shown. The app returns FV per share and **margin of safety vs the last
+close** for all three cases, drawn as a football field against the price
+line, with the **reverse-DCF sanity frame (§4.D)** printed under the case
+table: what growth the market EV implies on the same base, vs the 3.5% GDP
+cap.
 
 **The discount rate auto-builds (master §4.0)** and pre-fills the dialog
 (editable): live **10-Y UST** from FRED's keyless CSV (Stooq's 10-year yield
@@ -200,10 +210,13 @@ Cached responses live in `%LOCALAPPDATA%\ForensicStockViz\cache`
 ```bash
 pip install -r requirements.txt pytest
 python -m pytest tests/          # 25 tests: parsing, metrics, prices, rendering
-python -m forensic_viz --demo    # offline render
+python -m forensic_viz AAPL --years 5 --html   # cached after the first run
 ```
 
 Layout: `forensic_viz/edgar.py` (XBRL pull + tag selection),
 `prices.py` (Stooq/Yahoo), `metrics.py` (derivations), `dashboard.py`
 (renderer), `gui.py` (Tkinter app), `pipeline.py` (orchestration),
-`export.py` (CSV), `demo_data.py` (synthetic red-flag company).
+`export.py` (A4 PDF + CSV), `interactive.py` (plotly HTML report),
+`estimates.py` (analyst consensus prefill), `verdict.py` (Phase 5),
+`workbook.py` (XLSX shell filler). Images under `docs/` are illustrative
+renders from an earlier synthetic build.

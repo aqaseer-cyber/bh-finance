@@ -1,19 +1,19 @@
 """Command-line entry point.
 
   python -m forensic_viz                     -> GUI
-  python -m forensic_viz AAPL                -> AAPL_10y_report_<date>.pdf
+  python -m forensic_viz AAPL                -> AAPL_10y_report_<date>.pdf (A4)
+  python -m forensic_viz AAPL --years 5      -> 5-year window
+  python -m forensic_viz AAPL --html         -> interactive HTML report
   python -m forensic_viz AAPL --png --csv    -> per-page PNGs + CSVs
-  python -m forensic_viz --demo -o demo.pdf  -> offline synthetic report
 
-  Intrinsic value (Bear/Base/Bull); WACC auto-builds (live 10-Y UST + beta)
-  when --wacc is omitted:
-  python -m forensic_viz AAPL --value dcf \
-      --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
-    each --bear/--base/--bull is method-specific, comma-separated:
-      dcf    g0,g_term        (stage-1 growth, terminal growth)
-      ri     roe,g0,g_term    (r_e auto-built or via --wacc)
-      affo   affo_per_share,target_yield
-      manual fv_per_share
+  Intrinsic value (Bear/Base/Bull). WACC auto-builds; for DCF, omitted cases
+  pre-fill from analyst consensus (Bear <- low, Base <- avg, Bull <- high,
+  terminal g 2.0%):
+  python -m forensic_viz AAPL --value dcf --rating Buy
+  python -m forensic_viz AAPL --value dcf --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
+    case syntax per method:
+      dcf    g0,g_term      ri  roe,g0,g_term
+      affo   affo_per_share,target_yield      manual  fv_per_share
 """
 from __future__ import annotations
 
@@ -75,11 +75,22 @@ def _build_valuation_result(data, args):
     )
     method = args.value.lower()
     raws = {"Bear": args.bear, "Base": args.base, "Bull": args.bull}
-    missing = [n for n, r in raws.items() if not r]
-    if missing:
-        raise ValuationError(
-            f"provide --{'/--'.join(m.lower() for m in missing)} case assumptions")
-    cases = {n: _parse_case(method, raws[n]) for n in CASE_NAMES}
+    cases = {}
+    est = data.analyst_estimates or {}
+    est_map = {"Bear": est.get("g_low"), "Base": est.get("g_avg"),
+               "Bull": est.get("g_high")}
+    for name in CASE_NAMES:
+        if raws[name]:
+            cases[name] = _parse_case(method, raws[name])
+        elif method == "dcf" and est_map[name] is not None:
+            from .valuation import CaseInputs
+            cases[name] = CaseInputs(g0=est_map[name], g_term=0.02)
+            print(f"  {name}: g0 {est_map[name] * 100:.1f}% from analyst consensus "
+                  f"({est.get('source', '')}), terminal g 2.0% house default")
+        else:
+            raise ValuationError(
+                f"provide --{name.lower()} (no analyst estimate available "
+                "to pre-fill it)")
     inputs = ValuationInputs(
         method=method, cases=cases,
         discount_rate=args.wacc, base_value=args.base_value, ex_sbc=args.ex_sbc)
@@ -91,77 +102,68 @@ def main(argv=None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="forensic-viz",
-        description="10-year forensic stock report from SEC EDGAR XBRL + daily prices.",
+        description="Five-phase forensic stock report from SEC EDGAR XBRL + daily prices.",
     )
     parser.add_argument("ticker", nargs="?", help="US-listed ticker, e.g. AAPL")
     parser.add_argument("-o", "--out", help="output path (.pdf, or base name with --png)")
+    parser.add_argument("--years", type=int, default=config.DISPLAY_YEARS,
+                        choices=range(1, config.DISPLAY_YEARS + 1), metavar="N",
+                        help=f"fiscal years to display, 1–{config.DISPLAY_YEARS} (default 10)")
     parser.add_argument("--png", action="store_true",
-                        help="write per-page PNGs instead of a single PDF")
+                        help="write per-page PNGs instead of the A4 PDF")
+    parser.add_argument("--html", nargs="?", const="", metavar="PATH",
+                        help="also write the interactive HTML report")
     parser.add_argument("--csv", action="store_true",
                         help="also write fundamentals/prices (and valuation) CSVs")
-    parser.add_argument("--demo", action="store_true",
-                        help="render the offline synthetic demo company")
     parser.add_argument("--gui", action="store_true", help="launch the desktop app")
     parser.add_argument("--no-cache", action="store_true", help="bypass the local cache")
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--track", choices=list(TRACKS), default="auto",
                         help="logic track override (master Phase 1); auto = from SIC")
     parser.add_argument("--adjusted-ni", type=float,
-                        help="fluff filter (§3.1): latest-FY non-GAAP net income in $ "
-                             "from the earnings release; computes the adjustment burden")
+                        help="fluff filter (§3.1): latest-FY non-GAAP net income in $")
     parser.add_argument("--thesis",
                         help="investment thesis (§2.4), printed on the unit-economics page")
     parser.add_argument("--terminal-risk",
-                        help="terminal risk (§2.3, cite Item 1A), printed on the "
-                             "unit-economics page; anchors the Phase-5 rating")
+                        help="terminal risk (§2.3, cite Item 1A); anchors the Phase-5 rating")
 
     val = parser.add_argument_group("intrinsic value (Bear/Base/Bull)")
     val.add_argument("--value", choices=["dcf", "ri", "affo", "manual"],
                      help="run the intrinsic-value calculator with this method")
     val.add_argument("--wacc", type=float,
-                     help="discount rate override (fraction, e.g. 0.09); omitted = "
-                          "auto-build from live 10-Y UST + regression beta")
+                     help="discount rate override (fraction); omitted = auto-build")
     val.add_argument("--base-value", type=float,
                      help="override base: FCFF $ (dcf) or BV0 $ (ri)")
     val.add_argument("--ex-sbc", action="store_true",
                      help="dcf base on ex-SBC FCF (house §2b, Track B)")
-    val.add_argument("--bear", help="Bear-case assumptions (method-specific, comma-separated)")
-    val.add_argument("--base", help="Base-case assumptions")
-    val.add_argument("--bull", help="Bull-case assumptions")
+    val.add_argument("--bear", help="Bear case (dcf: pre-fills from analyst LOW estimate)")
+    val.add_argument("--base", help="Base case (dcf: pre-fills from analyst AVERAGE estimate)")
+    val.add_argument("--bull", help="Bull case (dcf: pre-fills from analyst HIGH estimate)")
     val.add_argument("--rating", choices=["Strong Buy", "Buy", "Hold", "Sell"],
-                     help="institutional rating (§5.3, judgment) — the app only "
-                          "checks coherence vs the MoS")
+                     help="institutional rating (§5.3, judgment) — coherence-checked only")
     val.add_argument("--optionality",
-                     help="§4.D named optionality carrying a rating above a "
-                          "deeply negative MoS")
+                     help="§4.D named optionality carrying a rating above a deeply negative MoS")
     parser.add_argument("--xlsx", nargs="?", const="", metavar="PATH",
                         help="export a filled copy of forensic_valuation_model_v3.xlsx")
     args = parser.parse_args(argv)
 
-    if args.gui or (not args.ticker and not args.demo):
+    if args.gui or not args.ticker:
         from .gui import run_gui
         run_gui()
         return 0
 
-    if args.demo:
-        from .demo_data import demo_dashboard_data
-        data = demo_dashboard_data()
-        if args.track != "auto":
-            from .metrics import apply_track, compute_altman
-            apply_track(data, args.track)
-            compute_altman(data)
-    else:
-        from .pipeline import build_dashboard_data
-        try:
-            data = build_dashboard_data(
-                args.ticker,
-                cache=Cache(enabled=not args.no_cache),
-                progress=lambda m: print(f"  {m}", flush=True),
-                track=args.track,
-            )
-        except EdgarError as exc:
-            _report_error(str(exc))
-            return 2
+    from .pipeline import build_dashboard_data
+    try:
+        data = build_dashboard_data(
+            args.ticker,
+            cache=Cache(enabled=not args.no_cache),
+            progress=lambda m: print(f"  {m}", flush=True),
+            track=args.track,
+            years=args.years,
+        )
+    except EdgarError as exc:
+        _report_error(str(exc))
+        return 2
 
     from .metrics import set_adjusted_ni
     if args.adjusted_ni is not None:
@@ -176,14 +178,12 @@ def main(argv=None) -> int:
 
     from .dashboard import (
         render_dashboard, render_health_report, render_unit_economics,
-        render_valuation,
+        render_valuation, render_verdict,
     )
     from .export import (
         export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
     )
     from .valuation import ValuationError
-
-    from .dashboard import render_verdict
     from .verdict import build_verdict
 
     fig_main = render_dashboard(data, dpi=args.dpi)
@@ -205,28 +205,30 @@ def main(argv=None) -> int:
             return 2
 
     stamp = data.generated.isoformat()
+    years = data.display_years
     if args.png:
-        out = args.out or f"{data.ticker}_{config.DISPLAY_YEARS}y_dashboard_{stamp}.png"
+        out = args.out or f"{data.ticker}_{years}y_dashboard_{stamp}.png"
         base = out[:-4] if out.lower().endswith(".png") else out
         fig_main.savefig(out, dpi=args.dpi)
         print(f"wrote {out}")
-        fig_unit.savefig(base + "_unit.png", dpi=args.dpi)
-        print(f"wrote {base}_unit.png")
-        fig_health.savefig(base + "_health.png", dpi=args.dpi)
-        print(f"wrote {base}_health.png")
-        if fig_val is not None:
-            fig_val.savefig(base + "_valuation.png", dpi=args.dpi)
-            print(f"wrote {base}_valuation.png")
-        if fig_verdict is not None:
-            fig_verdict.savefig(base + "_verdict.png", dpi=args.dpi)
-            print(f"wrote {base}_verdict.png")
+        for fig, suffix in ((fig_unit, "_unit"), (fig_health, "_health"),
+                            (fig_val, "_valuation"), (fig_verdict, "_verdict")):
+            if fig is not None:
+                fig.savefig(base + suffix + ".png", dpi=args.dpi)
+                print(f"wrote {base}{suffix}.png")
     else:
-        out = args.out or f"{data.ticker}_{config.DISPLAY_YEARS}y_report_{stamp}.pdf"
+        out = args.out or f"{data.ticker}_{years}y_report_{stamp}.pdf"
         if not out.lower().endswith(".pdf"):
             out += ".pdf"
         base = out[:-4]
         export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
-        print(f"wrote {out}")
+        print(f"wrote {out} (A4)")
+
+    if args.html is not None:
+        from .interactive import build_html
+        html_path = args.html or f"{data.ticker}_interactive_{stamp}.html"
+        build_html(data, html_path, res=res, verdict=verdict)
+        print(f"wrote {html_path}")
 
     if data.price_error:
         print(f"note: price sources unavailable ({data.price_error}); "
@@ -246,15 +248,6 @@ def main(argv=None) -> int:
         print(line)
         print(f"  rating gate: {verdict.coherence}")
 
-    if args.xlsx is not None:
-        from .workbook import fill_workbook
-        xlsx_path = args.xlsx or f"{data.ticker}_forensic_model_{stamp}.xlsx"
-        report = fill_workbook(data, xlsx_path, res=res, verdict=verdict)
-        print(f"wrote {xlsx_path} ({report.filled} blue cells filled)")
-        print("  analyst cells remaining (judgment stays with you):")
-        for sheet, cells, label, source in report.analyst_cells:
-            print(f"    {sheet}!{cells:<8} {label} -> {source}")
-
     if args.csv:
         fpath = base + "_fundamentals.csv"
         export_fundamentals_csv(data, fpath)
@@ -267,6 +260,15 @@ def main(argv=None) -> int:
             vpath = base + "_valuation.csv"
             export_valuation_csv(res, vpath)
             print(f"wrote {vpath}")
+
+    if args.xlsx is not None:
+        from .workbook import fill_workbook
+        xlsx_path = args.xlsx or f"{data.ticker}_forensic_model_{stamp}.xlsx"
+        report = fill_workbook(data, xlsx_path, res=res, verdict=verdict)
+        print(f"wrote {xlsx_path} ({report.filled} blue cells filled)")
+        print("  analyst cells remaining (judgment stays with you):")
+        for sheet, cells, label, source in report.analyst_cells:
+            print(f"    {sheet}!{cells:<8} {label} -> {source}")
     return 0
 
 

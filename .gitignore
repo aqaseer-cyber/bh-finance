@@ -7,8 +7,9 @@ dist/
 *.spec
 *.egg-info/
 .pytest_cache/
-*_5y_dashboard_*.png
-*_10y_dashboard_*.png
-*_10y_report_*.pdf
+*_*y_dashboard_*
+*_*y_report_*.pdf
+*_forensic_model_*.xlsx
+*_interactive_*.html
 *_fundamentals.csv
 *_prices.csv

@@ -25,6 +25,7 @@ def build_dashboard_data(
     cache: Optional[Cache] = None,
     progress: ProgressFn = _noop,
     track: str = "auto",
+    years: int = config.DISPLAY_YEARS,
 ) -> DashboardData:
     """Fetch fundamentals (required) and prices (best-effort), derive metrics.
 
@@ -43,6 +44,7 @@ def build_dashboard_data(
         company=fundamentals.entity_name,
         subtitle="",
         generated=dt.date.today(),
+        display_years=max(1, min(int(years), config.DISPLAY_YEARS)),
     )
     data.sic_code = fundamentals.sic_code
     data.latest_10k_date = fundamentals.latest_10k_date
@@ -50,9 +52,13 @@ def build_dashboard_data(
     apply_track(data, track)
     build_fundamental_metrics(fundamentals, data)
 
-    progress(f"Fetching {config.PRICE_YEARS}-year price history…")
+    progress(f"Fetching {data.display_years}-year price history…")
     try:
         prices = fetch_prices(ticker, cache=cache)
+        cutoff = data.generated - dt.timedelta(days=round(data.display_years * 365.25))
+        keep = [(day, c) for day, c in zip(prices.dates, prices.closes) if day >= cutoff]
+        if keep:
+            prices.dates, prices.closes = [k[0] for k in keep], [k[1] for k in keep]
         build_price_metrics(prices, data)
     except PriceError as exc:
         data.price_error = str(exc)
@@ -71,6 +77,13 @@ def build_dashboard_data(
         data.wacc_build = build_wacc(data, cache=cache)
     except Exception:
         data.wacc_build = None  # rates are best-effort; dialog accepts manual
+
+    progress("Fetching analyst growth estimates…")
+    try:
+        from .estimates import fetch_growth_estimates
+        data.analyst_estimates = fetch_growth_estimates(ticker, cache=cache)
+    except Exception:
+        data.analyst_estimates = None  # estimates are prefill sugar only
 
     parts = [fundamentals.exchange_ticker or ticker]
     if fundamentals.sic_description:
