@@ -19,10 +19,19 @@ SEC_USER_AGENT = os.environ.get(
 
 # Number of fiscal years shown on the dashboard; one extra is fetched for
 # year-over-year growth and average-asset calculations.
-DISPLAY_YEARS = 5
+DISPLAY_YEARS = 10
 FETCH_YEARS = DISPLAY_YEARS + 1
 
-PRICE_YEARS = 5
+PRICE_YEARS = 10
+
+# Phase-3 health-check defaults. house_assumptions.md is not part of this
+# export, so these are labeled ASSUMPTIONs (shown on the report) until the
+# house file is provided.
+RND_LIFE_YEARS = 5          # straight-line R&D capitalization life (n)
+RND_MATERIALITY = 0.05      # capitalize only if avg R&D/revenue exceeds this
+SLOAN_FLAG = 0.10           # |Sloan| flag threshold (master prompt §3.3)
+ALTMAN_DISTRESS = 1.81      # Altman Z zone boundaries (original 1968 model)
+ALTMAN_SAFE = 2.99
 
 HTTP_TIMEOUT = 30  # seconds per request
 HTTP_RETRIES = 3

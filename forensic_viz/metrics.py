@@ -1,13 +1,21 @@
 """Derived metrics: margins, FCF, growth, drawdown, and forensic ratios.
 
 Forensic definitions used here:
-- accruals ratio (balance-sheet Sloan proxy) = (NI - CFO) / average total assets.
-  Persistently positive and large (> ~10%) means reported earnings run ahead of
-  cash collection — the classic low-earnings-quality signal.
+- operating accruals = (NI - CFO) / average total assets. Persistently positive
+  and large (> ~10%) means reported earnings run ahead of cash collection.
+- Sloan ratio (house variant, master prompt §3.3) = (NI - CFO - CFI) / average
+  total assets; |ratio| > 10% is flagged.
 - cash conversion = CFO / NI (meaningful only when NI > 0).
+- Piotroski F-score: the nine classic signals. Proxies: diluted share count for
+  the equity-issuance check; end-of-year assets in the turnover signal.
+- Altman Z: original 1968 (Standard-Mfg) model; MVE = FY-end close x diluted
+  shares. Not meaningful for financial-sector filers.
+- R&D capitalization audit (master §3.2): EBIT_econ = EBIT_rep + R&D_t - Amort,
+  Amort_t = sum_{k=1..n-1} R&D_{t-k}/n, straight-line life n.
 """
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -56,6 +64,29 @@ class DashboardData:
     total_debt: List[Optional[float]] = field(default_factory=list)
     cash: List[Optional[float]] = field(default_factory=list)
     tags_used: Dict[str, str] = field(default_factory=dict)
+
+    # Phase-3 health checks (aligned with fy_labels)
+    sloan_full: List[Optional[float]] = field(default_factory=list)
+    piotroski_score: List[Optional[int]] = field(default_factory=list)
+    piotroski_checks: List[int] = field(default_factory=list)  # evaluable of 9
+    altman_z: List[Optional[float]] = field(default_factory=list)
+    sbc: List[Optional[float]] = field(default_factory=list)
+    sbc_pct_revenue: List[Optional[float]] = field(default_factory=list)
+    fcf_ex_sbc: List[Optional[float]] = field(default_factory=list)
+    rnd: List[Optional[float]] = field(default_factory=list)
+    rnd_pct_revenue: List[Optional[float]] = field(default_factory=list)
+    ebit_reported: List[Optional[float]] = field(default_factory=list)
+    ebit_economic: List[Optional[float]] = field(default_factory=list)
+    share_cagr_3y: Optional[float] = None
+    sbc_pct_fcf_latest: Optional[float] = None
+    rnd_material: bool = False
+    sic_code: str = ""
+    is_financial_sector: bool = False
+    health_notes: List[str] = field(default_factory=list)
+
+    # Altman inputs held until FY-end prices are known (see compute_altman)
+    _z_parts: List[Optional[dict]] = field(default_factory=list)
+    fy_prices: List[Optional[float]] = field(default_factory=list)
 
     # Prices
     price_dates: List[dt.date] = field(default_factory=list)
@@ -147,6 +178,25 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
         data.accruals_ratio.append(_div(accr, avg_assets))
         data.cash_conversion.append(_div(cfo, ni) if ni is not None and ni > 0 else None)
 
+        _health_year(data, f, i, avg_assets)
+
+    data.rnd_material = _rnd_is_material(data)
+    if not data.rnd_material:  # audit applies only where R&D is material
+        data.ebit_economic = [None] * len(data.fy_ends)
+    if len(data.diluted_shares) >= 4 and data.diluted_shares[-4] and data.diluted_shares[-1]:
+        data.share_cagr_3y = (data.diluted_shares[-1] / data.diluted_shares[-4]) ** (1 / 3) - 1
+    if data.sbc and data.fcf and data.sbc[-1] is not None and data.fcf[-1] and data.fcf[-1] > 0:
+        data.sbc_pct_fcf_latest = data.sbc[-1] / data.fcf[-1]
+    data.health_notes = [
+        "Sloan variant: (NI − CFO − CFI) / avg total assets; |ratio| > "
+        f"{config.SLOAN_FLAG:.0%} flagged (master §3.3)",
+        f"ASSUMPTION: R&D life n={config.RND_LIFE_YEARS}y straight-line, "
+        f"materiality {config.RND_MATERIALITY:.0%} of revenue (house §3 file not attached)",
+        "Piotroski proxies: diluted share count for the issuance signal; "
+        "end-of-year assets in the turnover signal",
+        "Altman Z: original 1968 Standard-Mfg model; MVE = FY-end close × diluted shares",
+    ]
+
     span = len(data.fy_ends) - 1
     data.revenue_cagr = _cagr(data.revenue[0] if data.revenue else None,
                               data.revenue[-1] if data.revenue else None, span)
@@ -158,6 +208,133 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
     last_sh = data.diluted_shares[-1] if data.diluted_shares else None
     if first_sh and last_sh:
         data.share_change = last_sh / first_sh - 1.0
+
+
+def _health_year(data: DashboardData, f: AnnualFundamentals, i: int,
+                 avg_assets: Optional[float]) -> None:
+    """Phase-3 health metrics for one fiscal year (index into the full arrays)."""
+    n_all = len(f.fy_ends)
+
+    def g(concept: str, j: int) -> Optional[float]:
+        s = f.series.get(concept)
+        return s[j] if s is not None and 0 <= j < n_all else None
+
+    rev, ni, cfo, cfi = g("revenue", i), g("net_income", i), g("cfo", i), g("cfi", i)
+    ta, ta_prev = g("total_assets", i), g("total_assets", i - 1)
+    sbc, rnd, opinc = g("sbc", i), g("rnd", i), g("operating_income", i)
+    capex = g("capex", i)
+    fcf = _sub(cfo, capex) if capex is not None else cfo
+    pos_rev = rev if rev is not None and rev > 0 else None
+
+    # Sloan ratio, house variant (master §3.3): (NI − CFO − CFI) / avg TA
+    sloan = None
+    if ni is not None and cfo is not None and cfi is not None:
+        sloan = _div(ni - cfo - cfi, avg_assets)
+    data.sloan_full.append(sloan)
+
+    # SBC & dilution line (master §3.4)
+    data.sbc.append(sbc)
+    data.sbc_pct_revenue.append(_div(sbc, pos_rev))
+    data.fcf_ex_sbc.append(_sub(fcf, sbc))
+    data.rnd.append(rnd)
+    data.rnd_pct_revenue.append(_div(rnd, pos_rev))
+
+    # R&D capitalization audit (master §3.2): EBIT_econ = EBIT + R&D_t − Amort
+    data.ebit_reported.append(opinc)
+    n = config.RND_LIFE_YEARS
+    prior = [g("rnd", i - k) for k in range(1, n)]
+    if opinc is not None and rnd is not None and all(p is not None for p in prior):
+        amort = sum(prior) / n
+        data.ebit_economic.append(opinc + rnd - amort)
+    else:
+        data.ebit_economic.append(None)
+
+    # Piotroski F-score — nine classic signals; None = not evaluable
+    def gross_margin(j: int) -> Optional[float]:
+        gp = g("gross_profit", j)
+        if gp is None:
+            gp = _sub(g("revenue", j), g("cost_of_revenue", j))
+        r = g("revenue", j)
+        return _div(gp, r if r is not None and r > 0 else None)
+
+    def ltd(j: int) -> Optional[float]:
+        v = g("lt_debt_noncurrent", j)
+        return v if v is not None else g("lt_debt_total", j)
+
+    roa, roa_prev = _div(ni, ta), _div(g("net_income", i - 1), ta_prev)
+    lev, lev_prev = _div(ltd(i), ta), _div(ltd(i - 1), ta_prev)
+    ac, lc = g("assets_current", i), g("liabilities_current", i)
+    cr = _div(ac, lc)
+    cr_prev = _div(g("assets_current", i - 1), g("liabilities_current", i - 1))
+    sh, sh_prev = g("diluted_shares", i), g("diluted_shares", i - 1)
+    gm, gm_prev = gross_margin(i), gross_margin(i - 1)
+    turn, turn_prev = _div(rev, ta), _div(g("revenue", i - 1), ta_prev)
+
+    signals = [
+        roa > 0 if roa is not None else None,
+        cfo > 0 if cfo is not None else None,
+        roa > roa_prev if roa is not None and roa_prev is not None else None,
+        cfo > ni if cfo is not None and ni is not None else None,
+        lev < lev_prev if lev is not None and lev_prev is not None else None,
+        cr > cr_prev if cr is not None and cr_prev is not None else None,
+        sh <= sh_prev if sh is not None and sh_prev is not None else None,
+        gm > gm_prev if gm is not None and gm_prev is not None else None,
+        turn > turn_prev if turn is not None and turn_prev is not None else None,
+    ]
+    evaluable = [s for s in signals if s is not None]
+    data.piotroski_checks.append(len(evaluable))
+    data.piotroski_score.append(sum(evaluable) if evaluable else None)
+
+    # Altman Z inputs — finished by compute_altman once FY-end prices exist
+    tl, re_ = g("liabilities_total", i), g("retained_earnings", i)
+    if (ta is not None and ta > 0 and ac is not None and lc is not None
+            and tl is not None and tl > 0 and re_ is not None
+            and opinc is not None and rev is not None and sh):
+        data._z_parts.append({
+            "wc_ta": (ac - lc) / ta, "re_ta": re_ / ta, "ebit_ta": opinc / ta,
+            "sales_ta": rev / ta, "tl": tl, "shares": sh,
+        })
+    else:
+        data._z_parts.append(None)
+
+
+def _rnd_is_material(data: DashboardData) -> bool:
+    vals = [v for v in data.rnd_pct_revenue if v is not None]
+    return bool(vals) and sum(vals) / len(vals) >= config.RND_MATERIALITY
+
+
+def attach_fy_prices(data: DashboardData) -> None:
+    """Closest daily close within 10 days of each fiscal-year end."""
+    data.fy_prices = [None] * len(data.fy_ends)
+    if not data.price_dates:
+        return
+    for idx, end in enumerate(data.fy_ends):
+        j = bisect.bisect_left(data.price_dates, end)
+        best = None
+        for k in (j - 1, j):
+            if 0 <= k < len(data.price_dates):
+                gap = abs((data.price_dates[k] - end).days)
+                if gap <= 10 and (best is None or gap < best[0]):
+                    best = (gap, data.price_closes[k])
+        if best is not None:
+            data.fy_prices[idx] = best[1]
+
+
+def compute_altman(data: DashboardData) -> None:
+    """Altman Z per fiscal year (original 1968 model). Requires FY-end prices;
+    suppressed for financial-sector filers, where Z is not meaningful."""
+    if not data.fy_prices:
+        attach_fy_prices(data)
+    data.altman_z = []
+    for parts, price in zip(data._z_parts, data.fy_prices):
+        if parts is None or price is None or data.is_financial_sector:
+            data.altman_z.append(None)
+            continue
+        mve = price * parts["shares"]
+        data.altman_z.append(
+            1.2 * parts["wc_ta"] + 1.4 * parts["re_ta"] + 3.3 * parts["ebit_ta"]
+            + 0.6 * mve / parts["tl"] + 1.0 * parts["sales_ta"]
+        )
 
 
 def build_price_metrics(p: PriceSeries, data: DashboardData) -> None:

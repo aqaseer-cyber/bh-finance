@@ -22,6 +22,19 @@ def export_fundamentals_csv(d: DashboardData, path: str) -> None:
         ("diluted_shares", d.diluted_shares),
         ("total_debt_usd", d.total_debt),
         ("cash_and_equivalents_usd", d.cash),
+        # Phase-3 health checks
+        ("sloan_ratio_house_variant", d.sloan_full),
+        ("piotroski_f_score", d.piotroski_score),
+        ("piotroski_signals_evaluable", d.piotroski_checks),
+        ("altman_z", d.altman_z),
+        ("sbc_usd", d.sbc),
+        ("sbc_pct_revenue", d.sbc_pct_revenue),
+        ("fcf_ex_sbc_usd", d.fcf_ex_sbc),
+        ("rnd_usd", d.rnd),
+        ("rnd_pct_revenue", d.rnd_pct_revenue),
+        ("ebit_reported_usd", d.ebit_reported),
+        ("ebit_economic_usd", d.ebit_economic),
+        ("fy_end_close_usd", d.fy_prices),
     ]
 
     def cell(v: Optional[float]) -> str:
@@ -35,6 +48,10 @@ def export_fundamentals_csv(d: DashboardData, path: str) -> None:
         w.writerow(["# Source: SEC EDGAR XBRL annual filings; latest amendment wins"])
         for concept, tag in sorted(d.tags_used.items()):
             w.writerow([f"# xbrl_tag {concept} = {tag}"])
+        for note in d.health_notes:
+            w.writerow([f"# note: {note}"])
+        if d.share_cagr_3y is not None:
+            w.writerow([f"# diluted_share_cagr_3y = {d.share_cagr_3y:.6f}"])
         w.writerow(["metric"] + d.fy_labels)
         w.writerow(["fiscal_year_end"] + [e.isoformat() for e in d.fy_ends])
         for name, series in rows:

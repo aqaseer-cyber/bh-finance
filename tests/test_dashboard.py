@@ -1,11 +1,11 @@
 import datetime as dt
 
-from forensic_viz.dashboard import render_dashboard
+from forensic_viz.dashboard import render_dashboard, render_health_report
 from forensic_viz.demo_data import demo_dashboard_data
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.export import export_fundamentals_csv, export_prices_csv
 from forensic_viz.metrics import (
-    DashboardData, build_fundamental_metrics, build_price_metrics,
+    DashboardData, build_fundamental_metrics, build_price_metrics, compute_altman,
 )
 from forensic_viz.prices import PriceSeries
 
@@ -43,8 +43,27 @@ def test_render_without_prices(tmp_path, testco_facts):
 def test_render_demo(tmp_path):
     d = demo_dashboard_data(today=dt.date(2026, 7, 3))
     assert max(v for v in d.accruals_ratio if v is not None) > 0.10  # planted flag fires
+    assert max(v for v in d.sloan_full if v is not None) > 0.10      # Sloan flag too
+    assert any(z is not None for z in d.altman_z)
+    assert any(s is not None for s in d.piotroski_score)
     out = tmp_path / "demo.png"
     render_dashboard(d, str(out))
+    assert out.exists()
+
+
+def test_render_health_report(tmp_path, testco_facts, aapl_prices):
+    d = _testco_data(testco_facts, aapl_prices)
+    compute_altman(d)
+    out = tmp_path / "health.png"
+    fig = render_health_report(d, str(out))
+    assert out.exists() and out.stat().st_size > 40_000
+    assert len(fig.axes) >= 7  # header + six health panels
+
+
+def test_render_health_report_demo(tmp_path):
+    d = demo_dashboard_data(today=dt.date(2026, 7, 3))
+    out = tmp_path / "demo_health.png"
+    render_health_report(d, str(out))
     assert out.exists()
 
 
@@ -55,4 +74,5 @@ def test_csv_exports(tmp_path, testco_facts, aapl_prices):
     export_prices_csv(d, str(pcsv))
     body = fcsv.read_text()
     assert "revenue_usd" in body and "FY2025" in body and "xbrl_tag" in body
+    assert "sloan_ratio_house_variant" in body and "piotroski_f_score" in body
     assert len(pcsv.read_text().splitlines()) == len(d.price_dates) + 2

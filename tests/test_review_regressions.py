@@ -6,29 +6,33 @@ import pytest
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import DashboardData, build_fundamental_metrics
 from forensic_viz.prices import PriceError, parse_yahoo_chart
-from tests.conftest import REVENUE, _annual, _usd
+from tests.conftest import FY_YEARS, REVENUE, _annual, _usd
 
 
 def test_revenue_total_beats_606_subtotal_on_coverage_tie(testco_facts):
     """Lessor/bank pattern: both tags cover every year; the larger total must
     win, not the ASC-606 subtotal that happens to sit first in the list."""
-    total = [_annual(y, REVENUE[y] * 4) for y in range(2019, 2026)]
+    total = [_annual(y, REVENUE[y] * 4) for y in FY_YEARS]
     testco_facts["facts"]["us-gaap"]["Revenues"] = _usd(total)
     f = parse_companyfacts(testco_facts, "URI")
-    assert f.tags_used["revenue"] == "Revenues"
+    assert f.tags_used["revenue"] == "Revenues"  # full coverage, no fill note
     assert f.series["revenue"][-1] == REVENUE[2025] * 4
 
 
 def test_newest_fiscal_year_survives_tag_migration(testco_facts):
     """First 10-K after a tag migration: the union spine must include the
-    just-filed year even though the old (still better-covered) tag lacks it."""
+    just-filed year even though the old (still better-covered) tag lacks it,
+    and the gap-fill must pull the year's value from the new tag."""
     gaap = testco_facts["facts"]["us-gaap"]
-    gaap["Revenues"] = _usd([_annual(y, REVENUE[y]) for y in range(2019, 2025)])
+    gaap["Revenues"] = _usd([_annual(y, REVENUE[y]) for y in range(2014, 2025)])
     gaap["RevenueFromContractWithCustomerExcludingAssessedTax"] = _usd(
         [_annual(y, REVENUE[y]) for y in (2024, 2025)])
     f = parse_companyfacts(testco_facts, "TESTCO")
     assert f.fy_ends[-1] == dt.date(2025, 12, 31)
-    assert f.series["net_income"][-1] is not None  # other concepts fill the year
+    assert f.series["net_income"][-1] is not None
+    assert f.series["revenue"][-1] == REVENUE[2025]  # filled from the new tag
+    assert "FY2025 from RevenueFromContractWithCustomerExcludingAssessedTax" \
+        in f.tags_used["revenue"]
 
 
 def test_yahoo_zero_closes_are_dropped():

@@ -5,7 +5,9 @@ TESTCO exercises the tricky parsing paths:
 - a 10-K/A amendment for FY2023 whose later-filed value must win,
 - quarterly (10-Q) rows that must be excluded from annual series,
 - no GrossProfit tag (gross margin must be derived from cost of revenue),
-- instant balance-sheet concepts keyed to fiscal year ends.
+- instant balance-sheet concepts keyed to fiscal year ends,
+- Phase-3 health-check inputs (CFI, SBC, R&D, current assets/liabilities,
+  total liabilities, retained earnings).
 """
 import json
 from pathlib import Path
@@ -14,20 +16,26 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-FY_YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025]
+FY_YEARS = list(range(2014, 2026))  # 12 years; the app fetches the last 11
 
 # FY -> value tables (USD unless noted)
-REVENUE = {2019: 800e6, 2020: 900e6, 2021: 1000e6, 2022: 1150e6,
-           2023: 1300e6, 2024: 1500e6, 2025: 1700e6}
-REVENUE_FY2023_ORIGINAL = 1250e6  # superseded by the 10-K/A below
+REVENUE = {y: 800e6 + (y - 2014) * 100e6 for y in FY_YEARS}
+REVENUE_FY2023_ORIGINAL = REVENUE[2023] - 50e6  # superseded by the 10-K/A
 COST = {y: REVENUE[y] * 0.6 for y in FY_YEARS}
 OPINC = {y: REVENUE[y] * 0.18 for y in FY_YEARS}
 NI = {y: REVENUE[y] * 0.12 for y in FY_YEARS}
 CFO = {y: NI[y] * 1.3 for y in FY_YEARS}
 CAPEX = {y: REVENUE[y] * 0.07 for y in FY_YEARS}
-SHARES = {y: 100e6 + (y - 2019) * 2e6 for y in FY_YEARS}
+CFI = {y: -REVENUE[y] * 0.10 for y in FY_YEARS}
+SBC = {y: REVENUE[y] * 0.05 for y in FY_YEARS}
+RND = {y: REVENUE[y] * 0.08 for y in FY_YEARS}
+SHARES = {y: 100e6 + (y - 2014) * 2e6 for y in FY_YEARS}
 ASSETS = {y: REVENUE[y] * 2.0 for y in FY_YEARS}
 CASH = {y: REVENUE[y] * 0.25 for y in FY_YEARS}
+AC = {y: REVENUE[y] * 0.5 for y in FY_YEARS}
+LC = {y: REVENUE[y] * 0.3 for y in FY_YEARS}
+TL = {y: REVENUE[y] * 1.2 for y in FY_YEARS}
+RE = {y: REVENUE[y] * 0.6 for y in FY_YEARS}
 LTD_NC = {y: 300e6 for y in FY_YEARS}
 LTD_C = {y: 50e6 for y in FY_YEARS}
 
@@ -66,31 +74,42 @@ def _shares(items):
 
 def build_testco_companyfacts() -> dict:
     # Old revenue tag: stops after FY2021 (the migration trap)
-    revenues_old = [_annual(y, REVENUE[y]) for y in (2019, 2020, 2021)]
+    revenues_old = [_annual(y, REVENUE[y]) for y in range(2014, 2022)]
     # New tag: FY2020 onward, plus quarterly noise, plus the FY2023 amendment
-    revenues_new = [_annual(y, REVENUE[y]) for y in (2020, 2021, 2022, 2024, 2025)]
+    new_years = [y for y in range(2020, 2026) if y != 2023]
+    revenues_new = [_annual(y, REVENUE[y]) for y in new_years]
     revenues_new.append(_annual(2023, REVENUE_FY2023_ORIGINAL))  # original 10-K
     revenues_new.append(_annual(2023, REVENUE[2023], form="10-K/A",
                                 filed="2024-06-30"))             # amendment wins
     revenues_new += [_quarterly(2025, q, REVENUE[2025] / 4) for q in (1, 2, 3)]
 
+    def usd_all(table):
+        return _usd([_annual(y, table[y]) for y in FY_YEARS])
+
+    def usd_inst(table):
+        return _usd([_instant(y, table[y]) for y in FY_YEARS])
+
     gaap = {
         "Revenues": _usd(revenues_old),
         "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(revenues_new),
-        "CostOfRevenue": _usd([_annual(y, COST[y]) for y in FY_YEARS]),
-        "OperatingIncomeLoss": _usd([_annual(y, OPINC[y]) for y in FY_YEARS]),
-        "NetIncomeLoss": _usd([_annual(y, NI[y]) for y in FY_YEARS]),
-        "NetCashProvidedByUsedInOperatingActivities": _usd(
-            [_annual(y, CFO[y]) for y in FY_YEARS]),
-        "PaymentsToAcquirePropertyPlantAndEquipment": _usd(
-            [_annual(y, CAPEX[y]) for y in FY_YEARS]),
+        "CostOfRevenue": usd_all(COST),
+        "OperatingIncomeLoss": usd_all(OPINC),
+        "NetIncomeLoss": usd_all(NI),
+        "NetCashProvidedByUsedInOperatingActivities": usd_all(CFO),
+        "NetCashProvidedByUsedInInvestingActivities": usd_all(CFI),
+        "PaymentsToAcquirePropertyPlantAndEquipment": usd_all(CAPEX),
+        "ShareBasedCompensation": usd_all(SBC),
+        "ResearchAndDevelopmentExpense": usd_all(RND),
         "WeightedAverageNumberOfDilutedSharesOutstanding": _shares(
             [_annual(y, SHARES[y]) for y in FY_YEARS]),
-        "Assets": _usd([_instant(y, ASSETS[y]) for y in FY_YEARS]),
-        "CashAndCashEquivalentsAtCarryingValue": _usd(
-            [_instant(y, CASH[y]) for y in FY_YEARS]),
-        "LongTermDebtNoncurrent": _usd([_instant(y, LTD_NC[y]) for y in FY_YEARS]),
-        "LongTermDebtCurrent": _usd([_instant(y, LTD_C[y]) for y in FY_YEARS]),
+        "Assets": usd_inst(ASSETS),
+        "AssetsCurrent": usd_inst(AC),
+        "LiabilitiesCurrent": usd_inst(LC),
+        "Liabilities": usd_inst(TL),
+        "RetainedEarningsAccumulatedDeficit": usd_inst(RE),
+        "CashAndCashEquivalentsAtCarryingValue": usd_inst(CASH),
+        "LongTermDebtNoncurrent": usd_inst(LTD_NC),
+        "LongTermDebtCurrent": usd_inst(LTD_C),
     }
     return {"cik": 1234567, "entityName": "TESTCO INC", "facts": {"us-gaap": gaap}}
 

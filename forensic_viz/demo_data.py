@@ -1,88 +1,110 @@
-"""Offline demo: a synthetic company with a deliberate forensic red flag.
+"""Offline demo: a synthetic company with deliberate forensic red flags.
 
-DEMOCO's FY4 shows net income growing while operating cash flow stalls — the
-accruals ratio breaches +10% so you can see what the warning panels look like
-when they fire. Everything is generated deterministically; no network needed.
+Eleven fiscal years are synthesized and pushed through the SAME metrics
+pipeline as real EDGAR data, so every panel — including the Phase-3 health
+checks — renders from production code paths. Planted story: a mid-window
+year where net income sprints ahead of operating cash (accruals + Sloan
+flags fire), an acquisition-driven CFI spike, persistent dilution, rising
+SBC, and a leverage build that dents the Altman Z during the price crash.
 """
 from __future__ import annotations
 
 import datetime as dt
 import math
 import random
+from typing import Dict, List, Optional
 
-from .metrics import DashboardData, build_price_metrics
+from . import config
+from .edgar import AnnualFundamentals
+from .metrics import (
+    DashboardData, build_fundamental_metrics, build_price_metrics, compute_altman,
+)
 from .prices import PriceSeries
 
 
-def _fy_end(year: int) -> dt.date:
-    return dt.date(year, 12, 31)
-
-
-def demo_dashboard_data(today: dt.date | None = None) -> DashboardData:
+def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
     today = today or dt.date.today()
     last_fy = today.year - 1
-    years = [last_fy - i for i in range(5, -1, -1)]  # 6 FYs, oldest first
+    n = config.FETCH_YEARS  # 11 synthetic fiscal years
+    years = list(range(last_fy - n + 1, last_fy + 1))
+    FLAG = n - 3  # the planted red-flag year (third from last)
 
-    revenue = [8.10e9, 9.50e9, 10.90e9, 12.60e9, 14.90e9, 16.40e9]
-    gross = [0.44, 0.45, 0.455, 0.46, 0.47, 0.465]
-    op = [0.135, 0.15, 0.16, 0.17, 0.185, 0.175]
-    net = [0.09, 0.10, 0.11, 0.12, 0.145, 0.125]
-    ni = [r * m for r, m in zip(revenue, net)]
-    # FY index 4: earnings sprint ahead of cash — the planted red flag
-    cfo = [n * c for n, c in zip(ni, [1.25, 1.22, 1.18, 1.05, 0.28, 0.95])]
-    capex = [r * 0.05 for r in revenue]
-    assets = [r * 0.9 for r in revenue]  # asset-light, so the ratio bites
-    shares = [500e6, 512e6, 528e6, 549e6, 571e6, 594e6]  # steady dilution
-    debt = [2.2e9, 2.1e9, 2.4e9, 3.1e9, 3.9e9, 4.4e9]
-    cash = [1.5e9, 1.9e9, 2.2e9, 1.9e9, 1.4e9, 1.6e9]
+    rev = [8.1e9 * 1.13**i for i in range(n)]
+    op_margin = [min(0.13 + 0.006 * i, 0.19) for i in range(n)]
+    op_margin[FLAG] = 0.205  # suspiciously strong print in the flag year
+    opinc = [r * m for r, m in zip(rev, op_margin)]
+    ni = [o - 0.035 * r for o, r in zip(opinc, rev)]
+    cfo_factor = [1.25] * n
+    cfo_factor[FLAG] = 0.28          # earnings far ahead of cash
+    cfo_factor[FLAG + 1] = 0.95      # partial normalization
+    cfo = [x * f for x, f in zip(ni, cfo_factor)]
+    capex = [0.05 * r for r in rev]
+    cfi = [-(c + 0.03 * r) for c, r in zip(capex, rev)]
+    cfi[FLAG] = -0.20 * rev[FLAG]    # acquisition spike (organic vs acquired)
+    sbc = [r * (0.02 + 0.004 * i) for i, r in enumerate(rev)]
+    rnd = [0.09 * r for r in rev]
+    shares = [500e6 * 1.03**i for i in range(n)]
+    lev = [0.20 + (0.10 * max(0, i - FLAG + 1) / 3 if i >= FLAG - 1 else 0)
+           for i in range(n)]
+
+    series: Dict[str, List[Optional[float]]] = {
+        "revenue": rev,
+        "cost_of_revenue": [0.54 * r for r in rev],
+        "gross_profit": [None] * n,  # derived, like a filer with no GrossProfit tag
+        "operating_income": opinc,
+        "net_income": ni,
+        "cfo": cfo,
+        "capex": capex,
+        "cfi": cfi,
+        "sbc": sbc,
+        "rnd": rnd,
+        "diluted_shares": shares,
+        "total_assets": [0.95 * r for r in rev],
+        "assets_current": [0.42 * r for r in rev],
+        "liabilities_current": [0.25 * r for r in rev],
+        "liabilities_total": [(0.50 + l) * r for l, r in zip(lev, rev)],
+        "retained_earnings": [(0.28 + 0.01 * i) * r for i, r in enumerate(rev)],
+        "cash": [(0.18 if i not in (FLAG, FLAG + 1) else 0.10) * r
+                 for i, r in enumerate(rev)],
+        "lt_debt_noncurrent": [l * r for l, r in zip(lev, rev)],
+        "lt_debt_current": [0.02 * r for r in rev],
+        "st_borrowings": [None] * n,
+        "lt_debt_total": [None] * n,
+    }
+    fundamentals = AnnualFundamentals(
+        cik=0,
+        entity_name="DEMOCO Industries (synthetic)",
+        fy_ends=[dt.date(y, 12, 31) for y in years],
+        series=series,
+        tags_used={"all_series": "synthetic demo values"},
+    )
 
     d = DashboardData(
         ticker="DEMO",
         company="DEMOCO Industries (synthetic)",
         subtitle=(f"DEMO · synthetic mid-cap · fiscal years FY{years[1]}–FY{years[-1]} · "
-                  "planted red flag: FY accruals spike + persistent dilution"),
+                  f"red flags planted in FY{years[FLAG]}"),
         generated=today,
         demo=True,
     )
+    build_fundamental_metrics(fundamentals, d)
 
-    show = slice(1, 6)  # display 5 of the 6 years
-    d.fy_ends = [_fy_end(y) for y in years[show]]
-    d.fy_labels = [f"FY{y}" for y in years[show]]
-    d.revenue = revenue[show]
-    d.revenue_yoy = [revenue[i] / revenue[i - 1] - 1 for i in range(1, 6)]
-    d.gross_margin = gross[show]
-    d.operating_margin = op[show]
-    d.net_margin = net[show]
-    d.net_income = ni[show]
-    d.cfo = cfo[show]
-    d.fcf = [c - x for c, x in zip(cfo[show], capex[show])]
-    d.accruals_ratio = [
-        (ni[i] - cfo[i]) / ((assets[i] + assets[i - 1]) / 2) for i in range(1, 6)
-    ]
-    d.cash_conversion = [c / n for c, n in zip(cfo[show], ni[show])]
-    d.diluted_shares = shares[show]
-    d.total_debt = debt[show]
-    d.cash = cash[show]
-    d.tags_used = {"all_series": "synthetic demo values"}
-
-    d.revenue_cagr = (d.revenue[-1] / d.revenue[0]) ** 0.25 - 1
-    d.fcf_cagr = None if d.fcf[0] <= 0 or d.fcf[-1] <= 0 else (d.fcf[-1] / d.fcf[0]) ** 0.25 - 1
-    d.net_margin_delta_pp = (d.net_margin[-1] - d.net_margin[0]) * 100
-    d.share_change = d.diluted_shares[-1] / d.diluted_shares[0] - 1
-
-    # Deterministic 5y weekly price path: growth, a mid-window crash, recovery.
+    # Deterministic weekly price path: growth, a crash aligned with the flag
+    # year, partial recovery.
     rng = random.Random(20260703)
-    n_weeks = 261
+    n_weeks = 52 * config.PRICE_YEARS + 1
     start = today - dt.timedelta(weeks=n_weeks - 1)
+    crash_lo = (dt.date(years[FLAG], 6, 1) - start).days / (7 * n_weeks)
     dates, closes = [], []
-    price = 40.0
+    price = 22.0
     for i in range(n_weeks):
         t = i / n_weeks
-        drift = 0.0035 if not 0.55 < t < 0.68 else -0.022  # crash window
-        price *= math.exp(drift + rng.gauss(0, 0.028))
+        drift = 0.0032 if not crash_lo < t < crash_lo + 0.09 else -0.024
+        price *= math.exp(drift + rng.gauss(0, 0.027))
         dates.append(start + dt.timedelta(weeks=i))
         closes.append(round(price, 2))
     build_price_metrics(
         PriceSeries(symbol="DEMO", dates=dates, closes=closes, source="synthetic"), d
     )
+    compute_altman(d)
     return d

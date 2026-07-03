@@ -67,18 +67,22 @@ def main(argv=None) -> int:
             _report_error(str(exc))
             return 2
 
-    from .dashboard import render_dashboard
+    from .dashboard import render_dashboard, render_health_report
     from .export import export_fundamentals_csv, export_prices_csv
 
-    out = args.out or f"{data.ticker}_5y_dashboard_{data.generated.isoformat()}.png"
-    fig = render_dashboard(data, out_path=out, dpi=args.dpi)
+    out = args.out or (
+        f"{data.ticker}_{config.DISPLAY_YEARS}y_dashboard_{data.generated.isoformat()}.png")
+    render_dashboard(data, out_path=out, dpi=args.dpi)
     print(f"wrote {out}")
+    base = out[:-4] if out.lower().endswith(".png") else out
+    health_out = base + "_health.png"
+    render_health_report(data, out_path=health_out, dpi=args.dpi)
+    print(f"wrote {health_out}")
     if data.price_error:
         print(f"note: price sources unavailable ({data.price_error}); "
               "rendered fundamentals only")
 
     if args.csv:
-        base = out[:-4] if out.lower().endswith(".png") else out
         fpath = base + "_fundamentals.csv"
         export_fundamentals_csv(data, fpath)
         print(f"wrote {fpath}")

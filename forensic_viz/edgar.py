@@ -66,6 +66,19 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ],
+    # Phase-3 health-check inputs
+    "cfi": [
+        "NetCashProvidedByUsedInInvestingActivities",
+        "NetCashProvidedByUsedInInvestingActivitiesContinuingOperations",
+    ],
+    "sbc": [
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
+    ],
+    "rnd": [
+        "ResearchAndDevelopmentExpense",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+    ],
 }
 
 # Instant (balance-sheet) concepts.
@@ -85,6 +98,11 @@ INSTANT_TAGS: Dict[str, List[str]] = {
     ],
     "st_borrowings": ["ShortTermBorrowings", "CommercialPaper"],
     "lt_debt_total": ["LongTermDebt"],
+    # Phase-3 health-check inputs
+    "assets_current": ["AssetsCurrent"],
+    "liabilities_current": ["LiabilitiesCurrent"],
+    "liabilities_total": ["Liabilities"],
+    "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
 }
 
 _UNITS_BY_CONCEPT = {"diluted_shares": ("shares",)}
@@ -105,6 +123,7 @@ class AnnualFundamentals:
     series: Dict[str, List[Optional[float]]]
     tags_used: Dict[str, str] = field(default_factory=dict)
     sic_description: str = ""
+    sic_code: str = ""
     exchange_ticker: str = ""
 
     def value(self, concept: str, i: int) -> Optional[float]:
@@ -326,22 +345,56 @@ def parse_companyfacts(
     series: Dict[str, List[Optional[float]]] = {}
     tags_used: Dict[str, str] = {}
 
+    def _fill_gaps(values, candidates, primary_tag, units, extractor, matcher):
+        """Fill years the primary tag misses from lower-ranked candidates.
+
+        A 10-year window usually spans a tag migration (e.g. ASC 606), so the
+        best tag rarely covers every year. Filled years are recorded in the
+        tags_used audit string — mixed-tag series are visible, never silent.
+        """
+        fills: Dict[str, List[int]] = {}
+        for tag in candidates:
+            if tag == primary_tag or all(v is not None for v in values):
+                continue
+            tag_units = gaap.get(tag, {}).get("units")
+            if not tag_units:
+                continue
+            obs = extractor(tag_units, units)
+            for i, end in enumerate(fy_ends):
+                if values[i] is None:
+                    v = matcher(obs, end)
+                    if v is not None:
+                        values[i] = v
+                        fills.setdefault(tag, []).append(end.year)
+        if not fills:
+            return primary_tag
+        notes = "; ".join(
+            f"FY{min(yrs)}–FY{max(yrs)} from {t}" if len(yrs) > 1 else f"FY{yrs[0]} from {t}"
+            for t, yrs in fills.items()
+        )
+        return f"{primary_tag} ({notes})"
+
     for concept, candidates in DURATION_TAGS.items():
         units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
         tag, obs = _select_series(
             gaap, candidates, fy_ends, units, _annual_duration_obs,
             prefer_larger_on_tie=(concept == "revenue"),
         )
-        series[concept] = [obs.get(end) for end in fy_ends]
+        values = [obs.get(end) for end in fy_ends]
         if tag:
-            tags_used[concept] = tag
+            tags_used[concept] = _fill_gaps(
+                values, candidates, tag, units, _annual_duration_obs,
+                lambda o, end: o.get(end))
+        series[concept] = values
 
     for concept, candidates in INSTANT_TAGS.items():
         units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
         tag, obs = _select_series(gaap, candidates, fy_ends, units, _annual_instant_obs)
-        series[concept] = [_match_instant(obs, end) for end in fy_ends]
+        values = [_match_instant(obs, end) for end in fy_ends]
         if tag:
-            tags_used[concept] = tag
+            tags_used[concept] = _fill_gaps(
+                values, candidates, tag, units, _annual_instant_obs, _match_instant)
+        series[concept] = values
 
     return AnnualFundamentals(
         cik=cik, entity_name=entity, fy_ends=fy_ends, series=series, tags_used=tags_used
@@ -362,6 +415,7 @@ def fetch_fundamentals(
     try:  # header metadata is nice-to-have; never fail the run for it
         subs = sec.get_json(SUBMISSIONS_URL.format(cik=cik), config.TTL_SUBMISSIONS)
         result.sic_description = str(subs.get("sicDescription") or "")
+        result.sic_code = str(subs.get("sic") or "")
         tickers = subs.get("tickers") or []
         exchanges = subs.get("exchanges") or []
         if tickers:

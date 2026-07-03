@@ -19,7 +19,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from .cache import Cache
-from .dashboard import FIG_W, render_dashboard
+from .dashboard import FIG_W, render_dashboard, render_health_report
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
 from .export import export_fundamentals_csv, export_prices_csv
@@ -41,7 +41,8 @@ class App:
         self.queue: "queue.Queue[tuple]" = queue.Queue()
         self.data: Optional[DashboardData] = None
         self.fig = None
-        self.fig_canvas: Optional[FigureCanvasTkAgg] = None
+        self.health_fig = None
+        self.canvases: list[FigureCanvasTkAgg] = []
         self.busy = False
 
         bar = ttk.Frame(root, padding=(10, 8))
@@ -173,12 +174,16 @@ class App:
         viewport = self.view.winfo_width() or 1160
         dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
         fig = render_dashboard(data, dpi=dpi)
-        if self.fig_canvas is not None:
-            self.fig_canvas.get_tk_widget().destroy()
-        self.data, self.fig = data, fig
-        self.fig_canvas = FigureCanvasTkAgg(fig, master=self.inner)
-        self.fig_canvas.draw()
-        self.fig_canvas.get_tk_widget().pack()
+        health_fig = render_health_report(data, dpi=dpi)
+        for canvas in self.canvases:
+            canvas.get_tk_widget().destroy()
+        self.canvases = []
+        self.data, self.fig, self.health_fig = data, fig, health_fig
+        for f in (fig, health_fig):  # page 1, then the Phase-3 health page
+            canvas = FigureCanvasTkAgg(f, master=self.inner)
+            canvas.draw()
+            canvas.get_tk_widget().pack(pady=(0, 12))
+            self.canvases.append(canvas)
         self.view.yview_moveto(0)
         self.view.xview_moveto(0)
         note = ""
@@ -187,17 +192,25 @@ class App:
         self._set_busy(False, f"{data.company} — done.{note}")
 
     def save_png(self):
-        fig, data = self.fig, self.data  # pin: a run finishing behind the modal
-        if fig is None or data is None:  # dialog must not swap them mid-save
+        # pin: a run finishing behind the modal dialog must not swap these
+        fig, health_fig, data = self.fig, self.health_fig, self.data
+        if fig is None or data is None:
             return
-        default = f"{data.ticker}_5y_dashboard_{data.generated.isoformat()}.png"
+        default = (f"{data.ticker}_{config.DISPLAY_YEARS}y_dashboard_"
+                   f"{data.generated.isoformat()}.png")
         path = filedialog.asksaveasfilename(
             defaultextension=".png", initialfile=default,
             filetypes=[("PNG image", "*.png")])
         if not path:
             return
         fig.savefig(path, dpi=150)
-        self.status_var.set(f"Saved {path}")
+        written = [path]
+        if health_fig is not None:
+            p = Path(path)
+            health_path = str(p.with_name(p.stem + "_health" + p.suffix))
+            health_fig.savefig(health_path, dpi=150)
+            written.append(health_path)
+        self.status_var.set("Saved " + " and ".join(written))
 
     def export_csv(self):
         data = self.data

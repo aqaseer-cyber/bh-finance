@@ -1,12 +1,14 @@
 # Forensic Stock Viz
 
 A Windows desktop tool for forensic financial analysts: type a US-listed
-ticker and get a single dashboard showing the company's performance over the
-past five years — price, growth, profitability, **earnings quality**, and the
-classic forensic red flags — built entirely from primary sources (as-filed SEC
-XBRL) with a CSV audit trail.
+ticker and get a two-page report covering the company's performance over the
+past **ten years** — price, growth, profitability, **earnings quality**, and a
+**Phase-3 forensic health scorecard** (Sloan ratio, Piotroski F, Altman Z,
+SBC/dilution, R&D capitalization audit) — built entirely from primary sources
+(as-filed SEC XBRL) with a CSV audit trail.
 
 ![Demo dashboard](docs/demo_dashboard.png)
+![Demo health checks](docs/demo_dashboard_health.png)
 
 ## Quick start (Windows)
 
@@ -30,18 +32,36 @@ run_windows.bat MSFT --no-cache  :: bypass the local cache
 To produce a standalone `ForensicStockViz.exe` (no Python on the target PC),
 run **`build_exe_windows.bat`** once; the binary lands in `dist\`.
 
-## What the dashboard shows
+## What the report shows
+
+**Page 1 — performance dashboard (10 fiscal years):**
 
 | Panel | Forensic reading |
 |---|---|
-| **KPI row** | Last close + 5y return, latest revenue + CAGR, net margin + 5y change, FCF + CAGR, diluted shares (red = dilution) |
-| **Price / drawdown** | 5y split-adjusted daily close; % below rolling peak with the max-drawdown point marked |
-| **Revenue** | Annual as-filed revenue, labelled per year, 5y CAGR |
+| **KPI row** | Last close + 10y return, latest revenue + CAGR, net margin change, FCF + CAGR, diluted shares (red = dilution) |
+| **Price / drawdown** | 10y split-adjusted daily close; % below rolling peak with the max-drawdown point marked |
+| **Revenue** | Annual as-filed revenue, labelled per year, CAGR |
 | **Margins** | Gross / operating / net margin trend — divergence between gross and net is where to start reading footnotes |
 | **Earnings quality** | Net income vs operating cash flow vs FCF. NI persistently ahead of CFO = accrual build-up |
-| **Accruals ratio (Sloan proxy)** | (NI − CFO) / average total assets, diverging bars; the dashed **+10% line** is the aggressive-accruals threshold |
+| **Operating accruals** | (NI − CFO) / average total assets, diverging bars; the dashed **+10% line** is the aggressive-accruals threshold |
 | **Diluted shares** | Dilution vs buyback over the window |
 | **Balance sheet** | Total borrowings vs cash & equivalents |
+
+**Page 2 — Phase-3 forensic health checks (master prompt §3):**
+
+| Check | Definition / threshold |
+|---|---|
+| **Sloan ratio (house variant, §3.3)** | (NI − CFO − CFI) / avg total assets; \|ratio\| > 10% flagged in red |
+| **Piotroski F-score (§3.3)** | Nine classic signals per year; ≥7 strong, ≤3 weak; `*` marks years with fewer than 9 evaluable |
+| **Altman Z (§3.3, Standard-Mfg)** | Original 1968 model with zone bands (distress < 1.81 / grey / safe > 2.99); MVE = FY-end close × diluted shares; suppressed for SIC-6xxx financials |
+| **SBC & dilution (§3.4)** | SBC in $ and % of revenue, % of latest FCF, 3-yr diluted share CAGR |
+| **R&D capitalization audit (§3.2)** | EBIT reported vs economic, R&D capitalized straight-line over n=5y (ASSUMPTION); shown only when R&D ≥ 5% of revenue |
+| **FCF vs FCF ex-SBC (house §2b)** | SBC treated as a real cost of the franchise |
+
+Not automatable from XBRL (analyst input, per the master prompt's Layer-B
+warning): the §3.1 **Adjustment Burden** (needs non-GAAP figures from earnings
+releases) and the bank/insurance-track checks (NIM, CET1, reserve
+development). Financial-sector filers get a caveat on the health page.
 
 The **CSV export** is the table-view twin of the chart: every plotted value,
 plus fiscal year-end dates, plus the exact XBRL tag used for each concept —
@@ -54,8 +74,9 @@ the audit trail for tying numbers back to the filings.
   Tag selection is **coverage- and recency-scored**: when a company migrates
   tags (e.g. `Revenues` → `RevenueFromContractWithCustomerExcludingAssessedTax`
   after ASC 606), the tag covering the recent fiscal years wins, so the series
-  can't silently end years ago. The chosen tags are printed on the dashboard
-  footer and in the CSV.
+  can't silently end years ago. Because a 10-year window usually spans such a
+  migration, years the winning tag misses are filled from the next-ranked tag
+  and the mix is **recorded in the audit string** (footer + CSV) — never silent.
 - **Prices** — Stooq daily CSV (keyless), falling back to the Yahoo Finance
   chart API. Split-adjusted closes. If both fail, the dashboard still renders
   from fundamentals alone.
