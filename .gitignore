@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.egg-info/
+.pytest_cache/
+*_5y_dashboard_*.png
+*_fundamentals.csv
+*_prices.csv
