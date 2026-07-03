@@ -122,9 +122,12 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
         data.net_income.append(ni)
         data.cfo.append(cfo)
         data.fcf.append(_sub(cfo, capex) if capex is not None else cfo)
-        data.gross_margin.append(_div(gp_all[i], rev))
-        data.operating_margin.append(_div(full("operating_income")[i], rev))
-        data.net_margin.append(_div(ni, rev))
+        # margins are meaningless against non-positive revenue (a negative
+        # numerator over negative revenue would render as a healthy margin)
+        pos_rev = rev if rev is not None and rev > 0 else None
+        data.gross_margin.append(_div(gp_all[i], pos_rev))
+        data.operating_margin.append(_div(full("operating_income")[i], pos_rev))
+        data.net_margin.append(_div(ni, pos_rev))
         data.diluted_shares.append(full("diluted_shares")[i])
         data.total_debt.append(debt_all[i])
         data.cash.append(full("cash")[i])

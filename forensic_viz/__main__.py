@@ -15,6 +15,22 @@ from .cache import Cache
 from .edgar import EdgarError
 
 
+def _report_error(message: str) -> None:
+    """Errors must surface even from a --windowed frozen exe (stderr is None)."""
+    if sys.stderr is not None:
+        print(f"error: {message}", file=sys.stderr)
+    if getattr(sys, "frozen", False) and sys.stderr is None:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Forensic Stock Viz", message)
+            root.destroy()
+        except Exception:
+            pass
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="forensic-viz",
@@ -48,7 +64,7 @@ def main(argv=None) -> int:
                 progress=lambda m: print(f"  {m}", flush=True),
             )
         except EdgarError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            _report_error(str(exc))
             return 2
 
     from .dashboard import render_dashboard

@@ -48,6 +48,8 @@ def build_dashboard_data(
         build_price_metrics(prices, data)
     except PriceError as exc:
         data.price_error = str(exc)
+    except Exception as exc:  # prices are best-effort; never sink the dashboard
+        data.price_error = f"unexpected price-data error: {exc}"
 
     parts = [fundamentals.exchange_ticker or ticker]
     if fundamentals.sic_description:

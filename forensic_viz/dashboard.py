@@ -206,6 +206,7 @@ def _panel_margins(ax, fig, d: DashboardData):
     ax.set_xticks(range(len(d.fy_labels)))
     ax.set_xticklabels(d.fy_labels)
     _pct_axis(ax)
+    label_slots = []
     for s, name, color in keep:
         xs = [i for i, v in enumerate(s) if v is not None]
         ys = [v for v in s if v is not None]
@@ -213,8 +214,15 @@ def _panel_margins(ax, fig, d: DashboardData):
                 solid_joinstyle="round", zorder=3)
         ax.plot(xs[-1], ys[-1], "o", color=color, markersize=5.6,
                 markeredgecolor=P.SURFACE, markeredgewidth=1.2, zorder=4)
-        _cap_label(ax, xs[-1], ys[-1], f"{name} {fmt_pct(ys[-1])}", above=True,
-                   fig=fig, size=7.2)
+        label_slots.append([xs[-1], ys[-1], f"{name} {fmt_pct(ys[-1])}"])
+    # dodge end labels that would overprint when two margins finish close together
+    min_gap = _px_to_y(ax, fig, 15)
+    label_slots.sort(key=lambda t: t[1])
+    for j in range(1, len(label_slots)):
+        if label_slots[j][1] - label_slots[j - 1][1] < min_gap:
+            label_slots[j][1] = label_slots[j - 1][1] + min_gap
+    for x, y, text in label_slots:
+        _cap_label(ax, x, y, text, above=True, fig=fig, size=7.2)
     _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
 
 

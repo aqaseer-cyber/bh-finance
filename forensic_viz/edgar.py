@@ -253,16 +253,33 @@ def _select_series(
     window_ends: List[dt.date],
     units: Tuple[str, ...],
     extractor,
+    prefer_larger_on_tie: bool = False,
 ) -> Tuple[Optional[str], Dict[dt.date, float]]:
-    best_tag, best_obs, best_score = None, {}, 0.0
+    """Best candidate tag by fiscal-year coverage.
+
+    Coverage ties break by list priority — except for revenue
+    (prefer_larger_on_tie), where the larger series wins: filers with material
+    non-ASC-606 revenue (lessors, banks, autos) tag both the income-statement
+    total (``Revenues``) and the 606-scope subtotal with identical coverage,
+    and picking the subtotal would silently understate the whole series.
+    """
+    best_key, best_tag, best_obs = None, None, {}
     for priority, tag in enumerate(candidates):
         tag_units = gaap.get(tag, {}).get("units")
         if not tag_units:
             continue
         obs = extractor(tag_units, units)
-        score = _score_tag(obs, window_ends) - priority * 1e-3  # stable tiebreak
-        if score > best_score:
-            best_tag, best_obs, best_score = tag, obs, score
+        if not obs:
+            continue
+        score = _score_tag(obs, window_ends)
+        if prefer_larger_on_tie:
+            covered = [abs(obs[e]) for e in window_ends if e in obs]
+            tie = sum(covered) / len(covered) if covered else 0.0
+        else:
+            tie = float(-priority)
+        key = (score, tie)
+        if best_key is None or key > best_key:
+            best_key, best_tag, best_obs = key, tag, obs
     return best_tag, best_obs
 
 
@@ -293,31 +310,28 @@ def parse_companyfacts(
         )
     entity = str(facts.get("entityName") or fallback_title or ticker.upper())
 
-    # Establish the fiscal-year spine from the best revenue tag, falling back
-    # to net income (some financials report no revenue-family tag). Candidates
-    # are scored against the union of recent year-ends so that a tag the
-    # company migrated away from years ago can never define the spine.
+    # Establish the fiscal-year spine as the union of recent year-ends across
+    # all revenue candidates (falling back to net income — some financials
+    # report no revenue-family tag). Using the union, not one tag's own years,
+    # means the first year after a tag migration is never silently dropped.
     window = _union_window(gaap, DURATION_TAGS["revenue"], _DEFAULT_UNITS, years)
-    spine_tag, spine_obs = _select_series(
-        gaap, DURATION_TAGS["revenue"], window, _DEFAULT_UNITS, _annual_duration_obs
-    )
-    if not spine_obs:
+    if not window:
         window = _union_window(gaap, DURATION_TAGS["net_income"], _DEFAULT_UNITS, years)
-        spine_tag, spine_obs = _select_series(
-            gaap, DURATION_TAGS["net_income"], window, _DEFAULT_UNITS, _annual_duration_obs
-        )
-    if not spine_obs:
+    if not window:
         raise EdgarError(
             f"{ticker.upper()}: no annual revenue or net-income series found in XBRL."
         )
-    fy_ends = sorted(spine_obs.keys())[-years:]
+    fy_ends = window
 
     series: Dict[str, List[Optional[float]]] = {}
     tags_used: Dict[str, str] = {}
 
     for concept, candidates in DURATION_TAGS.items():
         units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
-        tag, obs = _select_series(gaap, candidates, fy_ends, units, _annual_duration_obs)
+        tag, obs = _select_series(
+            gaap, candidates, fy_ends, units, _annual_duration_obs,
+            prefer_larger_on_tie=(concept == "revenue"),
+        )
         series[concept] = [obs.get(end) for end in fy_ends]
         if tag:
             tags_used[concept] = tag

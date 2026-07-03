@@ -6,6 +6,7 @@ the main thread (results are handed back through a queue polled with after()).
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import traceback
 from pathlib import Path
@@ -18,7 +19,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from .cache import Cache
-from .dashboard import render_dashboard
+from .dashboard import FIG_W, render_dashboard
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
 from .export import export_fundamentals_csv, export_prices_csv
@@ -32,8 +33,10 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title(f"Forensic Stock Viz {config.APP_VERSION} — 5-year performance dashboard")
-        root.geometry("1180x860")
-        root.minsize(900, 600)
+        w = min(1180, root.winfo_screenwidth() - 40)
+        h = min(860, root.winfo_screenheight() - 80)
+        root.geometry(f"{w}x{h}")
+        root.minsize(700, 500)
 
         self.queue: "queue.Queue[tuple]" = queue.Queue()
         self.data: Optional[DashboardData] = None
@@ -69,12 +72,15 @@ class App:
         holder.pack(fill=tk.BOTH, expand=True)
         self.view = tk.Canvas(holder, background="#f9f9f7", highlightthickness=0)
         vbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=self.view.yview)
-        self.view.configure(yscrollcommand=vbar.set)
+        hbar = ttk.Scrollbar(holder, orient=tk.HORIZONTAL, command=self.view.xview)
+        self.view.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        hbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.view.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.inner = ttk.Frame(self.view)
         self.inner_id = self.view.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", self._sync_scrollregion)
+        self._wheel_accum = 0.0
         self.view.bind_all("<MouseWheel>", self._on_mousewheel)      # Windows/macOS
         self.view.bind_all("<Button-4>", self._on_mousewheel_linux)  # X11
         self.view.bind_all("<Button-5>", self._on_mousewheel_linux)
@@ -87,7 +93,16 @@ class App:
         self.view.configure(scrollregion=self.view.bbox("all"))
 
     def _on_mousewheel(self, event):
-        self.view.yview_scroll(int(-event.delta / 120) * 3, "units")
+        if sys.platform == "darwin":  # Aqua Tk reports small per-notch deltas
+            self.view.yview_scroll(-event.delta, "units")
+            return
+        # Windows precision touchpads send |delta| < 120 per event; accumulate
+        # so smooth scrolling still moves the view instead of truncating to 0.
+        self._wheel_accum += event.delta
+        steps = int(self._wheel_accum / 120)
+        if steps:
+            self._wheel_accum -= steps * 120
+            self.view.yview_scroll(-steps * 3, "units")
 
     def _on_mousewheel_linux(self, event):
         self.view.yview_scroll(-3 if event.num == 4 else 3, "units")
@@ -142,12 +157,22 @@ class App:
                     messagebox.showerror("Could not build dashboard", payload)
         except queue.Empty:
             pass
-        self.root.after(120, self._poll_queue)
+        except Exception:
+            # a rendering failure must not kill the poll loop / lock the UI
+            self._set_busy(False, "Failed.")
+            messagebox.showerror(
+                "Could not render dashboard", traceback.format_exc(limit=3))
+        finally:
+            self.root.after(120, self._poll_queue)
 
     def _show(self, data: DashboardData):
         self.status_var.set("Rendering…")
         self.root.update_idletasks()
-        fig = render_dashboard(data, dpi=SCREEN_DPI)
+        # fit the on-screen figure to the viewport width (PNG export re-renders
+        # at full 150 dpi regardless), with the horizontal bar as the fallback
+        viewport = self.view.winfo_width() or 1160
+        dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+        fig = render_dashboard(data, dpi=dpi)
         if self.fig_canvas is not None:
             self.fig_canvas.get_tk_widget().destroy()
         self.data, self.fig = data, fig
@@ -155,40 +180,41 @@ class App:
         self.fig_canvas.draw()
         self.fig_canvas.get_tk_widget().pack()
         self.view.yview_moveto(0)
+        self.view.xview_moveto(0)
         note = ""
         if data.price_error:
             note = "  (price sources unavailable — fundamentals only)"
         self._set_busy(False, f"{data.company} — done.{note}")
-        self.save_btn.configure(state=tk.NORMAL)
-        self.csv_btn.configure(state=tk.NORMAL)
 
     def save_png(self):
-        if self.fig is None or self.data is None:
+        fig, data = self.fig, self.data  # pin: a run finishing behind the modal
+        if fig is None or data is None:  # dialog must not swap them mid-save
             return
-        default = f"{self.data.ticker}_5y_dashboard_{self.data.generated.isoformat()}.png"
+        default = f"{data.ticker}_5y_dashboard_{data.generated.isoformat()}.png"
         path = filedialog.asksaveasfilename(
             defaultextension=".png", initialfile=default,
             filetypes=[("PNG image", "*.png")])
         if not path:
             return
-        self.fig.savefig(path, dpi=150)
+        fig.savefig(path, dpi=150)
         self.status_var.set(f"Saved {path}")
 
     def export_csv(self):
-        if self.data is None:
+        data = self.data
+        if data is None:
             return
-        default = f"{self.data.ticker}_5y_fundamentals_{self.data.generated.isoformat()}.csv"
+        default = f"{data.ticker}_5y_fundamentals_{data.generated.isoformat()}.csv"
         path = filedialog.asksaveasfilename(
             defaultextension=".csv", initialfile=default,
             filetypes=[("CSV", "*.csv")])
         if not path:
             return
-        export_fundamentals_csv(self.data, path)
+        export_fundamentals_csv(data, path)
         written = [path]
-        if self.data.price_dates:
+        if data.price_dates:
             p = Path(path)
             price_path = str(p.with_name(p.stem + "_prices" + p.suffix))
-            export_prices_csv(self.data, price_path)
+            export_prices_csv(data, price_path)
             written.append(price_path)
         self.status_var.set("Saved " + " and ".join(written))
 
@@ -197,6 +223,12 @@ class App:
         state = tk.DISABLED if busy else tk.NORMAL
         self.analyze_btn.configure(state=state)
         self.demo_btn.configure(state=state)
+        if busy:
+            self.save_btn.configure(state=tk.DISABLED)
+            self.csv_btn.configure(state=tk.DISABLED)
+        elif self.data is not None:
+            self.save_btn.configure(state=tk.NORMAL)
+            self.csv_btn.configure(state=tk.NORMAL)
         self.status_var.set(status)
 
 

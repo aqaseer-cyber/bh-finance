@@ -90,7 +90,7 @@ def parse_yahoo_chart(payload: dict, symbol: str) -> PriceSeries:
         raise PriceError(f"Unexpected Yahoo response ({err or exc})")
     dates, closes = [], []
     for ts, c in zip(timestamps, closes_raw):
-        if c is None:
+        if c is None or c <= 0:  # 0.0 closes are a recurring Yahoo data glitch
             continue
         dates.append(dt.datetime.fromtimestamp(ts, dt.timezone.utc).date())
         closes.append(float(c))
@@ -116,34 +116,42 @@ def fetch_prices(
         symbol=stooq_sym, d1=start.strftime("%Y%m%d"), d2=today.strftime("%Y%m%d")
     )
     cached = cache.get(url, config.TTL_PRICES)
+    if cached is not None:
+        try:
+            return parse_stooq_csv(cached, ticker.upper())
+        except PriceError:
+            pass  # poisoned/stale cache entry — fall through to a fresh fetch
     try:
-        if cached is None:
-            resp = requests.get(
-                url,
-                timeout=config.HTTP_TIMEOUT,
-                headers={"User-Agent": f"{config.APP_NAME}/{config.APP_VERSION}"},
-            )
-            resp.raise_for_status()
-            cached = resp.text
-            if cached and len(cached) > 40:  # don't cache "No data" stubs
-                cache.put(url, cached)
-        return parse_stooq_csv(cached, ticker.upper())
+        resp = requests.get(
+            url,
+            timeout=config.HTTP_TIMEOUT,
+            headers={"User-Agent": f"{config.APP_NAME}/{config.APP_VERSION}"},
+        )
+        resp.raise_for_status()
+        series = parse_stooq_csv(resp.text, ticker.upper())
+        cache.put(url, resp.text)  # cache only bodies that parsed successfully
+        return series
     except (requests.RequestException, PriceError) as exc:
         errors.append(f"Stooq: {exc}")
 
     yurl = YAHOO_URL.format(symbol=_yahoo_symbol(ticker), years=years)
     cached = cache.get(yurl, config.TTL_PRICES)
+    if cached is not None:
+        try:
+            return parse_yahoo_chart(cached, ticker.upper())
+        except PriceError:
+            pass
     try:
-        if cached is None:
-            resp = requests.get(
-                yurl,
-                timeout=config.HTTP_TIMEOUT,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            )
-            resp.raise_for_status()
-            cached = resp.json()
-            cache.put(yurl, cached)
-        return parse_yahoo_chart(cached, ticker.upper())
+        resp = requests.get(
+            yurl,
+            timeout=config.HTTP_TIMEOUT,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        series = parse_yahoo_chart(payload, ticker.upper())
+        cache.put(yurl, payload)
+        return series
     except (requests.RequestException, ValueError, PriceError) as exc:
         errors.append(f"Yahoo: {exc}")
 
