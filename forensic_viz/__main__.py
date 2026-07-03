@@ -145,7 +145,54 @@ def main(argv=None) -> int:
                      help="§4.D named optionality carrying a rating above a deeply negative MoS")
     parser.add_argument("--xlsx", nargs="?", const="", metavar="PATH",
                         help="export a filled copy of forensic_valuation_model_v3.xlsx")
+    parser.add_argument("--ledger", action="store_true",
+                        help="print the verdict ledger (§5.7) and exit")
+    parser.add_argument("--ledger-import", metavar="JSON",
+                        help="import a verdict_ledger_seed.json-style file")
+    parser.add_argument("--compare", metavar="TICKERS",
+                        help="comma-separated tickers (2–4): build the "
+                             "side-by-side interactive comparison and exit")
     args = parser.parse_args(argv)
+
+    if args.ledger or args.ledger_import:
+        from .ledger import Ledger
+        led = Ledger()
+        if args.ledger_import:
+            n = led.import_seed(args.ledger_import)
+            print(f"imported {n} ledger rows from {args.ledger_import} "
+                  "[Likely] — verify vs original workbooks")
+        for r in led.list_verdicts():
+            mos = f"{r['mos'] * 100:+.1f}%" if r["mos"] is not None else "–"
+            fv = f"${r['fv_avg']:,.2f}" if r["fv_avg"] is not None else "–"
+            stale = "  STALE" if r["stale"] else ""
+            print(f"  {r['ticker']:<7} {r['rating'] or '–':<11} FV {fv:<10} "
+                  f"MoS {mos:<8} {r['coherence'] or '':<24} "
+                  f"age {r['age_days']}d{stale}")
+        return 0
+
+    if args.compare:
+        from .compare import MAX_TICKERS, build_compare_html
+        from .ledger import Ledger
+        from .pipeline import build_dashboard_data
+        tickers = [t.strip().upper() for t in args.compare.split(",") if t.strip()]
+        if not 2 <= len(tickers) <= MAX_TICKERS:
+            _report_error(f"--compare needs 2–{MAX_TICKERS} tickers")
+            return 2
+        datas = []
+        try:
+            for t in tickers:
+                print(f"  fetching {t}…", flush=True)
+                datas.append(build_dashboard_data(
+                    t, cache=Cache(enabled=not args.no_cache),
+                    track="auto", years=args.years))
+        except EdgarError as exc:
+            _report_error(str(exc))
+            return 2
+        rows = {r["ticker"]: r for r in Ledger().list_verdicts()}
+        out = args.out or ("_vs_".join(tickers) + "_compare.html")
+        build_compare_html(datas, out, ledger_rows=rows)
+        print(f"wrote {out}")
+        return 0
 
     if args.gui or not args.ticker:
         from .gui import run_gui
@@ -247,6 +294,12 @@ def main(argv=None) -> int:
             line += f"  stressed {verdict.stressed_mos * 100:+.1f}%"
         print(line)
         print(f"  rating gate: {verdict.coherence}")
+        try:  # §5.7: no verdict leaves the session unlogged
+            from .ledger import Ledger
+            Ledger().upsert_verdict(data, res=res, verdict=verdict)
+            print("  ledger updated (see --ledger)")
+        except Exception:
+            pass
 
     if args.csv:
         fpath = base + "_fundamentals.csv"

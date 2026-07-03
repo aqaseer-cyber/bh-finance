@@ -253,9 +253,140 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
                      + f.to_html(full_html=False, include_plotlyjs=(i == 0),
                                  config={"displaylogo": False})
                      + "</div>")
+    sandbox = _sandbox_html(d, res)
+    if sandbox:
+        parts.append(sandbox)
     parts.append("<div class='note'>Sources: SEC EDGAR XBRL (as filed), "
                  "Stooq/Yahoo prices. All values also in the CSV audit trail. "
                  "Not investment advice.</div></body></html>")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("".join(parts))
     return path
+
+
+def _latest(seq):
+    for v in reversed(seq or []):
+        if v is not None:
+            return v
+    return None
+
+
+def _sandbox_html(d: DashboardData, res=None) -> str:
+    """Live DCF sandbox: sliders drive an in-browser replica of the §4.A
+    2-stage model (fade, TV, equity bridge, reverse DCF). The Python engine
+    stays the source of truth for every export — this is exploration only."""
+    base_a = _latest(d.fcff)
+    shares = _latest(d.diluted_shares)
+    if d.last_close is None or not shares or base_a is None or base_a <= 0 \
+            or d.track in ("bank", "insurance"):
+        return ""  # DCF sandbox only where an FCFF base exists
+    sbc = _latest(d.sbc) or 0.0
+    base_b = max(base_a - sbc, 0.0)
+    debt, cash = _latest(d.total_debt), _latest(d.cash)
+    net_debt = (debt or 0.0) - (cash or 0.0)
+    build = getattr(d, "wacc_build", None)
+    wacc0 = build.wacc if build is not None and build.wacc else 0.09
+    est = d.analyst_estimates or {}
+    g0_0, g_t0 = est.get("g_avg", 0.05) or 0.05, 0.02
+    if res is not None and res.method == "dcf" and res._inputs is not None:
+        base_case = res._inputs.cases.get("Base")
+        if base_case and base_case.g0 is not None:
+            g0_0, g_t0 = base_case.g0, base_case.g_term
+        if res.discount_rate:
+            wacc0 = res.discount_rate
+
+    return f"""
+<div class="chart" style="padding:18px">
+<h2 style="font-size:16px;margin:0 0 2px">Valuation sandbox — live DCF (§4.A)</h2>
+<div class="sub">Drag to test rates; the app's valuation page and exports stay
+ the audited record. FCFF 2-stage, 10-year linear fade; equity bridge
+ net debt = ${net_debt / 1e6:,.0f}mm; {shares / 1e6:,.1f}mm diluted shares;
+ P₀ ${d.last_close:,.2f}.</div>
+<div style="display:flex;gap:36px;flex-wrap:wrap;margin-top:12px">
+ <div style="min-width:330px">
+  <label>WACC <b id="waccv"></b></label><br>
+  <input id="wacc" type="range" min="3" max="18" step="0.1" value="{wacc0 * 100:.1f}" style="width:300px"><br>
+  <label>Stage-1 growth g₀ <b id="g0v"></b></label><br>
+  <input id="g0" type="range" min="-10" max="30" step="0.5" value="{g0_0 * 100:.1f}" style="width:300px"><br>
+  <label>Terminal growth g <b id="gtv"></b></label><br>
+  <input id="gt" type="range" min="0" max="4" step="0.1" value="{g_t0 * 100:.1f}" style="width:300px"><br>
+  <label>Base FCFF ($mm) <input id="basemm" type="number" step="50"
+     value="{base_a / 1e6:.0f}" style="width:110px"></label>
+  <label style="margin-left:14px"><input id="exsbc" type="checkbox">
+     ex-SBC (−${sbc / 1e6:,.0f}mm, house §2b)</label>
+ </div>
+ <div style="min-width:260px">
+  <div class="kpi"><div class="kpi-label">Fair value / share</div>
+    <div class="kpi-value" id="fv">–</div>
+    <div class="kpi-delta" id="mos"></div></div>
+  <div style="font-size:12.5px;color:{P.INK_SECONDARY};margin-top:8px" id="detail"></div>
+  <div style="font-size:12px;color:{P.DELTA_BAD};margin-top:6px" id="warn"></div>
+ </div>
+ <div id="sandbox-chart" style="width:380px;height:190px"></div>
+</div>
+<script>
+(function() {{
+  const SHARES={shares:.6g}, PRICE={d.last_close:.6g}, NET_DEBT={net_debt:.6g},
+        BASE_A={base_a:.6g}, SBC={sbc:.6g}, CAP=0.035;
+  const el = id => document.getElementById(id);
+  function dcf(base, wacc, g0, g) {{
+    if (wacc <= g) return null;
+    let f = base, pv = 0;
+    for (let i = 1; i <= 10; i++) {{
+      const gi = g0 + (g - g0) * (i - 1) / 9;
+      f *= 1 + gi;
+      pv += f / Math.pow(1 + wacc, i);
+    }}
+    const tv = f * (1 + g) / (wacc - g);
+    return {{ ev: pv + tv / Math.pow(1 + wacc, 10),
+              tvShare: (tv / Math.pow(1 + wacc, 10)) / (pv + tv / Math.pow(1 + wacc, 10)) }};
+  }}
+  function fmtPct(x) {{ return (x >= 0 ? "+" : "") + (100 * x).toFixed(1) + "%"; }}
+  function update() {{
+    const wacc = +el("wacc").value / 100, g0 = +el("g0").value / 100,
+          g = +el("gt").value / 100;
+    let base = (+el("basemm").value || 0) * 1e6;
+    if (el("exsbc").checked) base = Math.max(base - SBC, 0);
+    el("waccv").textContent = (wacc * 100).toFixed(1) + "%";
+    el("g0v").textContent = (g0 * 100).toFixed(1) + "%";
+    el("gtv").textContent = (g * 100).toFixed(1) + "%";
+    const warn = [];
+    if (g > CAP) warn.push("terminal g above the 3.5% GDP cap (§4.A)");
+    const out = (base > 0) ? dcf(base, wacc, g0, g) : null;
+    if (!out) {{
+      el("fv").textContent = "–";
+      el("mos").textContent = "";
+      el("warn").textContent = base > 0 ? "WACC must exceed terminal g" :
+                                          "base FCFF must be positive";
+      return;
+    }}
+    const equity = out.ev - NET_DEBT, fv = equity / SHARES,
+          mos = fv / PRICE - 1,
+          impliedG = wacc - base / (PRICE * SHARES + NET_DEBT);
+    el("fv").textContent = "$" + fv.toFixed(2);
+    el("mos").textContent = fmtPct(mos) + " MoS vs P\\u2080";
+    el("mos").style.color = mos >= 0 ? "{P.DELTA_GOOD}" : "{P.DELTA_BAD}";
+    el("detail").textContent = "EV $" + (out.ev / 1e9).toFixed(1) + "B \\u00b7 TV " +
+      (100 * out.tvShare).toFixed(0) + "% of EV \\u00b7 reverse-DCF implied g " +
+      fmtPct(impliedG) + (impliedG > CAP ? " (market pays for optionality, \\u00a74.D)" : "");
+    el("warn").textContent = warn.join("; ");
+    Plotly.react("sandbox-chart", [{{
+      type: "bar", orientation: "h", y: ["FV"], x: [fv],
+      marker: {{ color: mos >= 0 ? "{P.DELTA_GOOD}" : "#d03b3b" }},
+      hovertemplate: "$%{{x:,.2f}}<extra>FV</extra>"
+    }}], {{
+      margin: {{ l: 30, r: 10, t: 8, b: 28 }}, height: 190, width: 380,
+      xaxis: {{ tickformat: "$,.0f",
+               range: [0, Math.max(fv, PRICE) * 1.25] }},
+      shapes: [{{ type: "line", x0: PRICE, x1: PRICE, y0: -0.5, y1: 0.5,
+                 line: {{ color: "{P.INK_SECONDARY}", width: 2 }} }}],
+      annotations: [{{ x: PRICE, y: 0.5, yanchor: "bottom",
+                      text: "P\\u2080 $" + PRICE.toFixed(2), showarrow: false }}],
+      paper_bgcolor: "{P.SURFACE}", plot_bgcolor: "{P.SURFACE}"
+    }}, {{ displayModeBar: false }});
+  }}
+  ["wacc", "g0", "gt", "basemm", "exsbc"].forEach(id =>
+    el(id).addEventListener("input", update));
+  update();
+}})();
+</script></div>"""

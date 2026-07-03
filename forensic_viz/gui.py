@@ -34,7 +34,9 @@ from .edgar import EdgarError
 from .export import (
     export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
 )
+from .compare import MAX_TICKERS, build_compare_html
 from .interactive import build_html
+from .ledger import Ledger
 from .metrics import (
     TRACKS, DashboardData, apply_track, compute_altman, set_adjusted_ni,
 )
@@ -124,7 +126,9 @@ class App:
         track_box.bind("<<ComboboxSelected>>", lambda _e: self._on_track_change())
 
         self.analyze_btn = ttk.Button(side, text="Analyze", command=self.analyze)
-        self.analyze_btn.pack(fill=tk.X, pady=(2, 10))
+        self.analyze_btn.pack(fill=tk.X, pady=(2, 4))
+        self.compare_btn = ttk.Button(side, text="Compare…", command=self.compare)
+        self.compare_btn.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Separator(side).pack(fill=tk.X, pady=6)
         self.value_btn = ttk.Button(side, text="Intrinsic value…",
@@ -157,16 +161,128 @@ class App:
         # ---------------- tabbed viewer ----------------
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.ledger = Ledger()
+        self._build_watchlist_tab()
         self.tabs = {}
         for name in PAGES:
             tab = _ScrollTab(self.notebook)
             self.tabs[name] = tab
             self.notebook.add(tab, text=name, state=tk.DISABLED)
+        self.refresh_watchlist()
 
         root.bind_all("<MouseWheel>", self._on_mousewheel)      # Windows/macOS
         root.bind_all("<Button-4>", self._on_mousewheel_linux)  # X11
         root.bind_all("<Button-5>", self._on_mousewheel_linux)
         self.root.after(120, self._poll_queue)
+
+    # ------------------------------------------------------------ watchlist
+
+    def _build_watchlist_tab(self):
+        frame = ttk.Frame(self.notebook, padding=(8, 8))
+        self.notebook.add(frame, text="Watchlist")
+        cols = ("ticker", "rating", "fv", "mos", "smos", "price", "asof",
+                "age", "gate", "trig")
+        heads = ("Ticker", "Rating", "FV avg", "MoS", "Stressed", "P₀",
+                 "As of", "Age (d)", "Gate", "Open trig")
+        widths = (70, 80, 80, 70, 70, 70, 90, 60, 150, 70)
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings",
+                                 selectmode="browse")
+        for c, h, w in zip(cols, heads, widths):
+            self.tree.heading(c, text=h)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.tag_configure("stale", foreground="#d03b3b")
+        vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.tree.bind("<Double-1>", lambda _e: self._rerun_selected())
+        btns = ttk.Frame(frame)
+        btns.pack(side=tk.BOTTOM, anchor="w", pady=(6, 0))
+        ttk.Button(btns, text="Re-run selected",
+                   command=self._rerun_selected).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Remove selected",
+                   command=self._remove_selected).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(btns, foreground="#898781",
+                  text="Verdict ledger (§5.7) — rows log automatically when a "
+                       "valuation runs; red = stale (> ~5 trading days, house §8). "
+                       "Double-click to re-run.").pack(side=tk.LEFT, padx=(14, 0))
+
+    def refresh_watchlist(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for rec in self.ledger.list_verdicts():
+            def pct(v):
+                return f"{v * 100:+.1f}%" if v is not None else "–"
+            self.tree.insert("", tk.END, values=(
+                rec["ticker"], rec["rating"] or "–",
+                f"${rec['fv_avg']:,.2f}" if rec["fv_avg"] is not None else "–",
+                pct(rec["mos"]), pct(rec["stressed_mos"]),
+                f"${rec['price']:,.2f}" if rec["price"] is not None else "–",
+                rec["price_date"] or "–",
+                rec["age_days"] if rec["age_days"] is not None else "–",
+                rec["coherence"] or "–", rec["open_triggers"] or "",
+            ), tags=("stale",) if rec["stale"] else ())
+
+    def _selected_ticker(self) -> Optional[str]:
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        return str(self.tree.item(sel[0], "values")[0])
+
+    def _rerun_selected(self):
+        ticker = self._selected_ticker()
+        if ticker and not self.busy:
+            self.ticker_var.set(ticker)
+            self.analyze()
+
+    def _remove_selected(self):
+        ticker = self._selected_ticker()
+        if ticker and messagebox.askyesno(
+                "Remove from ledger",
+                f"Remove {ticker} and its triggers from the verdict ledger?"):
+            self.ledger.remove(ticker)
+            self.refresh_watchlist()
+
+    # -------------------------------------------------------------- compare
+
+    def compare(self):
+        if self.busy:
+            return
+        from tkinter import simpledialog
+        raw = simpledialog.askstring(
+            "Compare tickers",
+            f"Enter 2–{MAX_TICKERS} tickers, comma-separated (e.g. AAPL, MSFT):",
+            parent=self.root)
+        if not raw:
+            return
+        tickers = [t.strip().upper() for t in raw.replace(";", ",").split(",")
+                   if t.strip()][:MAX_TICKERS]
+        if len(tickers) < 2:
+            messagebox.showinfo("Compare", "Enter at least two tickers.")
+            return
+        self._set_busy(True, f"Comparing {', '.join(tickers)}…")
+        threading.Thread(target=self._compare_worker, args=(tickers,),
+                         daemon=True).start()
+
+    def _compare_worker(self, tickers):
+        try:
+            datas = []
+            for t in tickers:
+                self.queue.put(("status", f"Fetching {t}…"))
+                datas.append(build_dashboard_data(
+                    t, cache=Cache(),
+                    progress=lambda m: None,
+                    track="auto", years=int(self.years_var.get())))
+            rows = {r["ticker"]: r for r in Ledger().list_verdicts()}  # own conn (thread)
+            out = Path(tempfile.gettempdir()) / (
+                "_vs_".join(tickers) + "_compare.html")
+            build_compare_html(datas, str(out), ledger_rows=rows)
+            self.queue.put(("compare", str(out)))
+        except EdgarError as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception:
+            self.queue.put(("error", "Compare failed:\n"
+                            + traceback.format_exc(limit=3)))
 
     # ------------------------------------------------------------ scrolling
 
@@ -230,6 +346,9 @@ class App:
                     self.status_var.set(payload)
                 elif kind == "data":
                     self._show(payload)
+                elif kind == "compare":
+                    self._set_busy(False, "Comparison opened in the browser.")
+                    webbrowser.open(Path(payload).as_uri())
                 elif kind == "error":
                     self._set_busy(False, "Failed.")
                     messagebox.showerror("Could not build report", payload)
@@ -264,10 +383,11 @@ class App:
         self._set_busy(False, f"{data.company} — done.{note}")
 
     def _refresh_tabs(self, select: Optional[str] = None):
-        for i, name in enumerate(PAGES):
+        for name in PAGES:
             fig = self.figs.get(name)
             self.tabs[name].show(fig)
-            self.notebook.tab(i, state=tk.NORMAL if fig is not None else tk.DISABLED)
+            self.notebook.tab(self.tabs[name],
+                              state=tk.NORMAL if fig is not None else tk.DISABLED)
         if select and self.figs.get(select) is not None:
             self.notebook.select(self.tabs[select])
 
@@ -299,9 +419,14 @@ class App:
         self.figs["Verdict"] = verdict_fig
         self.valuation_res = res
         self.verdict = verdict
+        try:  # §5.7: no verdict leaves the session unlogged
+            self.ledger.upsert_verdict(self.data, res=res, verdict=verdict)
+            self.refresh_watchlist()
+        except Exception:
+            pass  # the ledger is a convenience store, never a blocker
         self._refresh_tabs(select="Valuation")
         gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
-        self.status_var.set(f"Intrinsic value + verdict ready.{gate}")
+        self.status_var.set(f"Intrinsic value + verdict ready (ledger updated).{gate}")
 
     def analyst_inputs(self):
         if self.data is None or self.busy:
@@ -406,6 +531,7 @@ class App:
         self.busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
         self.analyze_btn.configure(state=state)
+        self.compare_btn.configure(state=state)
         buttons = (self.save_btn, self.csv_btn, self.value_btn, self.inputs_btn,
                    self.xlsx_btn, self.html_btn)
         if busy:

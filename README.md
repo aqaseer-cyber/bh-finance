@@ -24,11 +24,32 @@ untouched, and a to-do list of the analyst cells with suggested sources
    virtual environment and installs the dependencies; later runs start
    instantly.
 3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10) and
-   **Track**, press **Analyze**. The report opens as tabs (Dashboard / Unit
-   economics / Health / Valuation / Verdict); **Interactive report ↗** opens
-   the zoomable, hover-tooltip HTML rendition in your browser, and
-   **Save PDF (A4)…** / **Export CSV…** / **Fill workbook…** produce the
-   deliverables.
+   **Track**, press **Analyze**. The report opens as tabs (Watchlist /
+   Dashboard / Unit economics / Health / Valuation / Verdict);
+   **Interactive report ↗** opens the zoomable, hover-tooltip HTML rendition
+   in your browser, and **Save PDF (A4)…** / **Export CSV…** /
+   **Fill workbook…** produce the deliverables.
+
+**Watchlist & verdict ledger (§5.7).** Every computed verdict logs
+automatically to a local SQLite ledger (`ledger.db` next to the cache); the
+Watchlist tab shows ticker / rating / FV_avg / MoS / stressed MoS / price
+date / age, flags stale rows in red (> ~5 trading days, house §8), tracks
+open triggers, and re-runs a name on double-click. CLI: `--ledger` prints it,
+`--ledger-import seed.json` loads your `verdict_ledger_seed.json` (imported
+rows are marked [Likely] — verify vs the original workbooks).
+
+**Compare.** **Compare…** (or `--compare "AAPL,MSFT,GOOG"`) builds a
+side-by-side interactive page for 2–4 tickers — indexed price and revenue
+(common base, one axis), net margin, ROIC, FCF margin, and a KPI table that
+pulls each name's ledger rating/FV/MoS. Colors are fixed per ticker across
+every chart (color follows the entity).
+
+**Valuation sandbox.** The interactive report embeds a **live DCF** for
+Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
+FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g
+recompute instantly in the browser — a JS replica of the §4.A engine,
+parity-tested against the Python model, which remains the audited record for
+every export.
 
 Command line (same launcher):
 
