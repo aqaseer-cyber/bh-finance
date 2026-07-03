@@ -118,10 +118,30 @@ class DashboardData:
     loss_ratio: List[Optional[float]] = field(default_factory=list)  # insurance
     combined_ratio: List[Optional[float]] = field(default_factory=list)
     premiums_earned: List[Optional[float]] = field(default_factory=list)
+    # raw series the workbook exporter writes verbatim
+    cogs: List[Optional[float]] = field(default_factory=list)
+    inventory: List[Optional[float]] = field(default_factory=list)
+    nii: List[Optional[float]] = field(default_factory=list)
+    policy_benefits: List[Optional[float]] = field(default_factory=list)
+    uw_expense: List[Optional[float]] = field(default_factory=list)
 
     # Phase-2 analyst inputs (§2.3/§2.4): judgment, printed on the report
     thesis: str = ""
     terminal_risk: str = ""
+
+    # Workbook ties & bridge legs (Control / Phase1_Anchor tabs)
+    eps_diluted: List[Optional[float]] = field(default_factory=list)
+    dna: List[Optional[float]] = field(default_factory=list)
+    basic_shares: List[Optional[float]] = field(default_factory=list)
+    dividends_paid: List[Optional[float]] = field(default_factory=list)
+    minority_interest: List[Optional[float]] = field(default_factory=list)
+    preferred_equity: List[Optional[float]] = field(default_factory=list)
+    latest_10k_date: str = ""
+    latest_10q_date: str = ""
+
+    # Phase-5 analyst verdict inputs (§5.3): judgment, gated for coherence
+    rating: str = ""
+    optionality: str = ""
 
     # Altman inputs held until FY-end prices are known (see compute_altman)
     _z_parts: List[Optional[dict]] = field(default_factory=list)
@@ -243,6 +263,12 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
             eq / ta_i if eq is not None and ta_i and ta_i > 0 else None)
         data.credit_allowance.append(full("credit_allowance")[i])
         data.credit_provision.append(full("credit_provision")[i])
+        data.eps_diluted.append(full("eps_diluted")[i])
+        data.dna.append(full("dna")[i])
+        data.basic_shares.append(full("basic_shares")[i])
+        data.dividends_paid.append(full("dividends_paid")[i])
+        data.minority_interest.append(full("minority_interest")[i])
+        data.preferred_equity.append(full("preferred_equity")[i])
 
         prev_rev = revenue_all[i - 1] if i > 0 else None
         data.revenue_yoy.append(
@@ -458,6 +484,13 @@ def _unit_economics_year(data: DashboardData, f: AnnualFundamentals, i: int,
     data.combined_ratio.append(
         _div(benefits + uw, pos_nep)
         if benefits is not None and uw is not None else None)
+
+    # raw series for the workbook exporter
+    data.cogs.append(cogs)
+    data.inventory.append(g("inventory", i))
+    data.nii.append(g("net_interest_income", i))
+    data.policy_benefits.append(benefits)
+    data.uw_expense.append(uw)
 
 
 TRACKS = ("auto", "standard", "bank", "insurance", "reit", "sotp")

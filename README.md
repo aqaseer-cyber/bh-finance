@@ -1,12 +1,15 @@
 # Forensic Stock Viz
 
 A Windows desktop tool for forensic financial analysts: type a US-listed
-ticker and get a report covering the company's performance over the past
-**ten years** — price, growth, profitability, **earnings quality**, a
-**Phase-3 forensic health scorecard** (Sloan ratio, Piotroski F, Altman Z,
-SBC/dilution, R&D capitalization audit), and a **Bear/Base/Bull intrinsic
-value calculator** with margin of safety vs the current price — built from
-primary sources (as-filed SEC XBRL) with a CSV audit trail.
+ticker and get the full five-phase report — 10-year performance dashboard,
+**Phase-2 unit economics**, **Phase-3 forensic health scorecard**,
+**Bear/Base/Bull intrinsic value** with auto-built WACC, and the **Phase-5
+stress test + coherence-gated verdict** — built from primary sources
+(as-filed SEC XBRL) with a CSV audit trail. It can also **fill the
+`forensic_valuation_model_v3.xlsx` shell** (Fill workbook… / `--xlsx`):
+57+ of the 133 blue input cells populated from the app's data, formulas
+untouched, and a to-do list of the analyst cells with suggested sources
+(see [docs/SOURCE_MAP.md](docs/SOURCE_MAP.md)).
 
 ![Demo dashboard](docs/demo_dashboard.png)
 ![Demo unit economics](docs/demo_dashboard_unit.png)
@@ -100,6 +103,17 @@ the earnings release (not in XBRL), so it's analyst input: the **Fluff
 filter…** button (or `--adjusted-ni`) takes adjusted net income and the app
 computes |Adjusted − GAAP| / |GAAP|, flagging > 20% on the health-page KPI row.
 NIM and insurance reserve development remain analyst work.
+
+**Page 5 — Phase-5 stress & verdict (master prompt §5.1–5.3):** computed
+automatically with every valuation. Dual-track FVs (Track A = as-reported
+FCFF with Bear growths; Track B = ex-SBC base with Base growths, house §2b),
+**FV_avg = average(A, B)** and MoS exactly as the workbook computes them,
+the track-specific stress (Standard −5% FCFF₁ · Banks −100 bps NIM ·
+Insurance +5 pts CR · REITs +100 bps yield) re-run through the same model,
+and the **rating coherence gate** mirroring Control!B67: MoS < −15% with a
+Hold/Buy rating → CHECK, unless the §4.D optionality is named. The rating
+itself is yours (dialog dropdown / `--rating`); the app never invents one.
+Sizing (§5.6) and the verdict ledger (§5.7) are not yet ported.
 
 **Page 4 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
 

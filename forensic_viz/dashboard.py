@@ -1314,6 +1314,145 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
     return fig
 
 
+# ----------------------------------------------------- verdict page (page 5)
+
+def _panel_stress(ax, fig, res, v):
+    _panel_title(ax, "Stress test (§5.1)",
+                 f"{v.shock_label} · like-for-like per-share FV, base vs stressed")
+    cats = [(v.track_a_label.split(" — ")[0], v.fv_a),
+            (v.track_b_label.split(" — ")[0], v.fv_b),
+            ("FV average", v.fv_avg)]
+    stressed = {0: v.stressed_fv_a, 1: v.stressed_fv_b, 2: v.stressed_fv_avg}
+    labels = [c[0] for c in cats]
+    base_vals = [c[1] for c in cats]
+    flat = [x for x in base_vals + list(stressed.values()) + [res.price]
+            if x is not None]
+    if not any(x is not None for x in base_vals):
+        _panel_note(ax, "FV unavailable — see the notes below")
+        return
+    ax.set_xlim(-0.5, len(labels) - 0.5)
+    lo, hi = min(flat), max(flat)
+    span = (hi - lo) or hi or 1.0
+    ax.set_ylim(max(0, lo - 0.25 * span), hi + 0.3 * span)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels)
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.axhline(res.price, color=P.INK_SECONDARY, linewidth=1.2, zorder=2)
+    _zone_label(ax, -0.48, res.price + _px_to_y(ax, fig, 3),
+                f"P₀ ${res.price:,.2f}")
+    width, offsets = _bar_geometry(ax, fig, 2)
+    for i, val in enumerate(base_vals):
+        if val is None:
+            continue
+        sv = stressed.get(i)
+        if sv is not None:
+            _rounded_bar(ax, fig, i + offsets[0], val, width, P.SERIES[0])
+            _rounded_bar(ax, fig, i + offsets[1], sv, width, P.SERIES[5])
+            # dodge the pair of cap labels horizontally so they never collide
+            _cap_label(ax, i + offsets[0] - _px_to_x(ax, fig, 14), val,
+                       f"${val:,.2f}", above=True, fig=fig, size=6.8)
+            _cap_label(ax, i + offsets[1] + _px_to_x(ax, fig, 14), sv,
+                       f"${sv:,.2f}", above=True, fig=fig, size=6.8,
+                       color=P.DELTA_BAD)
+        else:
+            _rounded_bar(ax, fig, i, val, width, P.SERIES[0])
+            _cap_label(ax, i, val, f"${val:,.2f}", above=True, fig=fig, size=6.8)
+    _legend(ax, [_series_swatch(P.SERIES[0]), _series_swatch(P.SERIES[5])],
+            ["Base", "Stressed"])
+
+
+def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
+                   dpi: int = DPI) -> Figure:
+    """Page 5 — Phase-5 stress, dual-track FV average, MoS and rating gate."""
+    import textwrap
+
+    matplotlib.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": P.FONT_STACK,
+        "text.color": P.INK_PRIMARY,
+        "figure.facecolor": P.SURFACE,
+        "savefig.facecolor": P.SURFACE,
+    })
+    fig = Figure(figsize=(FIG_W, 7.9), dpi=dpi)
+    fig.patch.set_facecolor(P.SURFACE)
+    gs = fig.add_gridspec(
+        3, 1, height_ratios=[1.35, 2.0, 1.15],
+        left=0.055, right=0.965, top=0.95, bottom=0.065, hspace=0.55,
+    )
+
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    ax_header.text(0, 1.04, f"{d.company} — verdict", fontsize=17.5,
+                   fontweight="bold", color=P.INK_PRIMARY,
+                   transform=ax_header.transAxes, va="top")
+    ax_header.text(0, 0.80, f"Phase-5 stress & rating gate · {d.ticker} · "
+                            f"{d.track.title()} track · {res.method_label}",
+                   fontsize=9, color=P.INK_SECONDARY,
+                   transform=ax_header.transAxes, va="top")
+    ax_header.text(1.0, 1.04, f"Generated {d.generated.isoformat()}",
+                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
+                   va="top", ha="right")
+    if d.demo:
+        ax_header.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
+                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
+                       transform=ax_header.transAxes, va="top", ha="right")
+    tiles = []
+    if v.fv_a is not None:
+        tiles.append(("Track A FV", f"${v.fv_a:,.2f}", "skeptic", True))
+    if v.fv_b is not None:
+        tiles.append(("Track B FV", f"${v.fv_b:,.2f}", "institutional", True))
+    if v.fv_avg is not None:
+        tiles.append(("FV average", f"${v.fv_avg:,.2f}",
+                      f"{fmt_pct(v.mos, signed=True)} MoS", (v.mos or 0) >= 0))
+    if v.stressed_mos is not None:
+        tiles.append(("Stressed MoS", fmt_pct(v.stressed_mos, signed=True),
+                      v.shock_label.split("(")[0].strip(), v.stressed_mos >= 0))
+    gate_ok = v.coherence.startswith("ok")
+    tiles.append(("Rating", v.rating or "—",
+                  v.coherence if not gate_ok else "coherent with MoS", gate_ok))
+    _draw_kpi_row(ax_header, tiles[:6])
+
+    ax_stress = fig.add_subplot(gs[1])
+    _style_axes(ax_stress)
+    _panel_stress(ax_stress, fig, res, v)
+
+    ax_text = fig.add_subplot(gs[2])
+    ax_text.set_axis_off()
+    y = 0.95
+    rows = [
+        ("Tracks", f"{v.track_a_label}  ·  {v.track_b_label}", P.INK_SECONDARY),
+        ("MoS (§5.2)",
+         f"base {fmt_pct(v.mos, signed=True)}"
+         + (f" · stressed {fmt_pct(v.stressed_mos, signed=True)}"
+            if v.stressed_mos is not None else " · stressed n/a"),
+         P.INK_PRIMARY),
+        ("Rating gate (§5.3)", f"{v.coherence} — {v.coherence_detail}",
+         P.DELTA_BAD if v.coherence.startswith("CHECK") else P.INK_SECONDARY),
+    ]
+    if d.terminal_risk:
+        rows.append(("Terminal risk (§2.3)", d.terminal_risk, P.DELTA_BAD))
+    if v.optionality:
+        rows.append(("Named optionality (§4.D)", v.optionality, P.INK_SECONDARY))
+    for note in v.notes:
+        rows.append(("Note", note, P.INK_MUTED))
+    for label, text, color in rows:
+        wrapped = textwrap.fill(f"{label}:  {text}", width=170)
+        ax_text.text(0, y, wrapped, fontsize=8.2, color=color,
+                     transform=ax_text.transAxes, va="top", linespacing=1.4)
+        y -= 0.115 * (wrapped.count("\n") + 1) + 0.035
+    fig.text(0.055, 0.018,
+             "FV_avg = average(Track A, Track B); coherence gate mirrors the "
+             "workbook (Control!B67): MoS < −15% with Hold/Buy → CHECK unless "
+             "the §4.D optionality is named. Sizing (§5.6) and the ledger "
+             "(§5.7) are not yet ported.  Not investment advice.",
+             fontsize=6.6, color=P.INK_MUTED, va="bottom")
+
+    if out_path:
+        fig.savefig(out_path, dpi=dpi)
+    return fig
+
+
 # ------------------------------------------------------------------- public
 
 def render_dashboard(d: DashboardData, out_path: Optional[str] = None,

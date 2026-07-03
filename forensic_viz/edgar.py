@@ -103,6 +103,19 @@ DURATION_TAGS: Dict[str, List[str]] = {
     "policy_benefits": ["PolicyholderBenefitsAndClaimsIncurredNet"],
     "premiums_earned": ["PremiumsEarnedNet"],
     "underwriting_expense": ["OtherUnderwritingExpense"],
+    # Workbook ties & bridge legs (Control/Phase1 tabs)
+    "eps_diluted": ["EarningsPerShareDiluted"],
+    "dna": [
+        "DepreciationDepletionAndAmortization",
+        "DepreciationAmortizationAndAccretionNet",
+        "DepreciationAndAmortization",
+    ],
+    "basic_shares": ["WeightedAverageNumberOfSharesOutstandingBasic"],
+    "dividends_paid": [
+        "PaymentsOfDividendsCommonStock",
+        "PaymentsOfDividends",
+        "PaymentsOfDividendsCommonStockAndPreferredStock",
+    ],
 }
 
 # Instant (balance-sheet) concepts.
@@ -148,10 +161,15 @@ INSTANT_TAGS: Dict[str, List[str]] = {
         "ReceivablesNetCurrent",
     ],
     "accounts_payable": ["AccountsPayableCurrent", "AccountsPayableTradeCurrent"],
+    # Equity-bridge legs (master §4.A / workbook Phase1_Anchor)
+    "minority_interest": ["MinorityInterest", "RedeemableNoncontrollingInterestEquityCarryingAmount"],
+    "preferred_equity": ["PreferredStockValue", "PreferredStockValueOutstanding"],
 }
 
 _UNITS_BY_CONCEPT = {
     "diluted_shares": ("shares",),
+    "basic_shares": ("shares",),
+    "eps_diluted": ("USD/shares",),
     "cet1_ratio": ("pure",),
     "tier1_ratio": ("pure",),
     "leverage_ratio": ("pure",),
@@ -175,6 +193,8 @@ class AnnualFundamentals:
     sic_description: str = ""
     sic_code: str = ""
     exchange_ticker: str = ""
+    latest_10k_date: str = ""
+    latest_10q_date: str = ""
 
     def value(self, concept: str, i: int) -> Optional[float]:
         s = self.series.get(concept)
@@ -471,6 +491,14 @@ def fetch_fundamentals(
         if tickers:
             exch = f" ({exchanges[0]})" if exchanges and exchanges[0] else ""
             result.exchange_ticker = f"{tickers[0]}{exch}"
+        recent = subs.get("filings", {}).get("recent", {})
+        for form, filed in zip(recent.get("form", []), recent.get("filingDate", [])):
+            if form == "10-K" and not result.latest_10k_date:
+                result.latest_10k_date = str(filed)
+            elif form == "10-Q" and not result.latest_10q_date:
+                result.latest_10q_date = str(filed)
+            if result.latest_10k_date and result.latest_10q_date:
+                break
     except Exception:
         pass
     return result

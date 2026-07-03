@@ -45,6 +45,8 @@ def build_dashboard_data(
         generated=dt.date.today(),
     )
     data.sic_code = fundamentals.sic_code
+    data.latest_10k_date = fundamentals.latest_10k_date
+    data.latest_10q_date = fundamentals.latest_10q_date
     apply_track(data, track)
     build_fundamental_metrics(fundamentals, data)
 

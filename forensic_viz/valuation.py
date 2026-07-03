@@ -100,6 +100,7 @@ class ValuationResult:
     market_ev: Optional[float] = None
     rate_build: str = ""                         # §4.0 build audit string
     warnings: List[str] = field(default_factory=list)
+    _inputs: Optional[ValuationInputs] = field(default=None, repr=False)
 
 
 def suggest_method(track: str) -> str:
@@ -352,4 +353,5 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
     bear, bull = result.cases[0].fv_ps, result.cases[-1].fv_ps
     if bear is not None and bull is not None and bear > bull:
         result.warnings.append("Bear FV exceeds Bull FV — check the case inputs")
+    result._inputs = inputs  # carried for Phase 5 and the workbook exporter
     return result

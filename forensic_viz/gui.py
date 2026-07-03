@@ -22,8 +22,10 @@ from . import config
 from .cache import Cache
 from .dashboard import (
     FIG_W, render_dashboard, render_health_report, render_unit_economics,
-    render_valuation,
+    render_valuation, render_verdict,
 )
+from .verdict import RATINGS, build_verdict
+from .workbook import fill_workbook
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
 from .export import (
@@ -57,6 +59,8 @@ class App:
         self.health_fig = None
         self.valuation_fig = None
         self.valuation_res = None
+        self.verdict_fig = None
+        self.verdict = None
         self.canvases: list[FigureCanvasTkAgg] = []
         self.busy = False
 
@@ -91,6 +95,9 @@ class App:
         self.csv_btn = ttk.Button(bar, text="Export CSV…", command=self.export_csv,
                                   state=tk.DISABLED)
         self.csv_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.xlsx_btn = ttk.Button(bar, text="Fill workbook…",
+                                   command=self.fill_workbook, state=tk.DISABLED)
+        self.xlsx_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.status_var = tk.StringVar(
             value="Enter a US-listed ticker (e.g. AAPL) and press Analyze.")
         ttk.Label(bar, textvariable=self.status_var, foreground="#52514e").pack(
@@ -216,6 +223,8 @@ class App:
         self.unit_fig, self.health_fig = unit_fig, health_fig
         self.valuation_fig = None  # a new ticker invalidates any prior valuation
         self.valuation_res = None
+        self.verdict_fig = None
+        self.verdict = None
         self._render_pages()
         note = ""
         if data.price_error:
@@ -227,9 +236,8 @@ class App:
         for canvas in self.canvases:
             canvas.get_tk_widget().destroy()
         self.canvases = []
-        pages = [f for f in (self.fig, self.unit_fig, self.health_fig) if f is not None]
-        if self.valuation_fig is not None:
-            pages.append(self.valuation_fig)
+        pages = [f for f in (self.fig, self.unit_fig, self.health_fig,
+                             self.valuation_fig, self.verdict_fig) if f is not None]
         for f in pages:
             canvas = FigureCanvasTkAgg(f, master=self.inner)
             canvas.draw()
@@ -292,12 +300,43 @@ class App:
             return
         _ValuationDialog(self.root, self.data, self._on_valuation_done)
 
-    def _on_valuation_done(self, fig, res):
+    def _on_valuation_done(self, fig, res, verdict_fig, verdict):
         self.valuation_fig = fig
         self.valuation_res = res
-        self._render_pages(scroll_to="bottom")  # show the new page, not page 1
+        self.verdict_fig = verdict_fig
+        self.verdict = verdict
+        self._render_pages(scroll_to="bottom")  # show the new pages, not page 1
+        gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
         self.status_var.set(
-            f"{self.data.company} — intrinsic value added below (page 3).")
+            f"{self.data.company} — intrinsic value + Phase-5 verdict added.{gate}")
+
+    def fill_workbook(self):
+        """Export a filled copy of the forensic_valuation_model_v3 shell."""
+        if self.data is None or self.busy:
+            return
+        default = (f"{self.data.ticker}_forensic_model_"
+                   f"{self.data.generated.isoformat()}.xlsx")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", initialfile=default,
+            filetypes=[("Excel workbook", "*.xlsx")])
+        if not path:
+            return
+        try:
+            report = fill_workbook(self.data, path, res=self.valuation_res,
+                                   verdict=self.verdict)
+        except Exception:
+            messagebox.showerror("Workbook export failed",
+                                 traceback.format_exc(limit=3))
+            return
+        notes = Path(path).with_suffix(".analyst_cells.txt")
+        with open(notes, "w", encoding="utf-8") as fh:
+            fh.write("Blue cells left for the analyst (judgment stays with "
+                     "you) — suggested sources:\n\n")
+            for sheet, cells, label, source in report.analyst_cells:
+                fh.write(f"{sheet}!{cells:<8} {label}\n    -> {source}\n\n")
+        self.status_var.set(
+            f"Filled {report.filled} blue cells -> {path} "
+            f"(analyst to-do list: {notes.name})")
 
     def _screen_dpi(self) -> int:
         viewport = self.view.winfo_width() or 1160
@@ -340,11 +379,13 @@ class App:
         state = tk.DISABLED if busy else tk.NORMAL
         self.analyze_btn.configure(state=state)
         self.demo_btn.configure(state=state)
+        buttons = (self.save_btn, self.csv_btn, self.value_btn, self.fluff_btn,
+                   self.xlsx_btn)
         if busy:
-            for b in (self.save_btn, self.csv_btn, self.value_btn, self.fluff_btn):
+            for b in buttons:
                 b.configure(state=tk.DISABLED)
         elif self.data is not None:
-            for b in (self.save_btn, self.csv_btn, self.value_btn, self.fluff_btn):
+            for b in buttons:
                 b.configure(state=tk.NORMAL)
         self.status_var.set(status)
 
@@ -447,8 +488,24 @@ class _ValuationDialog(tk.Toplevel):
         self.grid_frame = ttk.Frame(top)
         self.grid_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
 
+        # Phase-5 verdict inputs (§5.3): rating is judgment; the app only
+        # checks it for coherence against the MoS (Control!B67 mechanics).
+        verdict_frame = ttk.Frame(top)
+        verdict_frame.grid(row=6, column=0, columnspan=4, sticky="w", padx=6,
+                           pady=(6, 0))
+        ttk.Label(verdict_frame, text="Rating (§5.3):").pack(side=tk.LEFT, padx=(4, 4))
+        self.rating_var = tk.StringVar(value=data.rating)
+        ttk.Combobox(verdict_frame, state="readonly", width=11,
+                     textvariable=self.rating_var,
+                     values=list(RATINGS)).pack(side=tk.LEFT)
+        ttk.Label(verdict_frame, text="Named optionality (§4.D, if any):").pack(
+            side=tk.LEFT, padx=(14, 4))
+        self.optionality_var = tk.StringVar(value=data.optionality)
+        ttk.Entry(verdict_frame, textvariable=self.optionality_var, width=34).pack(
+            side=tk.LEFT)
+
         btns = ttk.Frame(top)
-        btns.grid(row=6, column=0, columnspan=4, sticky="e", pady=(10, 0))
+        btns.grid(row=7, column=0, columnspan=4, sticky="e", pady=(10, 0))
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(btns, text="Compute", command=self._compute).pack(
             side=tk.RIGHT, padx=(0, 8))
@@ -534,10 +591,16 @@ class _ValuationDialog(tk.Toplevel):
                                  parent=self)
             return
         try:  # rendering must not fail silently and strand the modal open
+            self.data.rating = self.rating_var.get()
+            self.data.optionality = self.optionality_var.get().strip()
+            verdict = build_verdict(self.data, inputs, res,
+                                    rating=self.data.rating,
+                                    optionality=self.data.optionality)
             viewport = self.master.winfo_width() or 1160
             dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
             fig = render_valuation(self.data, res, dpi=dpi)
-            self.on_done(fig, res)
+            verdict_fig = render_verdict(self.data, res, verdict, dpi=dpi)
+            self.on_done(fig, res, verdict_fig, verdict)
         except Exception:
             messagebox.showerror("Could not render the valuation page",
                                  traceback.format_exc(limit=3), parent=self)

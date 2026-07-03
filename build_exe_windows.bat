@@ -14,10 +14,12 @@ if not exist ".venv\Scripts\python.exe" (
 call ".venv\Scripts\activate.bat"
 python -m pip install --quiet pyinstaller || (echo pip install pyinstaller failed & pause & exit /b 1)
 
-pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz app.py || (
+pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz ^
+    --add-data "assets;assets" app.py || (
     echo PyInstaller GUI build failed. & pause & exit /b 1
 )
-pyinstaller --noconfirm --onefile --console --name forensic-viz-cli app.py || (
+pyinstaller --noconfirm --onefile --console --name forensic-viz-cli ^
+    --add-data "assets;assets" app.py || (
     echo PyInstaller CLI build failed. & pause & exit /b 1
 )
 if not exist "dist\ForensicStockViz.exe" (

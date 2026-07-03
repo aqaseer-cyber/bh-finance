@@ -128,6 +128,14 @@ def main(argv=None) -> int:
     val.add_argument("--bear", help="Bear-case assumptions (method-specific, comma-separated)")
     val.add_argument("--base", help="Base-case assumptions")
     val.add_argument("--bull", help="Bull-case assumptions")
+    val.add_argument("--rating", choices=["Strong Buy", "Buy", "Hold", "Sell"],
+                     help="institutional rating (§5.3, judgment) — the app only "
+                          "checks coherence vs the MoS")
+    val.add_argument("--optionality",
+                     help="§4.D named optionality carrying a rating above a "
+                          "deeply negative MoS")
+    parser.add_argument("--xlsx", nargs="?", const="", metavar="PATH",
+                        help="export a filled copy of forensic_valuation_model_v3.xlsx")
     args = parser.parse_args(argv)
 
     if args.gui or (not args.ticker and not args.demo):
@@ -175,14 +183,23 @@ def main(argv=None) -> int:
     )
     from .valuation import ValuationError
 
+    from .dashboard import render_verdict
+    from .verdict import build_verdict
+
     fig_main = render_dashboard(data, dpi=args.dpi)
     fig_unit = render_unit_economics(data, dpi=args.dpi)
     fig_health = render_health_report(data, dpi=args.dpi)
-    fig_val, res = None, None
+    fig_val = fig_verdict = res = verdict = None
     if args.value:
         try:
             res = _build_valuation_result(data, args)
+            data.rating = args.rating or ""
+            data.optionality = args.optionality or ""
+            verdict = build_verdict(data, res._inputs, res,
+                                    rating=data.rating,
+                                    optionality=data.optionality)
             fig_val = render_valuation(data, res, dpi=args.dpi)
+            fig_verdict = render_verdict(data, res, verdict, dpi=args.dpi)
         except ValuationError as exc:
             _report_error(str(exc))
             return 2
@@ -200,12 +217,15 @@ def main(argv=None) -> int:
         if fig_val is not None:
             fig_val.savefig(base + "_valuation.png", dpi=args.dpi)
             print(f"wrote {base}_valuation.png")
+        if fig_verdict is not None:
+            fig_verdict.savefig(base + "_verdict.png", dpi=args.dpi)
+            print(f"wrote {base}_verdict.png")
     else:
         out = args.out or f"{data.ticker}_{config.DISPLAY_YEARS}y_report_{stamp}.pdf"
         if not out.lower().endswith(".pdf"):
             out += ".pdf"
         base = out[:-4]
-        export_pdf([fig_main, fig_unit, fig_health, fig_val], out)
+        export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
         print(f"wrote {out}")
 
     if data.price_error:
@@ -218,6 +238,22 @@ def main(argv=None) -> int:
             print(f"  reverse DCF (§4.D): market implies g ≈ {res.implied_g * 100:.1f}%")
         if res.rate_build:
             print(f"  rate build: {res.rate_build}")
+    if verdict is not None and verdict.fv_avg is not None:
+        line = (f"  Phase 5: FV_avg ${verdict.fv_avg:,.2f}  "
+                f"MoS {verdict.mos * 100:+.1f}%")
+        if verdict.stressed_mos is not None:
+            line += f"  stressed {verdict.stressed_mos * 100:+.1f}%"
+        print(line)
+        print(f"  rating gate: {verdict.coherence}")
+
+    if args.xlsx is not None:
+        from .workbook import fill_workbook
+        xlsx_path = args.xlsx or f"{data.ticker}_forensic_model_{stamp}.xlsx"
+        report = fill_workbook(data, xlsx_path, res=res, verdict=verdict)
+        print(f"wrote {xlsx_path} ({report.filled} blue cells filled)")
+        print("  analyst cells remaining (judgment stays with you):")
+        for sheet, cells, label, source in report.analyst_cells:
+            print(f"    {sheet}!{cells:<8} {label} -> {source}")
 
     if args.csv:
         fpath = base + "_fundamentals.csv"
