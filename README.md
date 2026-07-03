@@ -1,14 +1,16 @@
 # Forensic Stock Viz
 
 A Windows desktop tool for forensic financial analysts: type a US-listed
-ticker and get a two-page report covering the company's performance over the
-past **ten years** — price, growth, profitability, **earnings quality**, and a
+ticker and get a report covering the company's performance over the past
+**ten years** — price, growth, profitability, **earnings quality**, a
 **Phase-3 forensic health scorecard** (Sloan ratio, Piotroski F, Altman Z,
-SBC/dilution, R&D capitalization audit) — built entirely from primary sources
-(as-filed SEC XBRL) with a CSV audit trail.
+SBC/dilution, R&D capitalization audit), and a **Bear/Base/Bull intrinsic
+value calculator** with margin of safety vs the current price — built from
+primary sources (as-filed SEC XBRL) with a CSV audit trail.
 
 ![Demo dashboard](docs/demo_dashboard.png)
 ![Demo health checks](docs/demo_dashboard_health.png)
+![Demo intrinsic value](docs/demo_dashboard_valuation.png)
 
 ## Quick start (Windows)
 
@@ -24,9 +26,13 @@ SBC/dilution, R&D capitalization audit) — built entirely from primary sources
 Command line (same launcher):
 
 ```bat
-run_windows.bat AAPL --csv       :: writes AAPL_5y_dashboard_<date>.png + CSVs
+run_windows.bat AAPL --csv       :: dashboard + health PNGs + CSVs
 run_windows.bat --demo -o demo.png
 run_windows.bat MSFT --no-cache  :: bypass the local cache
+
+:: intrinsic value (Bear/Base/Bull) — each case is method-specific, comma-separated
+run_windows.bat AAPL --value dcf --wacc 0.09 ^
+    --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
 ```
 
 To produce a standalone `ForensicStockViz.exe` (no Python on the target PC),
@@ -62,6 +68,33 @@ Not automatable from XBRL (analyst input, per the master prompt's Layer-B
 warning): the §3.1 **Adjustment Burden** (needs non-GAAP figures from earnings
 releases) and the bank/insurance-track checks (NIM, CET1, reserve
 development). Financial-sector filers get a caveat on the health page.
+
+**Page 3 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
+
+Click **Intrinsic value…** in the GUI (or use `--value` on the CLI). Pick the
+method — the app pre-selects it from the SIC code, and you override it when the
+economic engine differs from the vendor code:
+
+| Method | Model | Your inputs per case |
+|---|---|---|
+| **DCF** (§4.A, Standard track) | FCFF 2-stage, 10-year linear fade, equity bridge, plus the §4.D reverse-DCF implied-g frame | stage-1 growth g₀, terminal growth g (base FCFF defaults to latest FY FCF; tick ex-SBC for the Track-B basis) |
+| **Residual income** (§4.B, Banks/Insurance) | RI at rₑ off latest book equity | sustainable ROE, book-growth g₀, terminal g |
+| **AFFO yield** (§4.C, REITs) | FV/sh = AFFO per share ÷ target yield | AFFO per share, target yield (analyst-supplied) |
+| **Manual / SOTP** | analyst-supplied FV per share | FV per share (segment economics aren't in XBRL) |
+
+The app returns FV per share and **margin of safety vs the last close** for all
+three cases, drawn as a football field against the price line. For the DCF the
+base is **true FCFF** — levered FCF (CFO − capex) plus after-tax interest
+(master §4.0), so discounting at WACC and bridging by net debt is internally
+consistent; if no interest-expense tag is filed, it falls back to levered FCF
+and says so on the page. Guardrails from the master prompt are enforced:
+terminal g is capped at 3.5% (GDP cap, warned), the discount rate must exceed
+terminal g (hard error), the terminal-value share of EV is reported and flagged
+when it dominates, and a stale price (> 5 trading days) is warned (house §8).
+The **equity bridge is simplified** — net debt = total debt − cash, with no
+minority-interest / preferred / non-operating legs yet — and this is stated on
+the page. In the GUI, percent fields are entered in **percent** (`9` = 9%,
+`160` = 160%); on the CLI, `--wacc`/`--bear`/… take **fractions** (`0.09`).
 
 The **CSV export** is the table-view twin of the chart: every plotted value,
 plus fiscal year-end dates, plus the exact XBRL tag used for each concept —

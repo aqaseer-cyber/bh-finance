@@ -58,6 +58,37 @@ def export_fundamentals_csv(d: DashboardData, path: str) -> None:
             w.writerow([name] + [cell(v) for v in series])
 
 
+def export_valuation_csv(res, path: str) -> None:
+    """The table-view twin of the valuation page (audit trail for the FVs)."""
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow([f"# Intrinsic value — {res.method_label}"])
+        w.writerow([f"# basis: {res.basis_label}"])
+        if res.discount_rate is not None:
+            rate_name = "wacc" if res.method == "dcf" else "r_e"
+            w.writerow([f"# {rate_name} = {res.discount_rate:.6f}"])
+        if res.base_value is not None:
+            w.writerow([f"# base_value = {res.base_value:.2f}"])
+        w.writerow([f"# price = {res.price:.4f}"
+                    + (f" as of {res.price_date.isoformat()}" if res.price_date else "")])
+        if res.net_debt is not None:
+            w.writerow([f"# net_debt = {res.net_debt:.2f}"])
+        if res.implied_g is not None:
+            w.writerow([f"# reverse_dcf_implied_g = {res.implied_g:.6f}"])
+        for warn in res.warnings:
+            w.writerow([f"# warning: {warn}"])
+        w.writerow(["case", "assumptions", "fv_per_share", "margin_of_safety",
+                    "enterprise_or_equity_value", "tv_share_of_value"])
+        for c in res.cases:
+            w.writerow([
+                c.name, c.assumptions,
+                "" if c.fv_ps is None else f"{c.fv_ps:.4f}",
+                "" if c.mos is None else f"{c.mos:.6f}",
+                "" if (c.ev or c.equity) is None else f"{(c.ev or c.equity):.2f}",
+                "" if c.tv_share is None else f"{c.tv_share:.6f}",
+            ])
+
+
 def export_prices_csv(d: DashboardData, path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)

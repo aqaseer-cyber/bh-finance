@@ -95,14 +95,19 @@ def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
     n_weeks = 52 * config.PRICE_YEARS + 1
     start = today - dt.timedelta(weeks=n_weeks - 1)
     crash_lo = (dt.date(years[FLAG], 6, 1) - start).days / (7 * n_weeks)
-    dates, closes = [], []
+    dates, raw = [], []
     price = 22.0
     for i in range(n_weeks):
         t = i / n_weeks
         drift = 0.0032 if not crash_lo < t < crash_lo + 0.09 else -0.024
         price *= math.exp(drift + rng.gauss(0, 0.027))
         dates.append(start + dt.timedelta(weeks=i))
-        closes.append(round(price, 2))
+        raw.append(price)
+    # Rescale (shape- and drawdown-preserving) to a price level coherent with
+    # the fundamentals: ~$85 last close on ~672M shares ≈ a $57B market cap,
+    # so the DCF cases bracket the price sensibly rather than showing +800% MoS.
+    scale = 85.0 / raw[-1]
+    closes = [round(p * scale, 2) for p in raw]
     build_price_metrics(
         PriceSeries(symbol="DEMO", dates=dates, closes=closes, source="synthetic"), d
     )

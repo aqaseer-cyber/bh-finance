@@ -19,12 +19,18 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from .cache import Cache
-from .dashboard import FIG_W, render_dashboard, render_health_report
+from .dashboard import (
+    FIG_W, render_dashboard, render_health_report, render_valuation,
+)
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
 from .export import export_fundamentals_csv, export_prices_csv
 from .metrics import DashboardData
 from .pipeline import build_dashboard_data
+from .valuation import (
+    CASE_NAMES, METHODS, CaseInputs, ValuationError, ValuationInputs,
+    build_valuation, suggest_method,
+)
 
 SCREEN_DPI = 100  # on-screen render; PNG export re-renders at 150
 
@@ -42,6 +48,7 @@ class App:
         self.data: Optional[DashboardData] = None
         self.fig = None
         self.health_fig = None
+        self.valuation_fig = None
         self.canvases: list[FigureCanvasTkAgg] = []
         self.busy = False
 
@@ -57,9 +64,12 @@ class App:
         self.analyze_btn.pack(side=tk.LEFT)
         self.demo_btn = ttk.Button(bar, text="Offline demo", command=self.demo)
         self.demo_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.value_btn = ttk.Button(bar, text="Intrinsic value…",
+                                     command=self.open_valuation, state=tk.DISABLED)
+        self.value_btn.pack(side=tk.LEFT, padx=(16, 0))
         self.save_btn = ttk.Button(bar, text="Save PNG…", command=self.save_png,
                                    state=tk.DISABLED)
-        self.save_btn.pack(side=tk.LEFT, padx=(16, 0))
+        self.save_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.csv_btn = ttk.Button(bar, text="Export CSV…", command=self.export_csv,
                                   state=tk.DISABLED)
         self.csv_btn.pack(side=tk.LEFT, padx=(8, 0))
@@ -179,17 +189,28 @@ class App:
             canvas.get_tk_widget().destroy()
         self.canvases = []
         self.data, self.fig, self.health_fig = data, fig, health_fig
-        for f in (fig, health_fig):  # page 1, then the Phase-3 health page
+        self.valuation_fig = None  # a new ticker invalidates any prior valuation
+        self._render_pages()
+        note = ""
+        if data.price_error:
+            note = "  (price sources unavailable — fundamentals only)"
+        self._set_busy(False, f"{data.company} — done.{note}")
+
+    def _render_pages(self):
+        """(Re)build the stacked canvases: dashboard, health, then valuation."""
+        for canvas in self.canvases:
+            canvas.get_tk_widget().destroy()
+        self.canvases = []
+        pages = [self.fig, self.health_fig]
+        if self.valuation_fig is not None:
+            pages.append(self.valuation_fig)
+        for f in pages:
             canvas = FigureCanvasTkAgg(f, master=self.inner)
             canvas.draw()
             canvas.get_tk_widget().pack(pady=(0, 12))
             self.canvases.append(canvas)
         self.view.yview_moveto(0)
         self.view.xview_moveto(0)
-        note = ""
-        if data.price_error:
-            note = "  (price sources unavailable — fundamentals only)"
-        self._set_busy(False, f"{data.company} — done.{note}")
 
     def save_png(self):
         # pin: a run finishing behind the modal dialog must not swap these
@@ -205,12 +226,16 @@ class App:
             return
         fig.savefig(path, dpi=150)
         written = [path]
+        p = Path(path)
         if health_fig is not None:
-            p = Path(path)
             health_path = str(p.with_name(p.stem + "_health" + p.suffix))
             health_fig.savefig(health_path, dpi=150)
             written.append(health_path)
-        self.status_var.set("Saved " + " and ".join(written))
+        if self.valuation_fig is not None:
+            val_path = str(p.with_name(p.stem + "_valuation" + p.suffix))
+            self.valuation_fig.savefig(val_path, dpi=150)
+            written.append(val_path)
+        self.status_var.set(f"Saved {len(written)} page(s): " + path)
 
     def export_csv(self):
         data = self.data
@@ -231,18 +256,220 @@ class App:
             written.append(price_path)
         self.status_var.set("Saved " + " and ".join(written))
 
+    def open_valuation(self):
+        if self.data is None or self.busy:
+            return
+        if self.data.last_close is None:
+            messagebox.showinfo(
+                "No price",
+                "The margin of safety needs a current price, but the price "
+                "sources were unavailable for this ticker. Re-run Analyze when "
+                "prices are reachable.")
+            return
+        _ValuationDialog(self.root, self.data, self._on_valuation_done)
+
+    def _on_valuation_done(self, fig):
+        self.valuation_fig = fig
+        self._render_pages()
+        self.status_var.set(f"{self.data.company} — intrinsic value added (page 3).")
+
     def _set_busy(self, busy: bool, status: str):
         self.busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
         self.analyze_btn.configure(state=state)
         self.demo_btn.configure(state=state)
         if busy:
-            self.save_btn.configure(state=tk.DISABLED)
-            self.csv_btn.configure(state=tk.DISABLED)
+            for b in (self.save_btn, self.csv_btn, self.value_btn):
+                b.configure(state=tk.DISABLED)
         elif self.data is not None:
-            self.save_btn.configure(state=tk.NORMAL)
-            self.csv_btn.configure(state=tk.NORMAL)
+            for b in (self.save_btn, self.csv_btn, self.value_btn):
+                b.configure(state=tk.NORMAL)
         self.status_var.set(status)
+
+
+# Per-method case fields: (attribute, label, unit). unit "%" fields are entered
+# in percent (9 = 9%, 160 = 160%); "$" fields are plain dollars. The dialog
+# builds a Bear/Base/Bull row for each.
+_METHOD_FIELDS = {
+    "dcf": [("g0", "Stage-1 growth g₀", "%"), ("g_term", "Terminal growth g", "%")],
+    "ri": [("roe", "Sustainable ROE", "%"), ("g0", "Book growth g₀", "%"),
+           ("g_term", "Terminal growth g", "%")],
+    "affo": [("affo_ps", "AFFO / share", "$"), ("target_yield", "Target AFFO yield", "%")],
+    "manual": [("fv_ps", "FV / share", "$")],
+}
+_METHOD_HELP = {
+    "dcf": "FCFF 2-stage DCF, 10-year linear fade. Base FCFF defaults to the "
+           "latest fiscal-year FCF; tick ex-SBC for the Track-B basis.",
+    "ri": "Residual income at r_e. BV₀ defaults to latest reported equity. "
+          "Enter each case's sustainable ROE and book-growth path.",
+    "affo": "REIT AFFO-yield cross-check. AFFO per share and target yield are "
+            "analyst-supplied (the FFO→AFFO bridge isn't in XBRL).",
+    "manual": "SOTP / external model: enter the FV per share you computed "
+              "elsewhere; the app returns the margin of safety.",
+}
+
+
+def _parse_field(raw: str, is_pct: bool) -> Optional[float]:
+    """Percent fields are entered in percent units (9 → 0.09, 160 → 1.6); a
+    trailing % is tolerated. Dollar/count fields are plain floats. No magnitude
+    guessing — an unambiguous convention so a legitimate 160% ROE is never
+    silently divided down to 1.6%."""
+    raw = raw.strip().rstrip("%").strip()
+    if not raw:
+        return None
+    v = float(raw)
+    if not math.isfinite(v):
+        raise ValueError("value must be finite")
+    return v / 100.0 if is_pct else v
+
+
+class _ValuationDialog(tk.Toplevel):
+    """Modal: pick a method, enter Bear/Base/Bull assumptions, render page 3."""
+
+    def __init__(self, parent, data: DashboardData, on_done):
+        super().__init__(parent)
+        self.data = data
+        self.on_done = on_done
+        self.title("Intrinsic value — Bear / Base / Bull")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.method_var = tk.StringVar(value=suggest_method(data.sic_code))
+        self.wacc_var = tk.StringVar()
+        self.base_var = tk.StringVar()
+        self.exsbc_var = tk.BooleanVar(value=False)
+        self.cell_vars: dict = {}
+
+        pad = {"padx": 10, "pady": 4}
+        top = ttk.Frame(self, padding=(12, 12))
+        top.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(top, text="Method / category:").grid(row=0, column=0, sticky="w", **pad)
+        method_box = ttk.Combobox(top, state="readonly", width=44,
+                                  values=[METHODS[m] for m in _METHOD_FIELDS])
+        method_box.grid(row=0, column=1, columnspan=3, sticky="w", **pad)
+        self._method_keys = list(_METHOD_FIELDS)
+        method_box.current(self._method_keys.index(self.method_var.get()))
+        method_box.bind("<<ComboboxSelected>>",
+                        lambda _e: self._on_method(method_box.current()))
+
+        self.suggested_lbl = ttk.Label(
+            top, foreground="#52514e",
+            text=f"Auto-selected from SIC {data.sic_code or '—'}; override if the "
+                 "economic engine differs.")
+        self.suggested_lbl.grid(row=1, column=0, columnspan=4, sticky="w", padx=10)
+
+        self.help_lbl = ttk.Label(top, foreground="#52514e", wraplength=560,
+                                  justify="left")
+        self.help_lbl.grid(row=2, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(top, foreground="#898781",
+                  text="Percent fields (%) are entered in percent: 9 = 9%, 160 = 160%. "
+                       "Dollar fields ($) are plain amounts.").grid(
+            row=5, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 0))
+
+        self.rate_frame = ttk.Frame(top)
+        self.rate_frame.grid(row=3, column=0, columnspan=4, sticky="w", padx=6)
+        self.wacc_lbl = ttk.Label(self.rate_frame, text="WACC:")
+        self.wacc_lbl.pack(side=tk.LEFT, padx=(4, 4))
+        ttk.Entry(self.rate_frame, textvariable=self.wacc_var, width=8).pack(side=tk.LEFT)
+        self.base_lbl = ttk.Label(self.rate_frame, text="Base FCFF $ (optional):")
+        self.base_lbl.pack(side=tk.LEFT, padx=(14, 4))
+        ttk.Entry(self.rate_frame, textvariable=self.base_var, width=16).pack(side=tk.LEFT)
+        self.exsbc_chk = ttk.Checkbutton(self.rate_frame, text="ex-SBC base",
+                                         variable=self.exsbc_var)
+        self.exsbc_chk.pack(side=tk.LEFT, padx=(14, 0))
+
+        self.grid_frame = ttk.Frame(top)
+        self.grid_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
+
+        btns = ttk.Frame(top)
+        btns.grid(row=6, column=0, columnspan=4, sticky="e", pady=(10, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="Compute", command=self._compute).pack(
+            side=tk.RIGHT, padx=(0, 8))
+
+        self._on_method(self._method_keys.index(self.method_var.get()))
+        self.bind("<Return>", lambda _e: self._compute())
+        self.grab_set()
+
+    def _method_key(self) -> str:
+        return self.method_var.get()
+
+    def _on_method(self, index: int):
+        method = self._method_keys[index]
+        self.method_var.set(method)
+        # Clear the rate/base entries so a value typed for one method can't leak
+        # into another (e.g. a DCF Base FCFF being read as an RI book value).
+        self.wacc_var.set("")
+        self.base_var.set("")
+        self.help_lbl.configure(text=_METHOD_HELP[method])
+        needs_rate = method in ("dcf", "ri")
+        for w in (self.wacc_lbl, self.base_lbl):
+            w.configure(state=tk.NORMAL if needs_rate else tk.DISABLED)
+        self.wacc_lbl.configure(text="WACC (%):" if method == "dcf" else "r_e (%):")
+        self.base_lbl.configure(
+            text="Base FCFF $ (optional):" if method == "dcf"
+            else "BV₀ $ (optional):")
+        show_rate = "normal" if needs_rate else "hidden"
+        for child in self.rate_frame.winfo_children():
+            child.configure(state=tk.NORMAL if needs_rate else tk.DISABLED)
+        self.exsbc_chk.configure(state=tk.NORMAL if method == "dcf" else tk.DISABLED)
+
+        for w in self.grid_frame.winfo_children():
+            w.destroy()
+        self.cell_vars = {}
+        fields = _METHOD_FIELDS[method]
+        ttk.Label(self.grid_frame, text="", width=10).grid(row=0, column=0)
+        for col, name in enumerate(CASE_NAMES, start=1):
+            ttk.Label(self.grid_frame, text=name, width=12,
+                      font=("Segoe UI", 9, "bold")).grid(row=0, column=col, padx=4)
+        for r, (attr, label, hint) in enumerate(fields, start=1):
+            ttk.Label(self.grid_frame, text=f"{label} ({hint})").grid(
+                row=r, column=0, sticky="w", padx=(4, 8), pady=3)
+            for col, name in enumerate(CASE_NAMES, start=1):
+                var = tk.StringVar()
+                self.cell_vars[(name, attr)] = var
+                ttk.Entry(self.grid_frame, textvariable=var, width=12).grid(
+                    row=r, column=col, padx=4, pady=3)
+
+    def _compute(self):
+        method = self._method_key()
+        fields = _METHOD_FIELDS[method]
+        try:
+            cases = {}
+            for name in CASE_NAMES:
+                kwargs = {}
+                for attr, label, unit in fields:
+                    raw = self.cell_vars[(name, attr)].get()
+                    val = _parse_field(raw, unit == "%")
+                    if val is None:
+                        raise ValuationError(f"{name}: {label} is required.")
+                    kwargs[attr] = val
+                cases[name] = CaseInputs(**kwargs)
+            rate, base = None, None
+            if method in ("dcf", "ri"):  # only these read the rate/base fields
+                rate = _parse_field(self.wacc_var.get(), True)
+                base = _parse_field(self.base_var.get(), False)  # a $ amount
+            inputs = ValuationInputs(
+                method=method, cases=cases, discount_rate=rate,
+                base_value=base, ex_sbc=self.exsbc_var.get())
+            res = build_valuation(self.data, inputs)
+        except ValuationError as exc:
+            messagebox.showerror("Check the inputs", str(exc), parent=self)
+            return
+        except ValueError as exc:
+            messagebox.showerror("Check the inputs", f"Numeric field error: {exc}",
+                                 parent=self)
+            return
+        try:  # rendering must not fail silently and strand the modal open
+            viewport = self.master.winfo_width() or 1160
+            dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+            fig = render_valuation(self.data, res, dpi=dpi)
+            self.on_done(fig)
+        except Exception:
+            messagebox.showerror("Could not render the valuation page",
+                                 traceback.format_exc(limit=3), parent=self)
+            return
+        self.destroy()
 
 
 def run_gui():

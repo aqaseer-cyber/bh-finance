@@ -724,6 +724,148 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
     return fig
 
 
+# -------------------------------------------------- valuation report (page 3)
+
+def _field_panel(ax, fig, res):
+    """Football field: Bear/Base/Bull FV per share vs the current price."""
+    _panel_title(ax, "Intrinsic value vs price",
+                 "FV per share by case · vertical line = current price")
+    cases = [c for c in res.cases if c.fv_ps is not None]
+    xs = [c.fv_ps for c in cases] + [res.price]
+    lo, hi = min(xs), max(xs)
+    pad = (hi - lo) * 0.16 or hi * 0.1 or 1.0
+    ax.set_xlim(lo - pad, hi + pad)
+    ax.set_ylim(-0.7, len(cases) - 0.3)
+    ax.set_yticks(range(len(cases)))
+    ax.set_yticklabels([c.name for c in cases])
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax.grid(axis="x", color=P.GRIDLINE, linewidth=0.8, linestyle="-")
+    ax.grid(axis="y", visible=False)
+    ax.tick_params(axis="y", labelsize=8.6)
+    # bear→bull span behind the lollipops
+    fvs = [c.fv_ps for c in cases]
+    ax.axvspan(min(fvs), max(fvs), color=P.SERIES[0], alpha=0.07, zorder=1)
+    ax.axvline(res.price, color=P.INK_SECONDARY, linewidth=1.3, zorder=3)
+    label = ax.text(res.price, -0.62, f" P₀ ${res.price:,.2f}",
+                    fontsize=8, color=P.INK_PRIMARY, fontweight="bold",
+                    ha="left", va="bottom", zorder=6)
+    label.set_path_effects(
+        [path_effects.withStroke(linewidth=2.5, foreground=P.SURFACE)])
+    for y, c in enumerate(cases):
+        ax.plot([res.price, c.fv_ps], [y, y], color=P.BASELINE, linewidth=1.4,
+                zorder=2)
+        ax.plot(c.fv_ps, y, "o", color=P.SERIES[0], markersize=7.2,
+                markeredgecolor=P.SURFACE, markeredgewidth=1.4, zorder=4)
+        good = c.fv_ps >= res.price
+        t = ax.text(c.fv_ps, y + 0.22,
+                    f"${c.fv_ps:,.2f}  ({fmt_pct(c.mos, signed=True)})",
+                    fontsize=8, ha="center", va="bottom",
+                    color=P.DELTA_GOOD if good else P.DELTA_BAD, zorder=5)
+        t.set_path_effects(
+            [path_effects.withStroke(linewidth=2.2, foreground=P.SURFACE)])
+
+
+def _valuation_table(ax, res):
+    ax.set_axis_off()
+    is_dcf = res.method == "dcf"
+    cols = [("Case", 0.00), ("Assumptions", 0.09), ("FV / share", 0.46),
+            ("MoS vs P₀", 0.60)]
+    if is_dcf:
+        cols += [("EV", 0.74), ("TV % of EV", 0.86)]
+    elif res.method == "ri":
+        cols += [("Equity value", 0.74), ("TV % of V₀", 0.86)]
+    for label, x in cols:
+        ax.text(x, 0.94, label, fontsize=8, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+    for r, c in enumerate(res.cases):
+        y = 0.70 - r * 0.26
+        good = c.fv_ps is not None and c.fv_ps >= res.price
+        cells = [(0.00, c.name, P.INK_PRIMARY, "bold"),
+                 (0.09, c.assumptions, P.INK_PRIMARY, "normal"),
+                 (0.46, f"${c.fv_ps:,.2f}" if c.fv_ps is not None else "–",
+                  P.INK_PRIMARY, "bold"),
+                 (0.60, fmt_pct(c.mos, signed=True),
+                  P.DELTA_GOOD if good else P.DELTA_BAD, "bold")]
+        if is_dcf or res.method == "ri":
+            cells += [(0.74, fmt_money(c.ev if is_dcf else c.equity),
+                       P.INK_PRIMARY, "normal"),
+                      (0.86, fmt_pct(c.tv_share) if c.tv_share is not None else "–",
+                       P.INK_PRIMARY, "normal")]
+        for x, text, color, weight in cells:
+            ax.text(x, y, text, fontsize=9, color=color, fontweight=weight,
+                    transform=ax.transAxes, va="top")
+
+
+def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
+                     dpi: int = DPI) -> Figure:
+    """Page 3 — Bear/Base/Bull intrinsic value and margin of safety."""
+    matplotlib.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": P.FONT_STACK,
+        "text.color": P.INK_PRIMARY,
+        "figure.facecolor": P.SURFACE,
+        "savefig.facecolor": P.SURFACE,
+    })
+    fig = Figure(figsize=(FIG_W, 8.2), dpi=dpi)
+    fig.patch.set_facecolor(P.SURFACE)
+    gs = fig.add_gridspec(
+        3, 1, height_ratios=[1.35, 1.9, 1.15],
+        left=0.055, right=0.965, top=0.955, bottom=0.15, hspace=0.55,
+    )
+
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.set_axis_off()
+    ax_header.text(0, 1.04, f"{d.company} — intrinsic value",
+                   fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
+                   transform=ax_header.transAxes, va="top")
+    sub = f"{res.method_label} · {res.basis_label}"
+    if res.discount_rate is not None:
+        rate_name = "WACC" if res.method == "dcf" else "r_e"
+        sub += f" · {rate_name} {fmt_pct(res.discount_rate)}"
+    ax_header.text(0, 0.80, sub, fontsize=9, color=P.INK_SECONDARY,
+                   transform=ax_header.transAxes, va="top")
+    ax_header.text(1.0, 1.04, f"Generated {d.generated.isoformat()}",
+                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
+                   va="top", ha="right")
+    if d.demo:
+        ax_header.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
+                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
+                       transform=ax_header.transAxes, va="top", ha="right")
+    tiles = [("Current price (P₀)", f"${res.price:,.2f}",
+              f"as of {res.price_date.isoformat()}" if res.price_date else "",
+              True)]
+    for c in res.cases:
+        if c.fv_ps is not None:
+            tiles.append((f"{c.name} FV", f"${c.fv_ps:,.2f}",
+                          f"{fmt_pct(c.mos, signed=True)} MoS", c.mos >= 0))
+    if res.implied_g is not None:
+        tiles.append(("Reverse-DCF implied g", fmt_pct(res.implied_g),
+                      "vs 3.5% GDP cap", res.implied_g <= 0.035))
+    _draw_kpi_row(ax_header, tiles)
+
+    ax_field = fig.add_subplot(gs[1])
+    _style_axes(ax_field, y_grid=False)
+    _field_panel(ax_field, fig, res)
+
+    ax_table = fig.add_subplot(gs[2])
+    _valuation_table(ax_table, res)
+
+    y = 0.105
+    case_warns = [f"{c.name}: {w}" for c in res.cases for w in c.warnings]
+    for w in res.warnings + case_warns:
+        fig.text(0.055, y, "⚠ " + w, fontsize=6.8, color=P.DELTA_BAD, va="bottom")
+        y -= 0.016
+    notes = ("Equity bridge simplification: net debt = total debt − cash; minority interest, "
+             "preferred and non-operating investments are not yet pulled from XBRL (master §4.A). "
+             "All outputs code-computed.  Not investment advice.")
+    fig.text(0.055, max(y, 0.012), notes, fontsize=6.6, color=P.INK_MUTED, va="bottom")
+
+    if out_path:
+        fig.savefig(out_path, dpi=dpi)
+    return fig
+
+
 # ------------------------------------------------------------------- public
 
 def render_dashboard(d: DashboardData, out_path: Optional[str] = None,

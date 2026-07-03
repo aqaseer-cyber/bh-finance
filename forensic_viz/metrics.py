@@ -84,6 +84,12 @@ class DashboardData:
     is_financial_sector: bool = False
     health_notes: List[str] = field(default_factory=list)
 
+    # Phase-4 valuation inputs
+    book_equity: List[Optional[float]] = field(default_factory=list)
+    fcff: List[Optional[float]] = field(default_factory=list)  # FCF + after-tax interest
+    interest_expense: List[Optional[float]] = field(default_factory=list)
+    effective_tax_rate: Optional[float] = None
+
     # Altman inputs held until FY-end prices are known (see compute_altman)
     _z_parts: List[Optional[dict]] = field(default_factory=list)
     fy_prices: List[Optional[float]] = field(default_factory=list)
@@ -147,12 +153,39 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
     data.fy_labels = [fy_label(e) for e in data.fy_ends]
     data.tags_used = dict(f.tags_used)
 
+    # Effective tax rate for the FCFF bridge (master §4.0), from the most recent
+    # year with positive pre-tax income; falls back to a labeled 21% ASSUMPTION.
+    interest_all = full("interest_expense")
+    tax_all, pretax_all = full("tax_expense"), full("pretax_income")
+    eff_tax = None
+    for j in range(n_all - 1, -1, -1):
+        t, p = tax_all[j], pretax_all[j]
+        if t is not None and p is not None and p > 0:
+            r = t / p
+            if 0.0 <= r <= 0.5:
+                eff_tax = r
+                break
+    if eff_tax is None:
+        eff_tax = 0.21
+    data.effective_tax_rate = eff_tax
+
     for i in range(off, n_all):
         rev, ni, cfo, capex = revenue_all[i], ni_all[i], cfo_all[i], capex_all[i]
         data.revenue.append(rev)
         data.net_income.append(ni)
         data.cfo.append(cfo)
-        data.fcf.append(_sub(cfo, capex) if capex is not None else cfo)
+        fcf = _sub(cfo, capex) if capex is not None else cfo
+        data.fcf.append(fcf)
+        # FCFF = levered FCF + after-tax interest (master §4.0). CFO is already
+        # net of interest paid, so the add-back un-levers it before the WACC
+        # discount + net-debt bridge. No interest tag -> keep levered FCF and
+        # flag it as a proxy (data.fcff_is_levered_proxy).
+        interest = interest_all[i]
+        data.interest_expense.append(interest)
+        if fcf is not None and interest is not None:
+            data.fcff.append(fcf + interest * (1 - eff_tax))
+        else:
+            data.fcff.append(fcf)
         # margins are meaningless against non-positive revenue (a negative
         # numerator over negative revenue would render as a healthy margin)
         pos_rev = rev if rev is not None and rev > 0 else None
@@ -162,6 +195,7 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
         data.diluted_shares.append(full("diluted_shares")[i])
         data.total_debt.append(debt_all[i])
         data.cash.append(full("cash")[i])
+        data.book_equity.append(full("equity")[i])
 
         prev_rev = revenue_all[i - 1] if i > 0 else None
         data.revenue_yoy.append(

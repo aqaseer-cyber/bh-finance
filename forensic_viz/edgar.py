@@ -79,6 +79,18 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "ResearchAndDevelopmentExpense",
         "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
     ],
+    # Phase-4 FCFF bridge inputs (master §4.0: FCFF = FCF + after-tax interest)
+    "interest_expense": [
+        "InterestExpense",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+        "InterestExpenseNonoperating",
+    ],
+    "tax_expense": ["IncomeTaxExpenseBenefit"],
+    "pretax_income": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ],
 }
 
 # Instant (balance-sheet) concepts.
@@ -103,6 +115,11 @@ INSTANT_TAGS: Dict[str, List[str]] = {
     "liabilities_current": ["LiabilitiesCurrent"],
     "liabilities_total": ["Liabilities"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
+    # Phase-4 valuation inputs
+    "equity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ],
 }
 
 _UNITS_BY_CONCEPT = {"diluted_shares": ("shares",)}
