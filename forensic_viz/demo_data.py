@@ -64,6 +64,7 @@ def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
         "liabilities_current": [0.25 * r for r in rev],
         "liabilities_total": [(0.50 + l) * r for l, r in zip(lev, rev)],
         "retained_earnings": [(0.28 + 0.01 * i) * r for i, r in enumerate(rev)],
+        "equity": [(0.45 - l) * r for l, r in zip(lev, rev)],  # assets − liabilities
         "cash": [(0.18 if i not in (FLAG, FLAG + 1) else 0.10) * r
                  for i, r in enumerate(rev)],
         "lt_debt_noncurrent": [l * r for l, r in zip(lev, rev)],
@@ -112,4 +113,20 @@ def demo_dashboard_data(today: Optional[dt.date] = None) -> DashboardData:
         PriceSeries(symbol="DEMO", dates=dates, closes=closes, source="synthetic"), d
     )
     compute_altman(d)
+
+    # Synthetic §4.0 rate build so the offline demo exercises auto-WACC.
+    from .rates import WaccBuild, blume_adjust
+    beta_raw = 1.18
+    b = WaccBuild(r_f=0.042, r_f_date=today, r_f_source="synthetic 10-Y UST",
+                  beta_raw=beta_raw, beta=blume_adjust(beta_raw),
+                  tax=d.effective_tax_rate or 0.21)
+    b.r_e = b.r_f + b.beta * b.erp
+    b.r_d = 0.055
+    e_val = closes[-1] * d.diluted_shares[-1]
+    d_val = d.total_debt[-1] or 0.0
+    b.e_weight = e_val / (e_val + d_val)
+    b.d_weight = 1 - b.e_weight
+    b.wacc = b.e_weight * b.r_e + b.d_weight * b.r_d * (1 - b.tax)
+    b.notes = ["synthetic demo rates — live sources used for real tickers"]
+    d.wacc_build = b
     return d

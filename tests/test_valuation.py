@@ -53,11 +53,34 @@ def test_residual_income_premium_for_excess_roe():
     assert out["value"] > 1000.0
 
 
-def test_suggest_method_from_sic():
-    assert suggest_method("3571") == "dcf"     # electronic computers
-    assert suggest_method("6022") == "ri"      # state commercial banks
-    assert suggest_method("6798") == "affo"    # REIT
-    assert suggest_method("") == "dcf"
+def test_track_resolution_and_method_suggestion():
+    from forensic_viz.metrics import resolve_track
+    assert resolve_track("auto", "3571") == "standard"   # electronic computers
+    assert resolve_track("auto", "6022") == "bank"       # state commercial bank
+    assert resolve_track("auto", "6311") == "insurance"  # life insurance
+    assert resolve_track("auto", "6798") == "reit"
+    assert resolve_track("auto", "") == "standard"
+    assert resolve_track("sotp", "3571") == "sotp"       # explicit override wins
+    assert suggest_method("standard") == "dcf"
+    assert suggest_method("bank") == "ri"
+    assert suggest_method("insurance") == "ri"
+    assert suggest_method("reit") == "affo"
+    assert suggest_method("sotp") == "manual"
+
+
+def test_auto_discount_rate_from_wacc_build():
+    from forensic_viz.rates import WaccBuild
+    d = _data()
+    d.wacc_build = WaccBuild(r_f=0.04, r_e=0.095, wacc=0.088, tax=0.21)
+    cases = _cases(Bear=CaseInputs(g0=0.02, g_term=0.02),
+                   Base=CaseInputs(g0=0.05, g_term=0.025),
+                   Bull=CaseInputs(g0=0.08, g_term=0.03))
+    res = build_valuation(d, ValuationInputs("dcf", cases))  # no rate given
+    assert res.discount_rate == pytest.approx(0.088)
+    assert res.rate_build  # the §4.0 build audit string is carried
+    override = build_valuation(d, ValuationInputs("dcf", cases, discount_rate=0.12))
+    assert override.discount_rate == pytest.approx(0.12)  # manual wins
+    assert override.rate_build == ""
 
 
 # --------------------------------------------------------- end-to-end cases

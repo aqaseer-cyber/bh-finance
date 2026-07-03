@@ -8,7 +8,8 @@ from . import config
 from .cache import Cache
 from .edgar import EdgarError, fetch_fundamentals
 from .metrics import (
-    DashboardData, build_fundamental_metrics, build_price_metrics, compute_altman,
+    DashboardData, apply_track, build_fundamental_metrics, build_price_metrics,
+    compute_altman,
 )
 from .prices import PriceError, fetch_prices
 
@@ -23,6 +24,7 @@ def build_dashboard_data(
     ticker: str,
     cache: Optional[Cache] = None,
     progress: ProgressFn = _noop,
+    track: str = "auto",
 ) -> DashboardData:
     """Fetch fundamentals (required) and prices (best-effort), derive metrics.
 
@@ -43,7 +45,7 @@ def build_dashboard_data(
         generated=dt.date.today(),
     )
     data.sic_code = fundamentals.sic_code
-    data.is_financial_sector = fundamentals.sic_code.startswith("6")
+    apply_track(data, track)
     build_fundamental_metrics(fundamentals, data)
 
     progress(f"Fetching {config.PRICE_YEARS}-year price history…")
@@ -57,10 +59,16 @@ def build_dashboard_data(
     compute_altman(data)
     if data.is_financial_sector:
         data.health_notes.append(
-            "Financial-sector filer (SIC "
-            f"{data.sic_code}): Standard-track scorecard is indicative only; Altman Z "
-            "suppressed. Banks/Insurance tracks (NIM, CET1, reserves) not yet ported."
+            f"{data.track.title()} track (SIC {data.sic_code}): Standard-track "
+            "scorecard is indicative only; Altman Z replaced by the solvency panel."
         )
+
+    progress("Building discount rate (live 10-Y UST, β vs S&P 500)…")
+    try:
+        from .rates import build_wacc
+        data.wacc_build = build_wacc(data, cache=cache)
+    except Exception:
+        data.wacc_build = None  # rates are best-effort; dialog accepts manual
 
     parts = [fundamentals.exchange_ticker or ticker]
     if fundamentals.sic_description:

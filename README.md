@@ -26,12 +26,15 @@ primary sources (as-filed SEC XBRL) with a CSV audit trail.
 Command line (same launcher):
 
 ```bat
-run_windows.bat AAPL --csv       :: dashboard + health PNGs + CSVs
-run_windows.bat --demo -o demo.png
-run_windows.bat MSFT --no-cache  :: bypass the local cache
+run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf + CSVs
+run_windows.bat AAPL --png        :: per-page PNGs instead of the PDF
+run_windows.bat --demo -o demo.pdf
+run_windows.bat MSFT --no-cache   :: bypass the local cache
+run_windows.bat WFC --track bank  :: override the Logic Track (auto = from SIC)
+run_windows.bat AAPL --adjusted-ni 105e9  :: fluff filter (non-GAAP NI, from the release)
 
-:: intrinsic value (Bear/Base/Bull) — each case is method-specific, comma-separated
-run_windows.bat AAPL --value dcf --wacc 0.09 ^
+:: intrinsic value (Bear/Base/Bull) — WACC auto-builds when --wacc is omitted
+run_windows.bat AAPL --value dcf ^
     --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
 ```
 
@@ -64,10 +67,20 @@ run **`build_exe_windows.bat`** once; the binary lands in `dist\`.
 | **R&D capitalization audit (§3.2)** | EBIT reported vs economic, R&D capitalized straight-line over n=5y (ASSUMPTION); shown only when R&D ≥ 5% of revenue |
 | **FCF vs FCF ex-SBC (house §2b)** | SBC treated as a real cost of the franchise |
 
-Not automatable from XBRL (analyst input, per the master prompt's Layer-B
-warning): the §3.1 **Adjustment Burden** (needs non-GAAP figures from earnings
-releases) and the bank/insurance-track checks (NIM, CET1, reserve
-development). Financial-sector filers get a caveat on the health page.
+**Track-aware panels** (pick the Logic Track in the GUI toolbar or `--track`;
+auto = from the SIC code, and the economic engine beats the vendor code):
+Bank/Insurance tracks replace Altman Z with a **solvency panel** — CET1 /
+Tier-1 / Tier-1-leverage regulatory ratios as filed (Basel reference lines at
+4.5% / 7%), with equity/assets as the fallback when the ratios aren't tagged —
+and the Bank track swaps the R&D audit for a **credit-reserve audit**
+(allowance for credit losses vs annual provision; both falling = a reserve
+release flattering earnings).
+
+**Fluff filter (§3.1)** — the Adjustment Burden needs the non-GAAP figure from
+the earnings release (not in XBRL), so it's analyst input: the **Fluff
+filter…** button (or `--adjusted-ni`) takes adjusted net income and the app
+computes |Adjusted − GAAP| / |GAAP|, flagging > 20% on the health-page KPI row.
+NIM and insurance reserve development remain analyst work.
 
 **Page 3 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
 
@@ -83,18 +96,29 @@ economic engine differs from the vendor code:
 | **Manual / SOTP** | analyst-supplied FV per share | FV per share (segment economics aren't in XBRL) |
 
 The app returns FV per share and **margin of safety vs the last close** for all
-three cases, drawn as a football field against the price line. For the DCF the
-base is **true FCFF** — levered FCF (CFO − capex) plus after-tax interest
-(master §4.0), so discounting at WACC and bridging by net debt is internally
-consistent; if no interest-expense tag is filed, it falls back to levered FCF
-and says so on the page. Guardrails from the master prompt are enforced:
-terminal g is capped at 3.5% (GDP cap, warned), the discount rate must exceed
-terminal g (hard error), the terminal-value share of EV is reported and flagged
-when it dominates, and a stale price (> 5 trading days) is warned (house §8).
-The **equity bridge is simplified** — net debt = total debt − cash, with no
-minority-interest / preferred / non-operating legs yet — and this is stated on
-the page. In the GUI, percent fields are entered in **percent** (`9` = 9%,
-`160` = 160%); on the CLI, `--wacc`/`--bear`/… take **fractions** (`0.09`).
+three cases, drawn as a football field against the price line, with the
+**reverse-DCF sanity frame (§4.D)** printed under the case table: what growth
+the market EV implies on the same base, vs the 3.5% GDP cap.
+
+**The discount rate auto-builds (master §4.0)** and pre-fills the dialog
+(editable): live **10-Y UST** from FRED's keyless CSV (Stooq's 10-year yield
+as fallback), **β** as a Blume-adjusted regression of the stock's weekly
+returns vs the S&P 500 over the shared history, **ERP** as a labeled house
+ASSUMPTION (`config.ERP_ASSUMPTION`), **r_d** from interest expense / average
+debt, **τ** from the filing. The whole chain is printed on the page as the
+rate-build audit line; every missing leg degrades to a labeled ASSUMPTION and
+the analyst can always override the final number.
+
+For the DCF the base is **true FCFF** — levered FCF (CFO − capex) plus
+after-tax interest (§4.0), so discounting at WACC and bridging by net debt is
+internally consistent; with no interest-expense tag it falls back to levered
+FCF and says so. Guardrails: terminal g capped at 3.5% (warned), discount rate
+must exceed terminal g (hard error), TV-share-of-EV flagged when dominant,
+stale price (> 5 trading days) warned (house §8). The **equity bridge is
+simplified** — net debt = total debt − cash, no minority-interest / preferred /
+non-operating legs yet — and this is stated on the page. In the GUI, percent
+fields are entered in **percent** (`9` = 9%, `160` = 160%); on the CLI,
+`--wacc`/`--bear`/… take **fractions** (`0.09`).
 
 The **CSV export** is the table-view twin of the chart: every plotted value,
 plus fiscal year-end dates, plus the exact XBRL tag used for each concept —

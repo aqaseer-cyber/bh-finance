@@ -9,5 +9,6 @@ dist/
 .pytest_cache/
 *_5y_dashboard_*.png
 *_10y_dashboard_*.png
+*_10y_report_*.pdf
 *_fundamentals.csv
 *_prices.csv

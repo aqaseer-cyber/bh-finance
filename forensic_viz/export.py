@@ -1,10 +1,19 @@
-"""CSV export — the table-view twin of the dashboard (and the audit trail)."""
+"""Exports: multi-page PDF report and CSV table-views (the audit trail)."""
 from __future__ import annotations
 
 import csv
 from typing import Optional
 
 from .metrics import DashboardData
+
+
+def export_pdf(figures, path: str) -> None:
+    """All report pages into one PDF (dashboard, health, valuation, ...)."""
+    from matplotlib.backends.backend_pdf import PdfPages
+    with PdfPages(path) as pdf:
+        for fig in figures:
+            if fig is not None:
+                pdf.savefig(fig)
 
 
 def export_fundamentals_csv(d: DashboardData, path: str) -> None:

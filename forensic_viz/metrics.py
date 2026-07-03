@@ -89,6 +89,22 @@ class DashboardData:
     fcff: List[Optional[float]] = field(default_factory=list)  # FCF + after-tax interest
     interest_expense: List[Optional[float]] = field(default_factory=list)
     effective_tax_rate: Optional[float] = None
+    wacc_build: Optional[object] = None  # rates.WaccBuild (typed loosely: no cycle)
+
+    # Logic track (master Phase 1): standard / bank / insurance / reit / sotp
+    track: str = "standard"
+
+    # Banks/insurance solvency + credit-reserve audit (master §3.2/3.3)
+    cet1_ratio: List[Optional[float]] = field(default_factory=list)
+    tier1_ratio: List[Optional[float]] = field(default_factory=list)
+    leverage_ratio: List[Optional[float]] = field(default_factory=list)
+    equity_to_assets: List[Optional[float]] = field(default_factory=list)
+    credit_allowance: List[Optional[float]] = field(default_factory=list)
+    credit_provision: List[Optional[float]] = field(default_factory=list)
+
+    # Fluff filter (master §3.1) — analyst-supplied non-GAAP figure
+    adjusted_ni: Optional[float] = None
+    adjustment_burden: Optional[float] = None
 
     # Altman inputs held until FY-end prices are known (see compute_altman)
     _z_parts: List[Optional[dict]] = field(default_factory=list)
@@ -196,6 +212,20 @@ def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> Non
         data.total_debt.append(debt_all[i])
         data.cash.append(full("cash")[i])
         data.book_equity.append(full("equity")[i])
+
+        # Solvency (regulatory ratios are tagged either as decimals or percent)
+        for concept, dest in (("cet1_ratio", data.cet1_ratio),
+                              ("tier1_ratio", data.tier1_ratio),
+                              ("leverage_ratio", data.leverage_ratio)):
+            v = full(concept)[i]
+            if v is not None and v > 1.0:  # 13.2 filed for 13.2%
+                v /= 100.0
+            dest.append(v)
+        eq, ta_i = full("equity")[i], assets_all[i]
+        data.equity_to_assets.append(
+            eq / ta_i if eq is not None and ta_i and ta_i > 0 else None)
+        data.credit_allowance.append(full("credit_allowance")[i])
+        data.credit_provision.append(full("credit_provision")[i])
 
         prev_rev = revenue_all[i - 1] if i > 0 else None
         data.revenue_yoy.append(
@@ -330,6 +360,44 @@ def _health_year(data: DashboardData, f: AnnualFundamentals, i: int,
         })
     else:
         data._z_parts.append(None)
+
+
+TRACKS = ("auto", "standard", "bank", "insurance", "reit", "sotp")
+
+
+def resolve_track(selection: str, sic_code: str) -> str:
+    """Logic-track selection (master Phase 1): explicit choice wins; otherwise
+    map the SIC code. Select by economic engine — override when they differ."""
+    if selection and selection != "auto":
+        return selection
+    sic = sic_code or ""
+    if sic == "6798":
+        return "reit"
+    if sic[:2] in ("63", "64"):
+        return "insurance"
+    if sic.startswith("6"):
+        return "bank"
+    return "standard"
+
+
+def apply_track(data: DashboardData, selection: str) -> None:
+    data.track = resolve_track(selection, data.sic_code)
+    data.is_financial_sector = data.track in ("bank", "insurance")
+
+
+def set_adjusted_ni(data: DashboardData, adjusted: Optional[float]) -> None:
+    """Fluff filter (master §3.1): burden = |Adjusted − GAAP| / |GAAP|."""
+    data.adjusted_ni = adjusted
+    data.adjustment_burden = None
+    if adjusted is None:
+        return
+    gaap = None
+    for v in reversed(data.net_income):
+        if v is not None:
+            gaap = v
+            break
+    if gaap:
+        data.adjustment_burden = abs(adjusted - gaap) / abs(gaap)
 
 
 def _rnd_is_material(data: DashboardData) -> bool:

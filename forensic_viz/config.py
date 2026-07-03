@@ -42,6 +42,13 @@ TTL_TICKER_MAP = 7 * 86400
 TTL_SUBMISSIONS = 7 * 86400
 TTL_COMPANYFACTS = 86400
 TTL_PRICES = 6 * 3600
+TTL_RATES = 12 * 3600
+
+# Discount-rate build (master §4.0) — labeled ASSUMPTIONs until the house
+# assumptions file is attached.
+ERP_ASSUMPTION = 0.046        # Damodaran-style implied equity risk premium
+DEBT_SPREAD_ASSUMPTION = 0.015  # r_d fallback spread over r_f
+BETA_MIN_OBS = 40             # minimum weekly observations for the regression
 
 
 def cache_dir() -> Path:

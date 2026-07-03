@@ -5,6 +5,7 @@ the main thread (results are handed back through a queue polled with after()).
 """
 from __future__ import annotations
 
+import math
 import queue
 import sys
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
@@ -24,8 +25,12 @@ from .dashboard import (
 )
 from .demo_data import demo_dashboard_data
 from .edgar import EdgarError
-from .export import export_fundamentals_csv, export_prices_csv
-from .metrics import DashboardData
+from .export import (
+    export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
+)
+from .metrics import (
+    TRACKS, DashboardData, apply_track, compute_altman, set_adjusted_ni,
+)
 from .pipeline import build_dashboard_data
 from .valuation import (
     CASE_NAMES, METHODS, CaseInputs, ValuationError, ValuationInputs,
@@ -49,6 +54,7 @@ class App:
         self.fig = None
         self.health_fig = None
         self.valuation_fig = None
+        self.valuation_res = None
         self.canvases: list[FigureCanvasTkAgg] = []
         self.busy = False
 
@@ -60,14 +66,24 @@ class App:
         entry.pack(side=tk.LEFT, padx=(6, 8))
         entry.bind("<Return>", lambda _e: self.analyze())
         entry.focus_set()
+        ttk.Label(bar, text="Track:").pack(side=tk.LEFT, padx=(10, 4))
+        self.track_var = tk.StringVar(value="auto")
+        track_box = ttk.Combobox(bar, state="readonly", width=9,
+                                 textvariable=self.track_var,
+                                 values=list(TRACKS))
+        track_box.pack(side=tk.LEFT)
+        track_box.bind("<<ComboboxSelected>>", lambda _e: self._on_track_change())
         self.analyze_btn = ttk.Button(bar, text="Analyze", command=self.analyze)
-        self.analyze_btn.pack(side=tk.LEFT)
+        self.analyze_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.demo_btn = ttk.Button(bar, text="Offline demo", command=self.demo)
         self.demo_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.value_btn = ttk.Button(bar, text="Intrinsic value…",
                                      command=self.open_valuation, state=tk.DISABLED)
         self.value_btn.pack(side=tk.LEFT, padx=(16, 0))
-        self.save_btn = ttk.Button(bar, text="Save PNG…", command=self.save_png,
+        self.fluff_btn = ttk.Button(bar, text="Fluff filter…",
+                                    command=self.fluff_filter, state=tk.DISABLED)
+        self.fluff_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.save_btn = ttk.Button(bar, text="Save PDF…", command=self.save_pdf,
                                    state=tk.DISABLED)
         self.save_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.csv_btn = ttk.Button(bar, text="Export CSV…", command=self.export_csv,
@@ -142,6 +158,7 @@ class App:
                 ticker,
                 cache=Cache(),
                 progress=lambda msg: self.queue.put(("status", msg)),
+                track=self.track_var.get(),
             )
             self.queue.put(("data", data))
         except EdgarError as exc:
@@ -151,7 +168,11 @@ class App:
 
     def _demo_worker(self):
         try:
-            self.queue.put(("data", demo_dashboard_data()))
+            data = demo_dashboard_data()
+            if self.track_var.get() != "auto":
+                apply_track(data, self.track_var.get())
+                compute_altman(data)
+            self.queue.put(("data", data))
         except Exception:
             self.queue.put(("error", "Demo failed:\n" + traceback.format_exc(limit=3)))
 
@@ -190,13 +211,14 @@ class App:
         self.canvases = []
         self.data, self.fig, self.health_fig = data, fig, health_fig
         self.valuation_fig = None  # a new ticker invalidates any prior valuation
+        self.valuation_res = None
         self._render_pages()
         note = ""
         if data.price_error:
             note = "  (price sources unavailable — fundamentals only)"
         self._set_busy(False, f"{data.company} — done.{note}")
 
-    def _render_pages(self):
+    def _render_pages(self, scroll_to: str = "top"):
         """(Re)build the stacked canvases: dashboard, health, then valuation."""
         for canvas in self.canvases:
             canvas.get_tk_widget().destroy()
@@ -209,33 +231,27 @@ class App:
             canvas.draw()
             canvas.get_tk_widget().pack(pady=(0, 12))
             self.canvases.append(canvas)
-        self.view.yview_moveto(0)
         self.view.xview_moveto(0)
+        # the scrollregion updates when `inner` re-configures; position after
+        self.root.after(
+            50, lambda: self.view.yview_moveto(0.0 if scroll_to == "top" else 1.0))
 
-    def save_png(self):
+    def save_pdf(self):
         # pin: a run finishing behind the modal dialog must not swap these
-        fig, health_fig, data = self.fig, self.health_fig, self.data
-        if fig is None or data is None:
+        figs = [self.fig, self.health_fig, self.valuation_fig]
+        data = self.data
+        if figs[0] is None or data is None:
             return
-        default = (f"{data.ticker}_{config.DISPLAY_YEARS}y_dashboard_"
-                   f"{data.generated.isoformat()}.png")
+        default = (f"{data.ticker}_{config.DISPLAY_YEARS}y_report_"
+                   f"{data.generated.isoformat()}.pdf")
         path = filedialog.asksaveasfilename(
-            defaultextension=".png", initialfile=default,
-            filetypes=[("PNG image", "*.png")])
+            defaultextension=".pdf", initialfile=default,
+            filetypes=[("PDF report", "*.pdf")])
         if not path:
             return
-        fig.savefig(path, dpi=150)
-        written = [path]
-        p = Path(path)
-        if health_fig is not None:
-            health_path = str(p.with_name(p.stem + "_health" + p.suffix))
-            health_fig.savefig(health_path, dpi=150)
-            written.append(health_path)
-        if self.valuation_fig is not None:
-            val_path = str(p.with_name(p.stem + "_valuation" + p.suffix))
-            self.valuation_fig.savefig(val_path, dpi=150)
-            written.append(val_path)
-        self.status_var.set(f"Saved {len(written)} page(s): " + path)
+        export_pdf(figs, path)
+        pages = sum(1 for f in figs if f is not None)
+        self.status_var.set(f"Saved {pages}-page report: {path}")
 
     def export_csv(self):
         data = self.data
@@ -249,12 +265,16 @@ class App:
             return
         export_fundamentals_csv(data, path)
         written = [path]
+        p = Path(path)
         if data.price_dates:
-            p = Path(path)
             price_path = str(p.with_name(p.stem + "_prices" + p.suffix))
             export_prices_csv(data, price_path)
             written.append(price_path)
-        self.status_var.set("Saved " + " and ".join(written))
+        if self.valuation_res is not None:
+            val_path = str(p.with_name(p.stem + "_valuation" + p.suffix))
+            export_valuation_csv(self.valuation_res, val_path)
+            written.append(val_path)
+        self.status_var.set(f"Saved {len(written)} CSV(s): " + path)
 
     def open_valuation(self):
         if self.data is None or self.busy:
@@ -268,10 +288,54 @@ class App:
             return
         _ValuationDialog(self.root, self.data, self._on_valuation_done)
 
-    def _on_valuation_done(self, fig):
+    def _on_valuation_done(self, fig, res):
         self.valuation_fig = fig
+        self.valuation_res = res
+        self._render_pages(scroll_to="bottom")  # show the new page, not page 1
+        self.status_var.set(
+            f"{self.data.company} — intrinsic value added below (page 3).")
+
+    def _on_track_change(self):
+        """Re-resolve the Logic Track and re-render the track-aware pages."""
+        if self.data is None or self.busy:
+            return
+        apply_track(self.data, self.track_var.get())
+        compute_altman(self.data)
+        viewport = self.view.winfo_width() or 1160
+        dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+        self.health_fig = render_health_report(self.data, dpi=dpi)
         self._render_pages()
-        self.status_var.set(f"{self.data.company} — intrinsic value added (page 3).")
+        self.status_var.set(
+            f"{self.data.company} — {self.data.track.title()} track applied.")
+
+    def fluff_filter(self):
+        """Fluff filter (§3.1): analyst supplies the non-GAAP net income."""
+        if self.data is None or self.busy:
+            return
+        gaap = None
+        for v in reversed(self.data.net_income):
+            if v is not None:
+                gaap = v
+                break
+        adjusted = simpledialog.askfloat(
+            "Fluff filter — adjustment burden (§3.1)",
+            "Adjusted (non-GAAP) net income for the latest fiscal year, in $.\n"
+            "From the earnings release — this figure is not in XBRL.\n"
+            f"GAAP net income for reference: {gaap:,.0f}" if gaap is not None
+            else "Adjusted (non-GAAP) net income for the latest fiscal year, in $.",
+            parent=self.root, initialvalue=gaap)
+        if adjusted is None:
+            return
+        set_adjusted_ni(self.data, adjusted)
+        viewport = self.view.winfo_width() or 1160
+        dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+        self.health_fig = render_health_report(self.data, dpi=dpi)
+        self._render_pages()
+        if self.data.adjustment_burden is not None:
+            burden = self.data.adjustment_burden
+            flag = "  FLAG >20% (master §3.1)" if burden > 0.20 else ""
+            self.status_var.set(f"Adjustment burden {burden * 100:.1f}%{flag} — "
+                                "see the health page KPI row.")
 
     def _set_busy(self, busy: bool, status: str):
         self.busy = busy
@@ -279,10 +343,10 @@ class App:
         self.analyze_btn.configure(state=state)
         self.demo_btn.configure(state=state)
         if busy:
-            for b in (self.save_btn, self.csv_btn, self.value_btn):
+            for b in (self.save_btn, self.csv_btn, self.value_btn, self.fluff_btn):
                 b.configure(state=tk.DISABLED)
         elif self.data is not None:
-            for b in (self.save_btn, self.csv_btn, self.value_btn):
+            for b in (self.save_btn, self.csv_btn, self.value_btn, self.fluff_btn):
                 b.configure(state=tk.NORMAL)
         self.status_var.set(status)
 
@@ -298,10 +362,13 @@ _METHOD_FIELDS = {
     "manual": [("fv_ps", "FV / share", "$")],
 }
 _METHOD_HELP = {
-    "dcf": "FCFF 2-stage DCF, 10-year linear fade. Base FCFF defaults to the "
-           "latest fiscal-year FCF; tick ex-SBC for the Track-B basis.",
-    "ri": "Residual income at r_e. BV₀ defaults to latest reported equity. "
-          "Enter each case's sustainable ROE and book-growth path.",
+    "dcf": "FCFF 2-stage DCF, 10-year linear fade. WACC is pre-filled from the "
+           "automated §4.0 build (live 10-Y UST + regression β) — edit to "
+           "override. Base FCFF defaults to latest-FY FCF + after-tax interest; "
+           "tick ex-SBC for the Track-B basis.",
+    "ri": "Residual income at r_e (pre-filled from the automated build; edit to "
+          "override). BV₀ defaults to latest reported equity. Enter each "
+          "case's sustainable ROE and book-growth path.",
     "affo": "REIT AFFO-yield cross-check. AFFO per share and target yield are "
             "analyst-supplied (the FFO→AFFO bridge isn't in XBRL).",
     "manual": "SOTP / external model: enter the FV per share you computed "
@@ -333,7 +400,7 @@ class _ValuationDialog(tk.Toplevel):
         self.title("Intrinsic value — Bear / Base / Bull")
         self.transient(parent)
         self.resizable(False, False)
-        self.method_var = tk.StringVar(value=suggest_method(data.sic_code))
+        self.method_var = tk.StringVar(value=suggest_method(data.track))
         self.wacc_var = tk.StringVar()
         self.base_var = tk.StringVar()
         self.exsbc_var = tk.BooleanVar(value=False)
@@ -354,8 +421,9 @@ class _ValuationDialog(tk.Toplevel):
 
         self.suggested_lbl = ttk.Label(
             top, foreground="#52514e",
-            text=f"Auto-selected from SIC {data.sic_code or '—'}; override if the "
-                 "economic engine differs.")
+            text=f"Pre-selected for the {data.track.title()} track "
+                 f"(SIC {data.sic_code or '—'}); override if the economic "
+                 "engine differs.")
         self.suggested_lbl.grid(row=1, column=0, columnspan=4, sticky="w", padx=10)
 
         self.help_lbl = ttk.Label(top, foreground="#52514e", wraplength=560,
@@ -398,14 +466,21 @@ class _ValuationDialog(tk.Toplevel):
         method = self._method_keys[index]
         self.method_var.set(method)
         # Clear the rate/base entries so a value typed for one method can't leak
-        # into another (e.g. a DCF Base FCFF being read as an RI book value).
+        # into another (e.g. a DCF Base FCFF being read as an RI book value),
+        # then prefill the rate from the automated §4.0 build (editable).
         self.wacc_var.set("")
         self.base_var.set("")
+        build = getattr(self.data, "wacc_build", None)
+        if build is not None and method in ("dcf", "ri"):
+            rate = build.wacc if method == "dcf" else build.r_e
+            if rate is not None:
+                self.wacc_var.set(f"{rate * 100:.2f}")
         self.help_lbl.configure(text=_METHOD_HELP[method])
         needs_rate = method in ("dcf", "ri")
         for w in (self.wacc_lbl, self.base_lbl):
             w.configure(state=tk.NORMAL if needs_rate else tk.DISABLED)
-        self.wacc_lbl.configure(text="WACC (%):" if method == "dcf" else "r_e (%):")
+        self.wacc_lbl.configure(
+            text="WACC (%, auto-built):" if method == "dcf" else "r_e (%, auto-built):")
         self.base_lbl.configure(
             text="Base FCFF $ (optional):" if method == "dcf"
             else "BV₀ $ (optional):")
@@ -464,7 +539,7 @@ class _ValuationDialog(tk.Toplevel):
             viewport = self.master.winfo_width() or 1160
             dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
             fig = render_valuation(self.data, res, dpi=dpi)
-            self.on_done(fig)
+            self.on_done(fig, res)
         except Exception:
             messagebox.showerror("Could not render the valuation page",
                                  traceback.format_exc(limit=3), parent=self)

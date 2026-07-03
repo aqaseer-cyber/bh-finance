@@ -528,13 +528,70 @@ def _panel_piotroski(ax, fig, d: DashboardData):
         _cap_label(ax, i, score, f"{score}{mark}", above=True, fig=fig, size=7.0)
 
 
+def _panel_solvency(ax, fig, d: DashboardData):
+    """Banks/insurance replacement for Altman Z (master §3.3 CET1/solvency)."""
+    _panel_title(ax, "Solvency — regulatory capital",
+                 "CET1 / Tier-1 / leverage ratios as filed; equity/assets fallback")
+    series = [(d.cet1_ratio, "CET1"), (d.tier1_ratio, "Tier 1"),
+              (d.leverage_ratio, "Tier-1 leverage")]
+    keep = [(s, n, P.SERIES[k]) for k, (s, n) in enumerate(series)
+            if any(v is not None for v in s)]
+    fallback = False
+    if not keep:
+        if any(v is not None for v in d.equity_to_assets):
+            keep = [(d.equity_to_assets, "Equity / assets", P.SERIES[0])]
+            fallback = True
+        else:
+            _panel_note(ax, "No regulatory-capital tags or equity/assets inputs "
+                            "in XBRL — check the filing's capital section")
+            return
+    flat = [v for s, _, _ in keep for v in s if v is not None]
+    hi = max(flat + [0.10])
+    ax.set_xlim(-0.5, len(d.fy_labels) - 0.5)
+    ax.set_ylim(0, hi * 1.3)
+    ax.set_xticks(range(len(d.fy_labels)))
+    ax.set_xticklabels(d.fy_labels)
+    _pct_axis(ax, decimals=1)
+    if not fallback:  # Basel III reference lines only for regulatory ratios
+        for y, lab in ((0.045, "CET1 min 4.5%"), (0.07, "+ buffer 7.0%")):
+            ax.axhline(y, color=P.INK_MUTED, linewidth=0.8,
+                       linestyle=(0, (4, 3)), zorder=2)
+            _zone_label(ax, -0.48, y + _px_to_y(ax, fig, 2), lab)
+    for s, name, color in keep:
+        xs = [i for i, v in enumerate(s) if v is not None]
+        ys = [v for v in s if v is not None]
+        ax.plot(xs, ys, color=color, linewidth=1.6, solid_capstyle="round", zorder=3)
+        ax.plot(xs[-1], ys[-1], "o", color=color, markersize=5.6,
+                markeredgecolor=P.SURFACE, markeredgewidth=1.2, zorder=4)
+        _cap_label(ax, xs[-1], ys[-1], f"{name} {fmt_pct(ys[-1])}", above=True,
+                   fig=fig, size=7.2)
+    if len(keep) > 1:
+        _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
+
+
+def _panel_credit_reserves(ax, fig, d: DashboardData):
+    """Banks capitalization audit (§3.2): is a reserve release flattering
+    earnings? Allowance level vs annual provision."""
+    _panel_title(ax, "Credit reserves (banks)",
+                 "allowance for credit losses vs annual provision; falling both = release")
+    series = [(d.credit_allowance, "Allowance"), (d.credit_provision, "Provision")]
+    keep = [(s, n, P.SERIES[k]) for k, (s, n) in enumerate(series)
+            if any(v is not None for v in s)]
+    if not keep:
+        _panel_note(ax, "Allowance/provision not tagged in XBRL —\n"
+                        "read the credit-quality note (analyst input)")
+        return
+    flat = [v for s, _, _ in keep for v in s if v is not None]
+    _category_panel_setup(ax, fig, d.fy_labels, flat)
+    _money_axis(ax)
+    _draw_bar_series(ax, fig, [s for s, _, _ in keep], [c for _, _, c in keep])
+    if len(keep) > 1:
+        _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
+
+
 def _panel_altman(ax, fig, d: DashboardData):
     _panel_title(ax, "Altman Z-score",
                  "original 1968 model (Standard-Mfg); MVE = FY-end close × diluted shares")
-    if d.is_financial_sector:
-        _panel_note(ax, "Financial-sector filer — Altman Z is not meaningful\n"
-                        "(bank/insurance solvency checks not yet ported)")
-        return
     pts = [(i, v) for i, v in enumerate(d.altman_z) if v is not None]
     if not pts:
         note = "Z inputs missing (needs current assets/liabilities, retained\n" \
@@ -627,6 +684,11 @@ def _panel_fcf_ex_sbc(ax, fig, d: DashboardData):
 def _health_kpis(ax, d: DashboardData):
     ax.set_axis_off()
     tiles = []
+    if d.adjustment_burden is not None:  # fluff filter (§3.1), analyst input
+        flagged = d.adjustment_burden > 0.20
+        tiles.append(("Adjustment burden", fmt_pct(d.adjustment_burden),
+                      "FLAG >20%" if flagged else "non-GAAP vs GAAP NI",
+                      not flagged))
     score, checks = _latest(d.piotroski_score), None
     if score is not None:
         idx = max(i for i, v in enumerate(d.piotroski_score) if v is not None)
@@ -681,7 +743,7 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
     ax_header.text(0, 1.04, f"{d.company} — forensic health checks",
                    fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
                    transform=ax_header.transAxes, va="top")
-    sub = f"Phase-3 quality scorecard · {d.ticker}"
+    sub = f"Phase-3 quality scorecard · {d.ticker} · {d.track.title()} track"
     if d.fy_labels:
         sub += f" · fiscal years {d.fy_labels[0]}–{d.fy_labels[-1]}"
     if d.sic_code:
@@ -697,10 +759,15 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
                        transform=ax_header.transAxes, va="top", ha="right")
     _health_kpis(ax_header, d)
 
+    # Track-aware panel selection (master §3.2/3.3): financial tracks swap
+    # Altman for the solvency panel; banks swap the R&D audit for the
+    # credit-reserve audit.
+    slot_a = _panel_solvency if d.is_financial_sector else _panel_altman
+    slot_b = _panel_credit_reserves if d.track == "bank" else _panel_rnd_audit
     panels = [
         (_panel_sloan, gs[1, 0]), (_panel_piotroski, gs[1, 1]),
-        (_panel_altman, gs[2, 0]), (_panel_sbc, gs[2, 1]),
-        (_panel_rnd_audit, gs[3, 0]), (_panel_fcf_ex_sbc, gs[3, 1]),
+        (slot_a, gs[2, 0]), (_panel_sbc, gs[2, 1]),
+        (slot_b, gs[3, 0]), (_panel_fcf_ex_sbc, gs[3, 1]),
     ]
     for fn, spec in panels:
         ax = fig.add_subplot(spec)
@@ -776,10 +843,10 @@ def _valuation_table(ax, res):
     elif res.method == "ri":
         cols += [("Equity value", 0.74), ("TV % of V₀", 0.86)]
     for label, x in cols:
-        ax.text(x, 0.94, label, fontsize=8, color=P.INK_SECONDARY,
+        ax.text(x, 0.96, label, fontsize=8, color=P.INK_SECONDARY,
                 transform=ax.transAxes, va="top")
     for r, c in enumerate(res.cases):
-        y = 0.70 - r * 0.26
+        y = 0.76 - r * 0.22
         good = c.fv_ps is not None and c.fv_ps >= res.price
         cells = [(0.00, c.name, P.INK_PRIMARY, "bold"),
                  (0.09, c.assumptions, P.INK_PRIMARY, "normal"),
@@ -795,6 +862,18 @@ def _valuation_table(ax, res):
         for x, text, color, weight in cells:
             ax.text(x, y, text, fontsize=9, color=color, fontweight=weight,
                     transform=ax.transAxes, va="top")
+    # Reverse-DCF sanity frame (§4.D) — mandatory read on every DCF name
+    if res.implied_g is not None:
+        over = res.implied_g > 0.035
+        line = (f"Reverse DCF (§4.D): market EV {fmt_money(res.market_ev)} at "
+                f"{'WACC' if res.method == 'dcf' else 'r'} "
+                f"{fmt_pct(res.discount_rate)} implies g ≈ "
+                f"{fmt_pct(res.implied_g)} on the same base — "
+                + ("above the 3.5% GDP cap: the market is paying for optionality"
+                   if over else "inside the 3.5% GDP cap"))
+        ax.text(0.0, 0.06, line, fontsize=8.4,
+                color=P.DELTA_BAD if over else P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
 
 
 def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
@@ -851,7 +930,11 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
     ax_table = fig.add_subplot(gs[2])
     _valuation_table(ax_table, res)
 
-    y = 0.105
+    y = 0.115
+    if res.rate_build:
+        fig.text(0.055, y, "Rate build (§4.0): " + res.rate_build,
+                 fontsize=6.8, color=P.INK_SECONDARY, va="bottom")
+        y -= 0.016
     case_warns = [f"{c.name}: {w}" for c in res.cases for w in c.warnings]
     for w in res.warnings + case_warns:
         fig.text(0.055, y, "⚠ " + w, fontsize=6.8, color=P.DELTA_BAD, va="bottom")

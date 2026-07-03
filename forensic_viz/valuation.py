@@ -97,19 +97,15 @@ class ValuationResult:
     shares: float
     cases: List[CaseResult]
     implied_g: Optional[float] = None            # §4.D reverse DCF
+    market_ev: Optional[float] = None
+    rate_build: str = ""                         # §4.0 build audit string
     warnings: List[str] = field(default_factory=list)
 
 
-def suggest_method(sic_code: str) -> str:
-    """Pre-select the Logic Track from the SIC code; the analyst can override
-    (economic engine beats vendor code, SKILL_General §2)."""
-    if not sic_code:
-        return "dcf"
-    if sic_code == "6798":
-        return "affo"
-    if sic_code.startswith("6"):
-        return "ri"
-    return "dcf"
+def suggest_method(track: str) -> str:
+    """Valuation method for a resolved Logic Track (master Phase 1 table)."""
+    return {"bank": "ri", "insurance": "ri", "reit": "affo",
+            "sotp": "manual"}.get(track, "dcf")
 
 
 # ------------------------------------------------------------------ math
@@ -218,15 +214,29 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
         warnings.append("latest-FY diluted share count missing — using the most "
                         "recent reported year, which lags the current price")
 
+    # Auto discount rate from the §4.0 build when the analyst didn't override.
+    discount = inputs.discount_rate
+    rate_build = ""
+    build = getattr(d, "wacc_build", None)
+    if discount is None and build is not None and inputs.method in ("dcf", "ri"):
+        discount = build.wacc if inputs.method == "dcf" else build.r_e
+        if discount is not None:
+            rate_build = build.summary()
+
     result = ValuationResult(
         method=inputs.method, method_label=METHODS[inputs.method],
-        basis_label="", discount_rate=inputs.discount_rate,
+        basis_label="", discount_rate=discount,
         base_value=inputs.base_value, price=price, price_date=price_date,
         net_debt=net_debt, shares=shares or 0.0, cases=[], warnings=warnings,
+        rate_build=rate_build,
     )
 
     if inputs.method == "dcf":
-        rate = _require(inputs.discount_rate, "WACC")
+        rate = result.discount_rate
+        if rate is None:
+            raise ValuationError(
+                "WACC unavailable — the automated build needs a live 10-Y UST "
+                "and market cap; enter the rate manually (master §4.0).")
         base = inputs.base_value
         levered_proxy = False
         if base is None:
@@ -255,6 +265,7 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
         if net_debt is None:
             warnings.append("net debt unavailable — equity bridge assumes 0 (check XBRL tags)")
         market_ev = price * shares + (net_debt or 0.0)
+        result.market_ev = market_ev
         result.implied_g = reverse_dcf_implied_g(base, rate, market_ev)
         if result.implied_g is not None and result.implied_g > GDP_CAP:
             warnings.append(
@@ -278,7 +289,11 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
                 tv_share=out["tv_share"], warnings=cw))
 
     elif inputs.method == "ri":
-        rate = _require(inputs.discount_rate, "r_e")
+        rate = result.discount_rate
+        if rate is None:
+            raise ValuationError(
+                "r_e unavailable — the automated build needs a live 10-Y UST; "
+                "enter the rate manually (master §4.0).")
         bv0 = inputs.base_value if inputs.base_value is not None else _latest(d.book_equity)
         if bv0 is None or bv0 <= 0:
             raise ValuationError(

@@ -91,6 +91,13 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
     ],
+    # Banks capitalization audit (master §3.2): reserve-release detection
+    "credit_provision": [
+        "ProvisionForLoanLeaseAndOtherLosses",
+        "ProvisionForLoanAndLeaseLosses",
+        "ProvisionForCreditLossExpenseReversal",
+        "ProvisionForDoubtfulAccounts",
+    ],
 }
 
 # Instant (balance-sheet) concepts.
@@ -120,9 +127,23 @@ INSTANT_TAGS: Dict[str, List[str]] = {
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
     ],
+    # Banks/insurance solvency (master §3.3): regulatory capital ratios
+    "cet1_ratio": ["CommonEquityTierOneCapitalToRiskWeightedAssets"],
+    "tier1_ratio": ["TierOneRiskBasedCapitalToRiskWeightedAssets"],
+    "leverage_ratio": ["TierOneLeverageCapitalToAverageAssets"],
+    "credit_allowance": [
+        "FinancingReceivableAllowanceForCreditLosses",
+        "FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
+        "AllowanceForLoanAndLeaseLosses",
+    ],
 }
 
-_UNITS_BY_CONCEPT = {"diluted_shares": ("shares",)}
+_UNITS_BY_CONCEPT = {
+    "diluted_shares": ("shares",),
+    "cet1_ratio": ("pure",),
+    "tier1_ratio": ("pure",),
+    "leverage_ratio": ("pure",),
+}
 _DEFAULT_UNITS = ("USD",)
 
 
