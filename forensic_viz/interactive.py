@@ -231,8 +231,16 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
             figs.append(f)
         else:
             f = _fig("Unit economics — working-capital days")
-            _lines(f, fy, [d.dsi, d.dso, d.dpo, d.ccc],
-                   ["DSI", "DSO", "DPO", "CCC"], pct=False)
+            wc_series = [d.dsi, d.dso, d.dpo, d.ccc]
+            wc_names = ["DSI", "DSO", "DPO", "CCC"]
+            if all(v is None for v in d.ccc) and all(v is None for v in d.dpo):
+                # payables untagged: show the operating cycle instead of
+                # silently dropping the cycle line (matches the PDF page)
+                oc = [a + b if a is not None and b is not None else None
+                      for a, b in zip(d.dsi, d.dso)]
+                wc_series, wc_names = [d.dsi, d.dso, oc], \
+                    ["DSI", "DSO", "Operating cycle (DSI+DSO; DPO untagged)"]
+            _lines(f, fy, wc_series, wc_names, pct=False)
             f.update_yaxes(ticksuffix="d")
             figs.append(f)
 

@@ -104,3 +104,30 @@ def test_display_years_window(testco_facts):
     assert d.fy_labels == [f"FY{y}" for y in range(2021, 2026)]
     assert len(d.revenue) == 5
     assert d.dsi[-1] is not None  # derived series follow the window
+
+
+def test_ccc_panel_degrades_to_operating_cycle(testco_facts):
+    """Payables untagged (no DPO): the CCC panel must show the operating
+    cycle (DSI + DSO) with an honest label instead of a dead placeholder."""
+    d = _metrics(testco_facts)
+    d.dpo = [None] * len(d.fy_labels)
+    d.ccc = [None] * len(d.fy_labels)
+    fig = render_unit_economics(d)
+    texts = [t.get_text() for ax in fig.axes for t in ax.texts]
+    texts += [t.get_text() for t in fig.texts]
+    joined = " ".join(texts)
+    assert "Operating cycle" in joined
+    assert "payables (DPO) not tagged" in joined
+    assert "Needs the working-capital legs" not in joined
+    # the left panel's subtitle explains the missing leg too
+    assert "DPO: payables not tagged in XBRL" in joined
+
+
+def test_ccc_placeholder_only_when_no_legs_at_all(testco_facts):
+    d = _metrics(testco_facts)
+    for name in ("dsi", "dso", "dpo", "ccc"):
+        setattr(d, name, [None] * len(d.fy_labels))
+    fig = render_unit_economics(d)
+    joined = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    joined += " ".join(t.get_text() for t in fig.texts)
+    assert "Needs the working-capital legs" in joined

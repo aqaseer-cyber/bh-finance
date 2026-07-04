@@ -503,31 +503,50 @@ def _lines_panel_setup(ax, values, n_labels, labels, head=0.30, foot=0.06):
     ax.set_xticklabels(labels)
 
 
+def _day_axis(ax):
+    # integer=True keeps day ticks whole and short ("24d"), never "22.5d"
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}d"))
+
+
 def _panel_wc_cycle(ax, fig, d: DashboardData):
-    _panel_title(ax, "Working-capital cycle",
-                 "DSI = avg inventory/COGS × 365 (§2.2) · DSO, DPO alike")
+    sub = "DSI = avg inventory/COGS × 365 (§2.2) · DSO, DPO alike"
     series = [d.dsi, d.dso, d.dpo]
     flat = [v for s in series for v in s if v is not None]
+    if flat and all(v is None for v in d.dpo):
+        sub += " · DPO: payables not tagged in XBRL"
+    _panel_title(ax, "Working-capital cycle", sub)
     if not flat:
         _panel_note(ax, "Inventory / receivables / payables not reported in XBRL")
         return
     _lines_panel_setup(ax, flat, len(d.fy_labels), d.fy_labels)
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}d"))
+    _day_axis(ax)
     _line_series(ax, fig, series, ["DSI", "DSO", "DPO"], end_fmt=_fmt_days)
 
 
 def _panel_ccc(ax, fig, d: DashboardData):
-    _panel_title(ax, "Cash conversion cycle", "DSI + DSO − DPO, days")
+    """CCC when all three legs exist; the operating cycle (DSI + DSO) when
+    payables alone are untagged — honestly labeled, never a dead panel for
+    a one-leg gap."""
     vals = [v for v in d.ccc if v is not None]
-    if not vals:
-        _panel_note(ax, "Needs all three working-capital legs — see the left panel")
-        return
+    series = d.ccc
+    if vals:
+        _panel_title(ax, "Cash conversion cycle", "DSI + DSO − DPO, days")
+    else:
+        series = [a + b if a is not None and b is not None else None
+                  for a, b in zip(d.dsi, d.dso)]
+        vals = [v for v in series if v is not None]
+        if not vals:
+            _panel_title(ax, "Cash conversion cycle", "DSI + DSO − DPO, days")
+            _panel_note(ax, "Needs the working-capital legs — see the left panel")
+            return
+        _panel_title(ax, "Operating cycle",
+                     "DSI + DSO, days — payables (DPO) not tagged in XBRL, "
+                     "so the full CCC can't be computed")
     _category_panel_setup(ax, fig, d.fy_labels, vals)
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}d"))
+    _day_axis(ax)
     width, _ = _bar_geometry(ax, fig, 1)
-    for i, v in enumerate(d.ccc):
+    for i, v in enumerate(series):
         if v is not None:
             _rounded_bar(ax, fig, i, v, width, P.SERIES[0])
             _cap_label(ax, i, v, _fmt_days(v), above=v >= 0, fig=fig)
