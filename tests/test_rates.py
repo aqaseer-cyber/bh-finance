@@ -58,6 +58,49 @@ def test_beta_insufficient_overlap_returns_none():
     assert compute_beta(dates, [100.0] * 30, {}) is None
 
 
+def test_beta_window_independent_of_display_trim(monkeypatch):
+    """FIX-3: WACC must not move with the --years display trim. Two data
+    objects trimmed to 3y and 10y still get identical beta when passed the
+    same explicit beta slice; a different slice does move beta."""
+    import forensic_viz.rates as rates
+
+    start = dt.date(2016, 1, 1)
+    dates, idx, closes = [], {}, []
+    lvl_m, lvl_s = 100.0, 50.0
+    moves = [0.01, -0.008, 0.012, -0.005, 0.007, -0.011, 0.009, 0.004] * 130
+    n = len(moves)
+    for i, m in enumerate(moves):
+        day = start + dt.timedelta(days=i)
+        lvl_m *= 1 + m
+        # stock beta drifts from 1.4 (early) to 2.4 (recent) so the window
+        # choice genuinely changes the regression slope
+        beta_t = 1.4 + 1.0 * i / n
+        lvl_s *= 1 + beta_t * m
+        dates.append(day)
+        idx[day] = lvl_m
+        closes.append(lvl_s)
+
+    monkeypatch.setattr(rates, "fetch_risk_free",
+                        lambda cache=None: (0.04, dt.date(2026, 7, 2), "stub"))
+    monkeypatch.setattr(rates, "fetch_index_closes", lambda cache=None: idx)
+
+    d3 = DashboardData(ticker="T", company="T", subtitle="",
+                       generated=dt.date(2026, 7, 3))
+    d3.price_dates, d3.price_closes = dates[-120:], closes[-120:]  # ~3y trim
+    d10 = DashboardData(ticker="T", company="T", subtitle="",
+                        generated=dt.date(2026, 7, 3))
+    d10.price_dates, d10.price_closes = dates, closes                # full
+
+    beta_slice = (dates[-400:], closes[-400:])
+    b3 = rates.build_wacc(d3, price_dates=beta_slice[0], price_closes=beta_slice[1])
+    b10 = rates.build_wacc(d10, price_dates=beta_slice[0], price_closes=beta_slice[1])
+    assert b3.beta == pytest.approx(b10.beta)  # identical slice -> identical beta
+
+    other = rates.build_wacc(d10, price_dates=dates[-120:], price_closes=closes[-120:])
+    assert other.beta != pytest.approx(b10.beta)  # different slice -> beta moves
+    assert any("β window" in n for n in b10.notes)
+
+
 def test_build_wacc_offline_degrades_to_manual():
     d = DashboardData(ticker="T", company="T", subtitle="",
                       generated=dt.date(2026, 7, 3))

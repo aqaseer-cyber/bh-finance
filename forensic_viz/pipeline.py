@@ -53,8 +53,11 @@ def build_dashboard_data(
     build_fundamental_metrics(fundamentals, data)
 
     progress(f"Fetching {data.display_years}-year price history…")
+    full_dates: list = []
+    full_closes: list = []
     try:
         prices = fetch_prices(ticker, cache=cache)
+        full_dates, full_closes = list(prices.dates), list(prices.closes)  # pre-trim
         cutoff = data.generated - dt.timedelta(days=round(data.display_years * 365.25))
         keep = [(day, c) for day, c in zip(prices.dates, prices.closes) if day >= cutoff]
         if keep:
@@ -74,7 +77,16 @@ def build_dashboard_data(
     progress("Building discount rate (live 10-Y UST, β vs S&P 500)…")
     try:
         from .rates import build_wacc
-        data.wacc_build = build_wacc(data, cache=cache)
+        # Beta uses a FIXED window off the untrimmed series, so the display
+        # `--years` choice can never move WACC (FIX-3).
+        beta_cutoff = data.generated - dt.timedelta(
+            days=round(config.BETA_WINDOW_YEARS * 365.25))
+        beta_pairs = [(x, c) for x, c in zip(full_dates, full_closes)
+                      if x >= beta_cutoff]
+        data.wacc_build = build_wacc(
+            data, cache=cache,
+            price_dates=[p[0] for p in beta_pairs] or None,
+            price_closes=[p[1] for p in beta_pairs] or None)
     except Exception:
         data.wacc_build = None  # rates are best-effort; dialog accepts manual
 

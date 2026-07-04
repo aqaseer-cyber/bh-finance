@@ -49,6 +49,9 @@ TTL_RATES = 12 * 3600
 ERP_ASSUMPTION = 0.046        # Damodaran-style implied equity risk premium
 DEBT_SPREAD_ASSUMPTION = 0.015  # r_d fallback spread over r_f
 BETA_MIN_OBS = 40             # minimum weekly observations for the regression
+BETA_WINDOW_YEARS = 5         # beta regression window — fixed, independent of
+                              # the --years display trim (a chart parameter must
+                              # never move intrinsic value)
 
 
 def cache_dir() -> Path:

@@ -206,10 +206,18 @@ def _latest(seq):
 
 
 def build_wacc(d: DashboardData, cache: Optional[Cache] = None,
-               offline: bool = False) -> WaccBuild:
-    """Assemble the §4.0 discount-rate build; every gap becomes a note."""
+               offline: bool = False, price_dates=None, price_closes=None) -> WaccBuild:
+    """Assemble the §4.0 discount-rate build; every gap becomes a note.
+
+    The beta regression uses `price_dates`/`price_closes` when provided (the
+    pipeline passes a fixed BETA_WINDOW_YEARS slice so the display `--years`
+    trim can't move WACC); otherwise it falls back to `d.price_*` for
+    back-compatibility with direct callers and tests.
+    """
     b = WaccBuild()
     cache = cache or Cache()
+    beta_dates = price_dates if price_dates is not None else d.price_dates
+    beta_closes = price_closes if price_closes is not None else d.price_closes
 
     if not offline:
         b.r_f, b.r_f_date, b.r_f_source = fetch_risk_free(cache)
@@ -219,12 +227,15 @@ def build_wacc(d: DashboardData, cache: Optional[Cache] = None,
         return b
 
     index = None if offline else fetch_index_closes(cache)
-    raw = compute_beta(d.price_dates, d.price_closes, index) if index else None
+    raw = compute_beta(beta_dates, beta_closes, index) if index else None
     if raw is not None and -1.0 < raw < 4.0:
         b.beta_raw = raw
         b.beta = blume_adjust(raw)
         b.notes.append("β: Blume-adjusted regression vs S&P 500 (bottom-up "
                        "relevered preferred but sector table not available)")
+        b.notes.append(
+            f"β window {config.BETA_WINDOW_YEARS}y weekly (ASSUMPTION; house "
+            "prefers bottom-up relevered)")
     else:
         b.beta_raw, b.beta = None, 1.0
         b.notes.append("β regression unavailable — β=1.0 ASSUMPTION")
