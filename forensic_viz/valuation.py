@@ -246,9 +246,11 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
                 sbc = _latest(d.sbc)
                 if sbc is not None:
                     base -= sbc
-            # if no interest tag was found, fcff fell back to levered FCF
-            levered_proxy = (d.interest_expense and d.interest_expense[-1] is None
-                             and _latest(d.interest_expense) is None)
+            # the base's leveredness is a property of the LATEST year only:
+            # metrics adds after-tax interest per-year, so a stale early-year
+            # interest tag does not un-lever fcff[-1]
+            levered_proxy = (not d.interest_expense
+                             or d.interest_expense[-1] is None)
         if base is None or base <= 0:
             raise ValuationError(
                 "Base FCFF must be positive — normalize a trough/negative base "

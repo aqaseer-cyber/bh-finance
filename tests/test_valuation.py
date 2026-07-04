@@ -156,6 +156,23 @@ def test_dcf_fcff_adds_after_tax_interest():
     assert any("levered FCF" in w for w in r_lev.warnings)  # proxy disclosed
 
 
+def test_levered_proxy_flagged_when_latest_interest_missing():
+    """FIX-1b: interest tagged in EARLY years only — fcff[-1] is levered FCF,
+    so the levered-proxy warning must fire (staleness must not suppress it)."""
+    d = _data(fcf=400e6)
+    d.interest_expense = [80e6, 80e6, None]      # stale tag, absent latest FY
+    d.fcff = [400e6 + 80e6 * 0.79, 400e6 + 80e6 * 0.79, 400e6]  # per-year rule
+    d.fcf = [400e6] * 3
+    d.fcf_ex_sbc = [350e6] * 3
+    d.sbc = [50e6] * 3
+    cases = _cases(Bear=CaseInputs(g0=0.03, g_term=0.02),
+                   Base=CaseInputs(g0=0.03, g_term=0.02),
+                   Bull=CaseInputs(g0=0.03, g_term=0.02))
+    res = build_valuation(d, ValuationInputs("dcf", cases, discount_rate=0.09))
+    assert res.base_value == pytest.approx(400e6)  # latest-year fcff, levered
+    assert any("levered FCF" in w for w in res.warnings)
+
+
 def test_dcf_negative_base_is_rejected():
     d = _data(fcf=-100e6)
     with pytest.raises(ValuationError, match="Base FCFF must be positive"):

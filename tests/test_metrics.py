@@ -87,6 +87,44 @@ def test_rnd_capitalization_audit(data):
     assert data.ebit_reported[-1] == pytest.approx(OPINC[2025])
 
 
+def test_invested_capital_total_debt_fallback_no_double_count(testco_facts):
+    """FIX-1a: LongTermDebt (total) is a fallback ONLY when all components are
+    untagged — never added on top of the current portion (debt_all parity)."""
+    from tests.conftest import CASH, EQUITY, OPINC, _instant, _usd
+    gaap = testco_facts["facts"]["us-gaap"]
+    del gaap["LongTermDebtNoncurrent"]
+    years = list(range(2014, 2026))
+    gaap["LongTermDebt"] = _usd([_instant(y, 400e6) for y in years])
+
+    # case A: total only (current portion untagged) -> equity + total - cash
+    del gaap["LongTermDebtCurrent"]
+    d = DashboardData(ticker="T", company="T", subtitle="",
+                      generated=dt.date(2026, 7, 3))
+    build_fundamental_metrics(parse_companyfacts(testco_facts, "T"), d)
+
+    def ic(y):
+        return EQUITY[y] + 400e6 - CASH[y]
+
+    avg_ic = (ic(2025) + ic(2024)) / 2
+    assert d.roic[-1] == pytest.approx(OPINC[2025] * (1 - 0.21) / avg_ic)
+
+    # case B: total AND current tagged -> component rule wins; the old code's
+    # total+current double count (equity + 450e6 - cash) must not reappear
+    gaap["LongTermDebtCurrent"] = _usd([_instant(y, 50e6) for y in years])
+    d2 = DashboardData(ticker="T", company="T", subtitle="",
+                       generated=dt.date(2026, 7, 3))
+    build_fundamental_metrics(parse_companyfacts(testco_facts, "T"), d2)
+
+    def ic2(y):
+        return EQUITY[y] + 50e6 - CASH[y]  # components present -> no fallback
+
+    avg_ic2 = (ic2(2025) + ic2(2024)) / 2
+    assert d2.roic[-1] == pytest.approx(OPINC[2025] * (1 - 0.21) / avg_ic2)
+    double_counted = ((EQUITY[2025] + 450e6 - CASH[2025])
+                      + (EQUITY[2024] + 450e6 - CASH[2024])) / 2
+    assert d2.roic[-1] != pytest.approx(OPINC[2025] * (1 - 0.21) / double_counted)
+
+
 def test_altman_z_with_fy_prices(data):
     data.fy_prices = [10.0] * len(data.fy_labels)
     compute_altman(data)

@@ -462,11 +462,16 @@ def _unit_economics_year(data: DashboardData, f: AnnualFundamentals, i: int,
         e = g("equity", j)
         if e is None or e <= 0:
             return None
-        debt = g("lt_debt_noncurrent", j)
-        if debt is None:
-            debt = g("lt_debt_total", j)
-        return e + (debt or 0.0) + (g("lt_debt_current", j) or 0.0) \
-            + (g("st_borrowings", j) or 0.0) - (g("cash", j) or 0.0)
+        # same debt rule as debt_all in build_fundamental_metrics: the
+        # LongTermDebt total is a fallback ONLY when every component is
+        # untagged, never additive (it already includes the current portion)
+        parts = [g("lt_debt_noncurrent", j), g("lt_debt_current", j),
+                 g("st_borrowings", j)]
+        if all(p is None for p in parts):
+            debt = g("lt_debt_total", j) or 0.0
+        else:
+            debt = sum(p for p in parts if p is not None)
+        return e + debt - (g("cash", j) or 0.0)
 
     ic_now, ic_prev = invested(i), invested(i - 1)
     avg_ic = ((ic_now + ic_prev) / 2.0 if ic_now is not None and ic_prev is not None
