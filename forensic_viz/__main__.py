@@ -4,7 +4,9 @@
   python -m forensic_viz AAPL                -> AAPL_10y_report_<date>.pdf (A4)
   python -m forensic_viz AAPL --years 5      -> 5-year window
   python -m forensic_viz AAPL --html         -> interactive HTML report
-  python -m forensic_viz AAPL --png --csv    -> per-page PNGs + CSVs
+  python -m forensic_viz AAPL --model        -> one-sheet financial model XLSX
+                                                (annual + quarterly + LTM)
+  python -m forensic_viz AAPL --png --csv    -> per-page PNGs + audit CSVs
 
   Intrinsic value (Bear/Base/Bull). WACC auto-builds; for DCF, omitted cases
   pre-fill from analyst consensus (Bear <- low, Base <- avg, Bull <- high,
@@ -113,8 +115,12 @@ def main(argv=None) -> int:
                         help="write per-page PNGs instead of the A4 PDF")
     parser.add_argument("--html", nargs="?", const="", metavar="PATH",
                         help="also write the interactive HTML report")
+    parser.add_argument("--model", nargs="?", const="", metavar="PATH",
+                        help="one-sheet three-statement financial model XLSX "
+                             "(annual + quarterly + LTM)")
     parser.add_argument("--csv", action="store_true",
-                        help="also write fundamentals/prices (and valuation) CSVs")
+                        help="raw audit-trail CSVs (fundamentals/prices/valuation "
+                             "with the XBRL tag per concept)")
     parser.add_argument("--gui", action="store_true", help="launch the desktop app")
     parser.add_argument("--no-cache", action="store_true", help="bypass the local cache")
     parser.add_argument("--dpi", type=int, default=150)
@@ -319,6 +325,12 @@ def main(argv=None) -> int:
             print("  ledger updated (see --ledger)")
         except Exception:
             pass
+
+    if args.model is not None:
+        from .model_export import export_financial_model
+        model_path = args.model or f"{data.ticker}_financial_model_{stamp}.xlsx"
+        export_financial_model(data, model_path)
+        print(f"wrote {model_path} (annual + quarterly + LTM, one sheet)")
 
     if args.csv:
         fpath = base + "_fundamentals.csv"

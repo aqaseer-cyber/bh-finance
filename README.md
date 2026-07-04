@@ -27,7 +27,7 @@ untouched, and a to-do list of the analyst cells with suggested sources
    **Track**, press **Analyze**. The report opens as tabs (Watchlist /
    Dashboard / Unit economics / Health / Valuation / Verdict);
    **Interactive report ↗** opens the zoomable, hover-tooltip HTML rendition
-   in your browser, and **Save PDF (A4)…** / **Export CSV…** /
+   in your browser, and **Save PDF (A4)…** / **Financial model…** /
    **Fill workbook…** produce the deliverables.
 
 **Watchlist & verdict ledger (§5.7).** Every computed verdict logs
@@ -65,7 +65,8 @@ audited record for every export.
 Command line (same launcher):
 
 ```bat
-run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf (A4) + CSVs
+run_windows.bat AAPL --model      :: one-sheet financial model XLSX (FY + quarters + LTM)
+run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf (A4) + audit CSVs
 run_windows.bat AAPL --years 5    :: 5-year window
 run_windows.bat AAPL --html       :: interactive HTML report (plotly, offline)
 run_windows.bat AAPL --png        :: per-page PNGs instead of the PDF
@@ -201,9 +202,17 @@ pensions are not modeled. In the GUI, percent fields are entered in **percent**
 (`9` = 9%, `160` = 160%); on the CLI, `--wacc`/`--bear`/… take **fractions**
 (`0.09`).
 
-The **CSV export** is the table-view twin of the chart: every plotted value,
-plus fiscal year-end dates, plus the exact XBRL tag used for each concept —
-the audit trail for tying numbers back to the filings.
+The **Financial model export** (**Financial model…** / `--model`) is the
+data deliverable: one sheet, three statements — income statement, balance
+sheet and cash-flow statement consolidated in the analyst's model-template
+layout. Columns run fiscal years, then the current fiscal year's quarters
+(`Q1'26` …), then **LTM**. Quarterly values come from as-filed 10-Q XBRL
+under the same winning tags as the annual series: discrete 3-month values
+when filed, else derived by differencing successive fiscal-YTD spans (10-Q
+cash-flow statements are YTD-only); LTM = last FY + latest YTD − year-ago
+comparative YTD; balance-sheet rows show the latest period-end balance. The
+footer records the derivation rules and the exact XBRL tag per concept. Raw
+audit-trail CSVs remain available on the CLI via `--csv`.
 
 ## House assumptions file
 

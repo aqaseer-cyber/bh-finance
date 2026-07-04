@@ -116,6 +116,16 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "PaymentsOfDividends",
         "PaymentsOfDividendsCommonStockAndPreferredStock",
     ],
+    # Financial-model export (three-statement sheet) extras
+    "sga": [
+        "SellingGeneralAndAdministrativeExpense",
+        "GeneralAndAdministrativeExpense",
+    ],
+    "cff": [
+        "NetCashProvidedByUsedInFinancingActivities",
+        "NetCashProvidedByUsedInFinancingActivitiesContinuingOperations",
+    ],
+    "buybacks": ["PaymentsForRepurchaseOfCommonStock"],
 }
 
 # Instant (balance-sheet) concepts.
@@ -164,6 +174,9 @@ INSTANT_TAGS: Dict[str, List[str]] = {
     # Equity-bridge legs (master §4.A / workbook Phase1_Anchor)
     "minority_interest": ["MinorityInterest", "RedeemableNoncontrollingInterestEquityCarryingAmount"],
     "preferred_equity": ["PreferredStockValue", "PreferredStockValueOutstanding"],
+    # Financial-model export (three-statement sheet) extras
+    "ppe_net": ["PropertyPlantAndEquipmentNet"],
+    "goodwill": ["Goodwill"],
 }
 
 _UNITS_BY_CONCEPT = {
@@ -195,10 +208,31 @@ class AnnualFundamentals:
     exchange_ticker: str = ""
     latest_10k_date: str = ""
     latest_10q_date: str = ""
+    # full companyfacts payload, kept so the financial-model export can pull
+    # interim (10-Q) observations without a second fetch
+    raw_facts: Optional[dict] = field(default=None, repr=False)
 
     def value(self, concept: str, i: int) -> Optional[float]:
         s = self.series.get(concept)
         return s[i] if s is not None and 0 <= i < len(s) else None
+
+
+@dataclass
+class QuarterlyFundamentals:
+    """As-filed interim observations for the financial-model export.
+
+    ``duration[concept]`` holds every filed duration up to ~400 days under
+    the concept's winning tag as ``(start, end, value)`` — 10-Qs file both
+    discrete ~3-month spans and fiscal-YTD spans (plus prior-year
+    comparatives), and cash-flow statements are YTD-only; the
+    discrete-quarter and LTM arithmetic lives in ``model_export``.
+    ``instant[concept]`` maps every balance-sheet date to its latest-filed
+    value across all forms.
+    """
+
+    duration: Dict[str, List[Tuple[dt.date, dt.date, float]]] = field(
+        default_factory=dict)
+    instant: Dict[str, Dict[dt.date, float]] = field(default_factory=dict)
 
 
 class _SecSession:
@@ -308,6 +342,90 @@ def _annual_instant_obs(tag_units: dict, units: Tuple[str, ...]) -> Dict[dt.date
             if prev is None or filed >= prev[0]:
                 out[end] = (filed, float(val))
     return {end: v for end, (_, v) in out.items()}
+
+
+def _duration_obs_all(
+    tag_units: dict, units: Tuple[str, ...]
+) -> Dict[Tuple[dt.date, dt.date], float]:
+    """(start, end) -> value for every filed duration up to ~400 days.
+
+    No form filter: 10-Qs carry the interim spans (discrete quarters, fiscal
+    YTD, prior-year comparatives) and 10-Ks the full years; the consolidator
+    picks spans by their dates. Latest filed wins per exact span.
+    """
+    out: Dict[Tuple[dt.date, dt.date], Tuple[str, float]] = {}
+    for unit in units:
+        for item in tag_units.get(unit, []):
+            start = _parse_date(item.get("start", ""))
+            end = _parse_date(item.get("end", ""))
+            val = item.get("val")
+            if start is None or end is None or not isinstance(val, (int, float)):
+                continue
+            if not 20 <= (end - start).days <= 400:
+                continue
+            filed = str(item.get("filed", ""))
+            prev = out.get((start, end))
+            if prev is None or filed >= prev[0]:
+                out[(start, end)] = (filed, float(val))
+    return {k: v for k, (_, v) in out.items()}
+
+
+def _instant_obs_all(tag_units: dict, units: Tuple[str, ...]) -> Dict[dt.date, float]:
+    """Instant values across all forms (10-Q quarter ends included)."""
+    out: Dict[dt.date, Tuple[str, float]] = {}
+    for unit in units:
+        for item in tag_units.get(unit, []):
+            end = _parse_date(item.get("end", ""))
+            val = item.get("val")
+            if end is None or not isinstance(val, (int, float)):
+                continue
+            filed = str(item.get("filed", ""))
+            prev = out.get(end)
+            if prev is None or filed >= prev[0]:
+                out[end] = (filed, float(val))
+    return {end: v for end, (_, v) in out.items()}
+
+
+def parse_quarterly_facts(
+    facts: dict, annual: AnnualFundamentals
+) -> QuarterlyFundamentals:
+    """Collect interim observations under each concept's winning annual tag.
+
+    The annual parse already chose the tag that carries the recent fiscal
+    years; recent quarters live under the same tag, so quarterly extraction
+    reuses that choice (falling through the candidate list only when the
+    winner has no interim data at all). Pure — no network.
+    """
+    gaap = (facts or {}).get("facts", {}).get("us-gaap") or {}
+    q = QuarterlyFundamentals()
+
+    def ordered(concept: str, candidates: List[str]) -> List[str]:
+        primary = (annual.tags_used.get(concept) or "").split(" (")[0]
+        rest = [t for t in candidates if t != primary]
+        return ([primary] if primary else []) + rest
+
+    for concept, candidates in DURATION_TAGS.items():
+        units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
+        for tag in ordered(concept, candidates):
+            tag_units = gaap.get(tag, {}).get("units")
+            if not tag_units:
+                continue
+            obs = _duration_obs_all(tag_units, units)
+            if obs:
+                q.duration[concept] = [
+                    (s, e, v) for (s, e), v in sorted(obs.items())]
+                break
+    for concept, candidates in INSTANT_TAGS.items():
+        units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
+        for tag in ordered(concept, candidates):
+            tag_units = gaap.get(tag, {}).get("units")
+            if not tag_units:
+                continue
+            obs = _instant_obs_all(tag_units, units)
+            if obs:
+                q.instant[concept] = obs
+                break
+    return q
 
 
 def _score_tag(obs: Dict[dt.date, float], window_ends: List[dt.date]) -> float:
@@ -467,7 +585,8 @@ def parse_companyfacts(
         series[concept] = values
 
     return AnnualFundamentals(
-        cik=cik, entity_name=entity, fy_ends=fy_ends, series=series, tags_used=tags_used
+        cik=cik, entity_name=entity, fy_ends=fy_ends, series=series,
+        tags_used=tags_used, raw_facts=facts,
     )
 
 

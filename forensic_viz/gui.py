@@ -32,9 +32,8 @@ from .dashboard import (
     render_valuation, render_verdict,
 )
 from .edgar import EdgarError
-from .export import (
-    export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
-)
+from .export import export_pdf
+from .model_export import export_financial_model
 from .compare import MAX_TICKERS, build_compare_html
 from .interactive import build_html
 from .ledger import Ledger
@@ -214,8 +213,8 @@ class App:
                                    command=self.save_pdf, state=tk.DISABLED,
                                    style="Side.TButton")
         self.save_btn.pack(fill=tk.X, pady=2)
-        self.csv_btn = ttk.Button(side, text="Export CSV…",
-                                  command=self.export_csv, state=tk.DISABLED,
+        self.csv_btn = ttk.Button(side, text="Financial model…",
+                                  command=self.export_model, state=tk.DISABLED,
                                   style="Side.TButton")
         self.csv_btn.pack(fill=tk.X, pady=2)
         self.xlsx_btn = ttk.Button(side, text="Fill workbook…",
@@ -548,29 +547,25 @@ class App:
         pages = sum(1 for f in figs if f is not None)
         self.status_var.set(f"Saved {pages}-page A4 report: {path}")
 
-    def export_csv(self):
+    def export_model(self):
+        """One-sheet three-statement model: annual + quarterly + LTM."""
         data = self.data
         if data is None:
             return
-        default = (f"{data.ticker}_{data.display_years}y_fundamentals_"
-                   f"{data.generated.isoformat()}.csv")
+        default = (f"{data.ticker}_financial_model_"
+                   f"{data.generated.isoformat()}.xlsx")
         path = filedialog.asksaveasfilename(
-            defaultextension=".csv", initialfile=default,
-            filetypes=[("CSV", "*.csv")])
+            defaultextension=".xlsx", initialfile=default,
+            filetypes=[("Excel workbook", "*.xlsx")])
         if not path:
             return
-        export_fundamentals_csv(data, path)
-        written = [path]
-        p = Path(path)
-        if data.price_dates:
-            price_path = str(p.with_name(p.stem + "_prices" + p.suffix))
-            export_prices_csv(data, price_path)
-            written.append(price_path)
-        if self.valuation_res is not None:
-            val_path = str(p.with_name(p.stem + "_valuation" + p.suffix))
-            export_valuation_csv(self.valuation_res, val_path)
-            written.append(val_path)
-        self.status_var.set(f"Saved {len(written)} CSV(s): {path}")
+        try:
+            export_financial_model(data, path)
+        except Exception:
+            messagebox.showerror("Financial model export failed",
+                                 traceback.format_exc(limit=3))
+            return
+        self.status_var.set(f"Saved financial model: {path}")
 
     def fill_workbook(self):
         if self.data is None or self.busy:

@@ -52,6 +52,11 @@ class DashboardData:
     # dialog: Base <- avg, Bear <- low, Bull <- high. Always editable.
     analyst_estimates: Optional[dict] = None
 
+    # Untrimmed as-filed fundamentals (incl. the raw companyfacts payload),
+    # kept so the financial-model export can consolidate annual + quarterly
+    # without a second fetch.
+    fundamentals: Optional[AnnualFundamentals] = field(default=None, repr=False)
+
     # Fundamentals (aligned lists, oldest -> newest, DISPLAY_YEARS long)
     fy_labels: List[str] = field(default_factory=list)
     fy_ends: List[dt.date] = field(default_factory=list)
@@ -183,6 +188,7 @@ def _cagr(first: Optional[float], last: Optional[float], years: int) -> Optional
 
 def build_fundamental_metrics(f: AnnualFundamentals, data: DashboardData) -> None:
     """Reduce FETCH_YEARS as-filed years to `data.display_years` of series."""
+    data.fundamentals = f  # untrimmed source, for the financial-model export
     n_all = len(f.fy_ends)
     show = min(max(1, data.display_years), config.DISPLAY_YEARS, n_all)
     off = n_all - show  # index of the first displayed year in the full arrays

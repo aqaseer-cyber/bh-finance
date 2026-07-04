@@ -349,7 +349,8 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
     if sandbox:
         parts.append(sandbox)
     parts.append("<div class='note'>Sources: SEC EDGAR XBRL (as filed), "
-                 "Stooq/Yahoo prices. All values also in the CSV audit trail. "
+                 "Stooq/Yahoo prices. All values also in the financial-model "
+                 "export (XLSX) and the CLI CSV audit trail. "
                  "Not investment advice.</div></main></body></html>")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("".join(parts))
