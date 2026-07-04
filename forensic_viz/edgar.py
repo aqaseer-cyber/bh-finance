@@ -683,6 +683,28 @@ def instance_url(cik: int, accession: str, primary_document: str) -> str:
             f"{stem}_htm.xml")
 
 
+def _discover_instance_url(sec: _SecSession, cik: int,
+                           accession: str) -> Optional[str]:
+    """Locate the extracted instance via the filing's index.json when the
+    conventional …_htm.xml name misses (older packagers vary)."""
+    accn = accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}"
+    try:
+        idx = sec.get_json(f"{base}/index.json", config.TTL_COMPANYFACTS)
+    except Exception:
+        return None
+    names = [str(item.get("name", ""))
+             for item in idx.get("directory", {}).get("item", [])]
+    cands = [n for n in names if n.endswith("_htm.xml")]
+    if not cands:  # classic (non-inline) filings ship a plain .xml instance
+        skip = ("filingsummary", "metalinks", "_cal", "_def", "_lab",
+                "_pre", ".xsd")
+        cands = [n for n in names if n.lower().endswith(".xml")
+                 and not n.lower().startswith("r")
+                 and not any(s in n.lower() for s in skip)]
+    return f"{base}/{cands[0]}" if cands else None
+
+
 def fetch_segment_instances(annual: AnnualFundamentals,
                             cache: Optional[Cache] = None) -> List[str]:
     """XBRL instance XML of the latest 10-K and 10-Q (best-effort each)."""
@@ -696,6 +718,13 @@ def fetch_segment_instances(annual: AnnualFundamentals,
         try:
             out.append(sec.get_text(instance_url(annual.cik, accn, doc),
                                     config.TTL_COMPANYFACTS))
+            continue
+        except Exception:
+            pass  # fall through to index.json discovery
+        try:
+            url = _discover_instance_url(sec, annual.cik, accn)
+            if url:
+                out.append(sec.get_text(url, config.TTL_COMPANYFACTS))
         except Exception:
             continue  # segment data is an enrichment, never a hard failure
     return out

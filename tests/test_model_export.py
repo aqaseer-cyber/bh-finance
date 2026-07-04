@@ -94,8 +94,10 @@ def test_last_four_quarters_span_the_fy_boundary():
                      pytest.approx(Q1_REV), pytest.approx(Q2_REV)]
     assert rev.ltm == pytest.approx(
         REVENUE[2025] + (Q1_REV + Q2_REV) - H1_REV_PRIOR)
-    # latest quarter YoY vs the filed Q2'25 quarter
-    assert rev.yoy_q == pytest.approx(Q2_REV / Q_2025 - 1)
+    # year-ago quarters (drive the YoY cells): Q3'24/Q4'24 underivable in
+    # the fixture; Q1'25/Q2'25 are the filed 475s
+    assert rev.q_prior == [None, None, pytest.approx(Q_2025),
+                           pytest.approx(Q_2025)]
 
     # cfo: no discrete spans — Q2'26 derived by YTD differencing; the two
     # 2025 quarters have no CFO interim data at all
@@ -151,19 +153,20 @@ def test_export_layout_adapts_and_carries_pct_rows(tmp_path):
     assert ws.cell(row=rev_row, column=ltm_col).value == pytest.approx(
         (REVENUE[2025] + Q1_REV + Q2_REV - H1_REV_PRIOR) / 1e6)
 
-    # % change row directly under Total Revenue
+    # % change row directly under Total Revenue: FY cells YoY, quarter
+    # cells YoY vs the same fiscal quarter a year earlier, LTM cell blank
     assert labels[rev_row] == "   % change"
     pct_row = rev_row + 1
     fy25_col = header.index("FY2025") + 1
     assert ws.cell(row=pct_row, column=fy25_col).value == pytest.approx(
         REVENUE[2025] / REVENUE[2024] - 1)            # annual YoY
     assert ws.cell(row=pct_row, column=header.index("Q1'26") + 1).value == \
-        pytest.approx(Q1_REV / Q_2025 - 1)            # QoQ vs derived Q4'25
-    assert ws.cell(row=pct_row, column=header.index("Q3'25") + 1).value == \
-        pytest.approx(0.0)                            # QoQ vs Q2'25 (spine+1)
-    assert ws.cell(row=pct_row, column=ltm_col).value == pytest.approx(
-        Q2_REV / Q_2025 - 1)                          # latest quarter YoY
-    assert ws.cell(row=pct_row, column=ltm_col).number_format.startswith("0.0%")
+        pytest.approx(Q1_REV / Q_2025 - 1)            # YoY vs Q1'25
+    assert ws.cell(row=pct_row, column=header.index("Q2'26") + 1).value == \
+        pytest.approx(Q2_REV / Q_2025 - 1)            # YoY vs Q2'25
+    # Q3'24 is underivable in the fixture -> the Q3'25 YoY cell stays blank
+    assert ws.cell(row=pct_row, column=header.index("Q3'25") + 1).value is None
+    assert ws.cell(row=pct_row, column=ltm_col).value is None
 
 
 def test_export_without_fundamentals_raises(tmp_path):

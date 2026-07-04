@@ -103,32 +103,68 @@ def _tenq_instance() -> str:
 
 def test_member_label_and_instance_url():
     assert member_label("meli:FintechServicesMember") == "Fintech Services"
-    assert member_label("country:MX") == "MX"
+    assert member_label("country:MX") == "Mexico"  # ISO code -> country name
+    assert member_label("country:BR") == "Brazil"
     assert instance_url(1099590, "0001099590-26-000012", "meli-20251231.htm") \
         == ("https://www.sec.gov/Archives/edgar/data/1099590/"
             "000109959026000012/meli-20251231_htm.xml")
 
 
 def test_parse_instance_accepts_segment_axes_and_rejects_noise():
-    facts = parse_instance(_tenk_instance())
-    br = facts[("StatementGeographicalAxis", "Brazil", REV.split(":")[1])]
-    assert (dt.date(2025, 1, 1), dt.date(2025, 12, 31), 1000e6) in br
-    assert all(v < 1e11 for _, _, v in br)  # two-axis + BRL facts rejected
+    parsed = parse_instance(_tenk_instance())
+    rev_local = REV.split(":")[1]
+    br = parsed.singles[("geography", "Brazil", rev_local)]
+    assert br[(dt.date(2025, 1, 1), dt.date(2025, 12, 31))] == 1000e6
+    assert all(v < 1e11 for v in br.values())  # BRL-unit fact rejected
+    # the two-axis (geo × product) fact lands in crosses, not in singles
+    assert any(k[-1] == rev_local and v.get(
+        (dt.date(2025, 1, 1), dt.date(2025, 12, 31))) == 999e9
+        for k, v in parsed.crosses.items())
     # neutral OperatingSegments marker kept the product contexts alive
-    assert ("ProductOrServiceAxis", "Fintech Services",
-            REV.split(":")[1]) in facts
-    assert ("ProductOrServiceAxis", "Commerce", "OperatingIncomeLoss") in facts
+    assert ("product / service", "Fintech Services", rev_local) \
+        in parsed.singles
+    assert ("product / service", "Commerce", "OperatingIncomeLoss") \
+        in parsed.singles
 
 
 def test_build_orders_members_by_revenue_and_merges_instances():
     seg = build_segment_data([_tenk_instance(), _tenq_instance()], "test")
     assert seg.axes() == ["product / service", "geography"]
-    assert seg.members("geography") == ["Brazil", "MX", "Other Countries"]
+    assert seg.members("geography") == ["Brazil", "Mexico", "Other Countries"]
     assert seg.n_segments == 2  # primary axis = product / service
     rev_br = next(ln for ln in seg.lines
                   if ln.member == "Brazil" and ln.group == "Revenue")
     spans = {(s, e): v for s, e, v in rev_br.entries}
     assert spans[(dt.date(2026, 1, 1), dt.date(2026, 3, 31))] == 270e6
+    # the noisy two-axis 999e9 fact never overrode the filed Brazil total
+    assert spans[(dt.date(2025, 1, 1), dt.date(2025, 12, 31))] == 1000e6
+
+
+def test_two_axis_only_disaggregation_is_aggregated():
+    """MELI-style: the disaggregation table is tagged geography × business
+    with NO single-axis totals — totals must be synthesized per axis."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    cells = {("country:BR", "meli:CommerceMember"): 600e6,
+             ("country:BR", "meli:FintechMember"): 400e6,
+             ("country:MX", "meli:CommerceMember"): 250e6,
+             ("country:MX", "meli:FintechMember"): 150e6}
+    for i, ((geo, biz), v) in enumerate(cells.items()):
+        extra = ('<xbrldi:explicitMember dimension="srt:ProductOrServiceAxis">'
+                 f"{biz}</xbrldi:explicitMember>")
+        parts.append(_ctx(f"x{i}", "srt:StatementGeographicalAxis", geo,
+                          "2025-01-01", "2025-12-31", extra))
+        parts.append(_fact(REV, f"x{i}", v))
+    parts.append("</xbrl>")
+    seg = build_segment_data(["".join(parts)], "x")
+    by = {(ln.axis, ln.member): ln for ln in seg.lines
+          if ln.group == "Revenue"}
+    span = (dt.date(2025, 1, 1), dt.date(2025, 12, 31))
+    assert {(s, e): v for s, e, v in
+            by[("geography", "Brazil")].entries}[span] == 1000e6
+    assert {(s, e): v for s, e, v in
+            by[("product / service", "Fintech")].entries}[span] == 550e6
+    assert "aggregated" in seg.status
 
 
 def _data_with_segments():

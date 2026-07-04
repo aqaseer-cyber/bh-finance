@@ -216,10 +216,11 @@ annual series: discrete 3-month values when filed, else fiscal-YTD
 differencing (10-Q cash-flow statements are YTD-only), with fiscal Q4
 derived as FY − 9-month YTD; LTM = last FY + latest YTD − year-ago
 comparative YTD; balance-sheet rows show period-end balances. **% change
-rows** sit under the key line items — YoY in the fiscal-year columns, QoQ
-in the quarter columns, and the latest quarter's YoY in the LTM cell. The
-footer records the derivation rules and the exact XBRL tag per concept.
-Raw audit-trail CSVs remain available on the CLI via `--csv`.
+rows** sit under the key line items — YoY in the fiscal-year columns and
+**YoY vs the same fiscal quarter a year earlier** in the quarter columns
+(QoQ is deliberately not shown; seasonality makes it noise). The footer
+records the derivation rules and the exact XBRL tag per concept. Raw
+audit-trail CSVs remain available on the CLI via `--csv`.
 
 **Segment line items (§2.1 / SOTP).** Segment splits — reportable
 segments, product/service disaggregation (e.g. Commerce vs Fintech),

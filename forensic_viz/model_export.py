@@ -23,8 +23,11 @@ Quarterly mechanics (as-filed XBRL under the annual winning tag):
 - **per-share rows** use the same additive arithmetic (approximation).
 
 **% change rows** sit under the relevant line items: fiscal-year cells are
-YoY, quarter cells are QoQ, and the LTM cell holds the latest quarter's YoY
-(vs the year-ago quarter). Computed from the same consolidated values.
+YoY vs the prior fiscal year, and quarter cells are YoY vs the same fiscal
+quarter a year earlier (seasonal businesses make quarter-on-quarter noise,
+so QoQ is deliberately not shown). Computed from the same consolidated
+values; year-ago quarters derive from the filing history exactly like the
+displayed ones.
 
 Everything is computed from data already fetched for the dashboard — the
 export itself never touches the network.
@@ -46,7 +49,6 @@ _MM = 1e6
 _SPAN_TOL = 14    # days tolerance matching a filed span boundary
 _YEAR_TOL = 21    # days tolerance matching the year-ago span
 _SHOW_QUARTERS = 4
-_SPINE_EXTRA = 1  # one earlier quarter, so the first shown QoQ computes
 
 # (label, concept, style, pct_row); concept None = section header;
 # "=name" = derived row; style: item | total | eps | shares
@@ -117,8 +119,8 @@ class ModelRow:
     ann: List[Optional[float]]
     q: List[Optional[float]]                 # aligned to the displayed spine
     ltm: Optional[float]
-    qfull: List[Optional[float]] = field(default_factory=list)  # +1 earlier
-    yoy_q: Optional[float] = None            # latest quarter vs year-ago Q
+    # same-quarter-a-year-earlier values, aligned to q (drives the YoY cells)
+    q_prior: List[Optional[float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- span math
@@ -166,8 +168,8 @@ def quarter_spine(qdata: QuarterlyFundamentals,
                   fy_ends: List[dt.date]) -> List[dt.date]:
     """Trailing fiscal-quarter ends (newest last), FY boundaries included.
 
-    Returns up to _SHOW_QUARTERS + _SPINE_EXTRA ends; the display uses the
-    last _SHOW_QUARTERS. Empty when the filer has no interim data at all.
+    Returns up to _SHOW_QUARTERS ends; empty when the filer has no
+    interim data at all.
     """
     interim = set()
     for entries in qdata.duration.values():
@@ -188,7 +190,7 @@ def quarter_spine(qdata: QuarterlyFundamentals,
             ends.append(e)
     # quarters need a known fiscal-year start for labeling/derivation
     ends = [e for e in ends if _fy_bounds(e, fy_ends)[0] is not None]
-    return ends[-(_SHOW_QUARTERS + _SPINE_EXTRA):]
+    return ends[-_SHOW_QUARTERS:]
 
 
 def quarter_label(qe: dt.date, fy_ends: List[dt.date]) -> str:
@@ -296,27 +298,24 @@ def _annual_from_entries(entries, fy_ends: List[dt.date]
 
 
 def _flow_row(entries, ann: List[Optional[float]], fy_ends: List[dt.date],
-              spine: List[dt.date], q_ends: List[dt.date],
-              allow_fy_diff: bool = True,
+              q_ends: List[dt.date], allow_fy_diff: bool = True,
               shares_like: bool = False) -> ModelRow:
-    """Consolidate one flow line: quarters, LTM, latest-quarter YoY."""
+    """Consolidate one flow line: quarters, year-ago quarters, LTM."""
     annual_map = dict(zip(fy_ends, ann))
-    qfull = [_discrete(entries, qe, fy_ends, annual_map,
-                       allow_fy_diff=allow_fy_diff) for qe in spine]
-    qs = qfull[-len(q_ends):] if q_ends else []
+    qs = [_discrete(entries, qe, fy_ends, annual_map,
+                    allow_fy_diff=allow_fy_diff) for qe in q_ends]
+    # same fiscal quarter a year earlier — the filing history (prior-year
+    # 10-Qs and comparatives) supports the same derivation chain
+    q_prior = [_discrete(entries, qe - dt.timedelta(days=365), fy_ends,
+                         annual_map, allow_fy_diff=allow_fy_diff)
+               for qe in q_ends]
     if shares_like:
         ltm = _latest(qs)  # latest weighted count
         if ltm is None:
             ltm = _latest(ann)
     else:
         ltm = _ltm_flow(ann[-1] if ann else None, entries, fy_ends, q_ends)
-    yoy_q = None
-    if q_ends:
-        year_ago = _discrete(entries, q_ends[-1] - dt.timedelta(days=365),
-                             fy_ends, annual_map,
-                             allow_fy_diff=allow_fy_diff)
-        yoy_q = _pct(qs[-1] if qs else None, year_ago)
-    return ModelRow(ann, qs, ltm, qfull, yoy_q)
+    return ModelRow(ann, qs, ltm, q_prior)
 
 
 # ----------------------------------------------------------- consolidation
@@ -326,8 +325,7 @@ def build_model_rows(annual: AnnualFundamentals,
                          Dict[str, ModelRow], List[dt.date], List[dt.date]]:
     """concept -> ModelRow, plus the annual and displayed-quarter spines."""
     fy_ends = annual.fy_ends
-    spine = quarter_spine(qdata, fy_ends)
-    q_ends = spine[-_SHOW_QUARTERS:]
+    q_ends = quarter_spine(qdata, fy_ends)
 
     rows: Dict[str, ModelRow] = {}
     concepts = {c for _, c, _, _ in LAYOUT if c and not c.startswith("=")}
@@ -336,25 +334,26 @@ def build_model_rows(annual: AnnualFundamentals,
         ann = list(annual.series.get(concept) or [None] * len(fy_ends))
         if concept in INSTANT_TAGS:
             obs = qdata.instant.get(concept, {})
-            qfull = [_match_instant(obs, qe) for qe in spine]
-            qs = qfull[-len(q_ends):] if q_ends else []
+            qs = [_match_instant(obs, qe) for qe in q_ends]
             ltm = _latest(qs)
             if ltm is None:
                 ltm = _latest(ann)  # latest period-end balance
-            rows[concept] = ModelRow(ann, qs, ltm, qfull)
+            rows[concept] = ModelRow(ann, qs, ltm, [None] * len(q_ends))
             continue
         rows[concept] = _flow_row(
-            qdata.duration.get(concept, []), ann, fy_ends, spine, q_ends,
+            qdata.duration.get(concept, []), ann, fy_ends, q_ends,
             allow_fy_diff=concept not in _NO_FY_DIFF,
             shares_like=concept in _NO_FY_DIFF)
 
     def _combine(a: ModelRow, b: ModelRow, op) -> ModelRow:
         def cell(x, y):
             return op(x, y) if x is not None and y is not None else None
+        # prior-of-a-difference == difference-of-priors, so q_prior combines
+        # element-wise exactly like the displayed quarters
         return ModelRow([cell(x, y) for x, y in zip(a.ann, b.ann)],
                         [cell(x, y) for x, y in zip(a.q, b.q)],
                         cell(a.ltm, b.ltm),
-                        [cell(x, y) for x, y in zip(a.qfull, b.qfull)])
+                        [cell(x, y) for x, y in zip(a.q_prior, b.q_prior)])
 
     def _prefer(tagged: ModelRow, derived: ModelRow) -> ModelRow:
         def cell(t, d):
@@ -363,7 +362,7 @@ def build_model_rows(annual: AnnualFundamentals,
                         [cell(t, d) for t, d in zip(tagged.q, derived.q)],
                         cell(tagged.ltm, derived.ltm),
                         [cell(t, d) for t, d in
-                         zip(tagged.qfull, derived.qfull)])
+                         zip(tagged.q_prior, derived.q_prior)])
 
     sub = lambda x, y: x - y  # noqa: E731
     add = lambda x, y: x + y  # noqa: E731
@@ -376,13 +375,6 @@ def build_model_rows(annual: AnnualFundamentals,
         rows["pretax_income"], _combine(rows["net_income"],
                                         rows["tax_expense"], add))
     rows["=fcf"] = _combine(rows["cfo"], rows["capex"], sub)  # capex = +outflow
-    for name in ("=gross_profit", "=pretax", "=fcf"):
-        r = rows[name]
-        # year-ago quarter for derived rows: 4 quarters back in the full
-        # spine, valid when the spine is a contiguous trailing year
-        if r.q and len(spine) >= 5 \
-                and abs((spine[-1] - spine[-5]).days - 365) <= _YEAR_TOL:
-            r.yoy_q = _pct(r.q[-1], r.qfull[-5])
     return rows, fy_ends, q_ends
 
 
@@ -444,13 +436,12 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     fmt_pct = "0.0%;(0.0%)"
 
     def pct_cells(row: ModelRow) -> List[Optional[float]]:
-        """FY cells YoY · quarter cells QoQ · LTM cell = latest Q YoY."""
+        """FY cells: YoY vs prior FY · quarter cells: YoY vs the same
+        fiscal quarter a year earlier · LTM cell: blank."""
         fy = [None] + [_pct(row.ann[i], row.ann[i - 1])
                        for i in range(1, len(row.ann))]
-        off = len(row.qfull) - len(row.q)
-        qs = [_pct(row.q[i], row.qfull[off + i - 1] if off + i - 1 >= 0
-                   else None) for i in range(len(row.q))]
-        return fy + qs + [row.yoy_q]
+        qs = [_pct(v, p) for v, p in zip(row.q, row.q_prior)]
+        return fy + qs + [None]
 
     def write_pct_row(r: int, row: ModelRow) -> int:
         pcts = pct_cells(row)
@@ -508,7 +499,6 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     seg = getattr(d, "segments", None)
     seg_lines = list(getattr(seg, "lines", None) or [])
     if seg_lines:
-        spine = quarter_spine(qdata, fy_ends)
         ws.cell(row=r, column=1, value="SEGMENTS (as filed)")
         for j in range(1, ltm_col + 1):
             c = ws.cell(row=r, column=j)
@@ -518,7 +508,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         last_sub = None
         for ln in seg_lines:
             ann = _annual_from_entries(ln.entries, fy_ends)
-            row = _flow_row(ln.entries, ann, fy_ends, spine, q_ends)
+            row = _flow_row(ln.entries, ann, fy_ends, q_ends)
             cells = list(row.ann) + list(row.q) + [row.ltm]
             if all(v is None for v in cells):
                 continue
@@ -557,10 +547,10 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         "when a concept has no current-year interim data). Balance-sheet "
         "rows show the latest period-end balance in the LTM column; "
         "per-share rows use the same additive arithmetic (approximation).",
-        "% change rows: fiscal-year cells are YoY, quarter cells are QoQ, "
-        "and the LTM cell holds the LATEST QUARTER's YoY vs the year-ago "
-        "quarter. Blank where the prior-period base is missing or "
-        "non-positive.",
+        "% change rows: fiscal-year cells are YoY vs the prior fiscal "
+        "year; quarter cells are YoY vs the SAME fiscal quarter a year "
+        "earlier (QoQ is not shown — seasonality makes it noise). Blank "
+        "where the prior-period base is missing or non-positive.",
         "Line items the filer never tags are omitted, so the sheet mirrors "
         "the company's own SEC presentation. Derived rows: Gross Profit "
         "falls back to Revenue − Cost of Revenue; Income Before Taxes to "
@@ -570,16 +560,20 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     ]
     if seg_lines:
         src = getattr(seg, "source", "") or "latest filings"
+        extra = getattr(seg, "status", "")
         notes.insert(-1, (
             f"Segments: dimensional XBRL parsed from {src}; history depth "
             "= as reported there (a 10-K carries 2–3 comparative years, "
             "the 10-Q the current quarters + year-ago comparatives). "
-            "Members ordered by latest annual revenue."))
+            "Members ordered by latest annual revenue."
+            + (f" Note: {extra}." if extra else "")))
     else:
+        why = getattr(seg, "status", "") if seg is not None else \
+            "not fetched in this run"
         notes.insert(-1, (
-            "Segments: no dimensional segment data available — it lives in "
-            "the 10-K/10-Q XBRL instance (fetched live, not in the "
-            "companyfacts API), or the filer reports a single segment."))
+            "Segments: no dimensional segment data in this workbook — "
+            + (why or "it lives in the 10-K/10-Q XBRL instance (fetched "
+                      "live, not in the companyfacts API)") + "."))
     tag_bits = "; ".join(f"{k} = {v}" for k, v in sorted(f.tags_used.items()))
     if tag_bits:
         notes.append(f"XBRL tags: {tag_bits}")
