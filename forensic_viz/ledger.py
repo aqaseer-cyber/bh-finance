@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,6 +35,30 @@ CREATE TABLE IF NOT EXISTS triggers (
 );
 """
 
+_HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS verdict_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    company TEXT, track TEXT, method TEXT,
+    rating TEXT, fv_avg REAL, mos REAL, stressed_mos REAL,
+    price REAL, price_date TEXT, coherence TEXT,
+    thesis TEXT, terminal_risk TEXT, optionality TEXT,
+    years INTEGER, updated_at TEXT, recorded_at TEXT
+);
+"""
+
+
+def _now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _migrate(conn) -> None:
+    v = conn.execute("PRAGMA user_version").fetchone()[0]
+    if v < 1:
+        conn.executescript(_HISTORY_SCHEMA)
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+
 
 def default_path() -> Path:
     return config.cache_dir().parent / "ledger.db"
@@ -42,9 +67,12 @@ def default_path() -> Path:
 class Ledger:
     def __init__(self, path: Optional[str] = None):
         self.path = str(path or default_path())
-        self._conn = sqlite3.connect(self.path)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        _migrate(self._conn)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._lock = threading.Lock()
         self._conn.commit()
 
     def close(self):
@@ -65,28 +93,48 @@ class Ledger:
             "coherence": verdict.coherence if verdict is not None else "",
             "thesis": d.thesis, "terminal_risk": d.terminal_risk,
             "optionality": d.optionality, "years": d.display_years,
-            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "updated_at": _now(),
         }
-        cols = ", ".join(row)
+        with self._lock:
+            cols = ", ".join(row)
+            self._conn.execute(
+                f"INSERT INTO verdicts ({cols}) VALUES "
+                f"({', '.join(':' + k for k in row)}) "
+                "ON CONFLICT(ticker) DO UPDATE SET "
+                + ", ".join(f"{k}=excluded.{k}" for k in row if k != "ticker"),
+                row)
+            self._append_history(row)
+            self._conn.commit()
+
+    def _append_history(self, row: dict) -> None:
+        """Append-only audit trail — one row per write (caller holds the lock)."""
+        h = dict(row)
+        h["recorded_at"] = _now()
+        cols = ", ".join(h)
         self._conn.execute(
-            f"INSERT INTO verdicts ({cols}) VALUES ({', '.join(':' + k for k in row)}) "
-            "ON CONFLICT(ticker) DO UPDATE SET "
-            + ", ".join(f"{k}=excluded.{k}" for k in row if k != "ticker"),
-            row)
-        self._conn.commit()
+            f"INSERT INTO verdict_history ({cols}) VALUES "
+            f"({', '.join(':' + k for k in h)})", h)
+
+    def history(self, ticker: str) -> List[dict]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT * FROM verdict_history WHERE ticker=? ORDER BY recorded_at",
+            (ticker.upper(),)).fetchall()]
 
     def list_verdicts(self) -> List[dict]:
         rows = self._conn.execute(
             "SELECT * FROM verdicts ORDER BY updated_at DESC").fetchall()
         out = []
-        today = dt.date.today()
         for r in rows:
             rec = dict(r)
             rec["age_days"] = None
             if rec.get("updated_at"):
                 try:
-                    updated = dt.datetime.fromisoformat(rec["updated_at"]).date()
-                    rec["age_days"] = (today - updated).days
+                    updated = dt.datetime.fromisoformat(rec["updated_at"])
+                    if updated.tzinfo is not None:  # UTC-aware (post-migration)
+                        today = dt.datetime.now(dt.timezone.utc).date()
+                    else:  # naive fallback for pre-migration rows
+                        today = dt.date.today()
+                    rec["age_days"] = (today - updated.date()).days
                 except ValueError:
                     pass
             rec["stale"] = rec["age_days"] is None or rec["age_days"] > STALE_DAYS
@@ -97,18 +145,19 @@ class Ledger:
         return out
 
     def remove(self, ticker: str) -> None:
-        self._conn.execute("DELETE FROM verdicts WHERE ticker=?", (ticker,))
-        self._conn.execute("DELETE FROM triggers WHERE ticker=?", (ticker,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM verdicts WHERE ticker=?", (ticker,))
+            self._conn.execute("DELETE FROM triggers WHERE ticker=?", (ticker,))
+            self._conn.commit()
 
     # ------------------------------------------------------------- triggers
 
     def add_trigger(self, ticker: str, text: str) -> None:
-        self._conn.execute(
-            "INSERT INTO triggers (ticker, trigger_text, created_at) VALUES (?,?,?)",
-            (ticker.upper(), text,
-             dt.datetime.now().isoformat(timespec="seconds")))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO triggers (ticker, trigger_text, created_at) "
+                "VALUES (?,?,?)", (ticker.upper(), text, _now()))
+            self._conn.commit()
 
     def open_triggers(self, ticker: Optional[str] = None) -> List[dict]:
         q = "SELECT * FROM triggers WHERE status='OPEN'"
@@ -119,10 +168,11 @@ class Ledger:
         return [dict(r) for r in self._conn.execute(q, args).fetchall()]
 
     def close_trigger(self, trigger_id: int) -> None:
-        self._conn.execute(
-            "UPDATE triggers SET status='CLOSED', closed_at=? WHERE id=?",
-            (dt.datetime.now().isoformat(timespec="seconds"), trigger_id))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE triggers SET status='CLOSED', closed_at=? WHERE id=?",
+                (_now(), trigger_id))
+            self._conn.commit()
 
     # --------------------------------------------------------------- import
 
@@ -136,42 +186,50 @@ class Ledger:
         if isinstance(payload, dict):
             payload = payload.get("verdicts") or payload.get("ledger") or []
         n = 0
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            ticker = str(item.get("ticker") or item.get("symbol") or "").upper()
-            if not ticker:
-                continue
-            row = {
-                "ticker": ticker,
-                "company": str(item.get("company") or item.get("name") or ""),
-                "track": str(item.get("track") or "standard").lower(),
-                "method": str(item.get("method") or item.get("basis") or ""),
-                "rating": str(item.get("rating") or item.get("verdict") or ""),
-                "fv_avg": item.get("fv") or item.get("fv_avg"),
-                "mos": item.get("mos"),
-                "stressed_mos": item.get("stressed_mos"),
-                "price": item.get("price") or item.get("p0"),
-                "price_date": str(item.get("price_date") or ""),
-                "coherence": "imported [Likely] — verify vs original workbook",
-                "thesis": str(item.get("thesis") or ""),
-                "terminal_risk": str(item.get("terminal_risk") or item.get("risk") or ""),
-                "optionality": str(item.get("optionality") or ""),
-                "years": int(item.get("years") or 10),
-                "updated_at": str(item.get("updated_at") or item.get("date")
-                                  or dt.datetime.now().isoformat(timespec="seconds")),
-            }
-            cols = ", ".join(row)
-            self._conn.execute(
-                f"INSERT INTO verdicts ({cols}) VALUES ({', '.join(':' + k for k in row)}) "
-                "ON CONFLICT(ticker) DO UPDATE SET "
-                + ", ".join(f"{k}=excluded.{k}" for k in row if k != "ticker"),
-                row)
-            for trig in item.get("triggers") or []:
+        with self._lock:
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                ticker = str(item.get("ticker") or item.get("symbol") or "").upper()
+                if not ticker:
+                    continue
+                # None-coalescing (not falsy `or`): a legitimate 0.0 must survive
+                fv = item.get("fv")
+                fv = item.get("fv_avg") if fv is None else fv
+                px = item.get("price")
+                px = item.get("p0") if px is None else px
+                row = {
+                    "ticker": ticker,
+                    "company": str(item.get("company") or item.get("name") or ""),
+                    "track": str(item.get("track") or "standard").lower(),
+                    "method": str(item.get("method") or item.get("basis") or ""),
+                    "rating": str(item.get("rating") or item.get("verdict") or ""),
+                    "fv_avg": fv,
+                    "mos": item.get("mos"),
+                    "stressed_mos": item.get("stressed_mos"),
+                    "price": px,
+                    "price_date": str(item.get("price_date") or ""),
+                    "coherence": "imported [Likely] — verify vs original workbook",
+                    "thesis": str(item.get("thesis") or ""),
+                    "terminal_risk": str(item.get("terminal_risk")
+                                         or item.get("risk") or ""),
+                    "optionality": str(item.get("optionality") or ""),
+                    "years": int(item.get("years") or 10),
+                    "updated_at": str(item.get("updated_at") or item.get("date")
+                                      or _now()),
+                }
+                cols = ", ".join(row)
                 self._conn.execute(
-                    "INSERT INTO triggers (ticker, trigger_text, created_at) "
-                    "VALUES (?,?,?)",
-                    (ticker, str(trig), row["updated_at"]))
-            n += 1
-        self._conn.commit()
+                    f"INSERT INTO verdicts ({cols}) VALUES "
+                    f"({', '.join(':' + k for k in row)}) "
+                    "ON CONFLICT(ticker) DO UPDATE SET "
+                    + ", ".join(f"{k}=excluded.{k}" for k in row if k != "ticker"),
+                    row)
+                self._append_history(row)
+                for trig in item.get("triggers") or []:
+                    self._conn.execute(
+                        "INSERT INTO triggers (ticker, trigger_text, created_at) "
+                        "VALUES (?,?,?)", (ticker, str(trig), row["updated_at"]))
+                n += 1
+            self._conn.commit()
         return n

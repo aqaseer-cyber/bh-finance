@@ -74,6 +74,60 @@ def test_ledger_triggers(tmp_path, testco_facts):
     assert led.open_triggers("TESTCO") == []
 
 
+def test_ledger_history_append_only(tmp_path, testco_facts):
+    """FIX-6: verdicts keeps 1 row; history keeps every write, ordered."""
+    led = Ledger(path=str(tmp_path / "ledger.db"))
+    d = _data(testco_facts)
+    res, v = _verdict(d)
+    led.upsert_verdict(d, res=res, verdict=v)
+    d.rating = "Hold"
+    v2 = build_verdict(d, ValuationInputs(
+        method="dcf", discount_rate=0.09,
+        cases={"Bear": CaseInputs(g0=0.02, g_term=0.02),
+               "Base": CaseInputs(g0=0.05, g_term=0.025),
+               "Bull": CaseInputs(g0=0.09, g_term=0.03)}), res, rating="Hold")
+    led.upsert_verdict(d, res=res, verdict=v2)
+    assert len(led.list_verdicts()) == 1        # current row replaced
+    hist = led.history("TESTCO")
+    assert len(hist) == 2                        # both writes recorded
+    assert hist[0]["recorded_at"] <= hist[1]["recorded_at"]
+    assert hist[1]["rating"] == "Hold"
+
+
+def test_ledger_migration_from_old_schema(tmp_path):
+    """FIX-6: an old-schema DB opens, migrates to user_version 1, keeps rows."""
+    import sqlite3
+    from forensic_viz.ledger import _SCHEMA
+    dbp = tmp_path / "old.db"
+    conn = sqlite3.connect(str(dbp))
+    conn.executescript(_SCHEMA)
+    conn.execute("INSERT INTO verdicts (ticker, rating) VALUES ('OLD','Buy')")
+    conn.commit()
+    conn.close()
+    led = Ledger(path=str(dbp))  # opens + migrates
+    assert led._conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    rows = {r["ticker"]: r for r in led.list_verdicts()}
+    assert rows["OLD"]["rating"] == "Buy"        # old row intact
+    assert led._conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='verdict_history'").fetchone()
+
+
+def test_ledger_naive_timestamp_age(tmp_path):
+    """FIX-6: pre-migration naive timestamps still compute a sane age."""
+    import sqlite3
+    from forensic_viz.ledger import _SCHEMA
+    dbp = tmp_path / "old.db"
+    conn = sqlite3.connect(str(dbp))
+    conn.executescript(_SCHEMA)
+    today = dt.date.today().isoformat()
+    conn.execute("INSERT INTO verdicts (ticker, updated_at) VALUES ('N', ?)",
+                 (today + "T12:00:00",))
+    conn.commit()
+    conn.close()
+    led = Ledger(path=str(dbp))
+    assert led.list_verdicts()[0]["age_days"] == 0
+
+
 def test_ledger_seed_import(tmp_path):
     seed = [{"ticker": "OUST", "rating": "Buy", "fv": 12.5, "mos": 0.3,
              "triggers": ["Q3 gross margin > 35%"]},
@@ -87,6 +141,18 @@ def test_ledger_seed_import(tmp_path):
     assert rows["OUST"]["open_triggers"] == 1
     assert rows["RELY"]["rating"] == "Hold"
     assert "verify" in rows["OUST"]["coherence"]
+    assert len(led.history("OUST")) == 1  # import also records history
+
+
+def test_ledger_import_falsy_zero_survives(tmp_path):
+    """FIX-6: a legitimate fv 0.0 must be stored as 0.0, not coalesced to NULL."""
+    p = tmp_path / "seed.json"
+    p.write_text(json.dumps([{"ticker": "ZED", "fv": 0.0, "price": 0.0}]))
+    led = Ledger(path=str(tmp_path / "ledger.db"))
+    led.import_seed(str(p))
+    rec = led.list_verdicts()[0]
+    assert rec["fv_avg"] == 0.0 and rec["fv_avg"] is not None
+    assert rec["price"] == 0.0
 
 
 def test_compare_html_fixed_entity_colors(tmp_path, testco_facts, aapl_prices):

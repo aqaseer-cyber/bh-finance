@@ -150,12 +150,23 @@ def main(argv=None) -> int:
                         help="export a filled copy of forensic_valuation_model_v3.xlsx")
     parser.add_argument("--ledger", action="store_true",
                         help="print the verdict ledger (§5.7) and exit")
+    parser.add_argument("--ledger-history", metavar="TICKER",
+                        help="print the append-only verdict history for a ticker")
     parser.add_argument("--ledger-import", metavar="JSON",
                         help="import a verdict_ledger_seed.json-style file")
     parser.add_argument("--compare", metavar="TICKERS",
                         help="comma-separated tickers (2–4): build the "
                              "side-by-side interactive comparison and exit")
     args = parser.parse_args(argv)
+
+    if args.ledger_history:
+        from .ledger import Ledger
+        for r in Ledger().history(args.ledger_history):
+            mos = f"{r['mos'] * 100:+.1f}%" if r["mos"] is not None else "–"
+            fv = f"${r['fv_avg']:,.2f}" if r["fv_avg"] is not None else "–"
+            print(f"  {r['recorded_at']}  {r['rating'] or '–':<11} FV {fv:<10} "
+                  f"MoS {mos:<8} {r['coherence'] or ''}")
+        return 0
 
     if args.ledger or args.ledger_import:
         from .ledger import Ledger
