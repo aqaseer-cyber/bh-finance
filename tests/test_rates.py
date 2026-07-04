@@ -101,6 +101,34 @@ def test_beta_window_independent_of_display_trim(monkeypatch):
     assert any("β window" in n for n in b10.notes)
 
 
+def _wacc_with_debt(monkeypatch, interest, debt):
+    import forensic_viz.rates as rates
+    monkeypatch.setattr(rates, "fetch_risk_free",
+                        lambda cache=None: (0.04, dt.date(2026, 7, 2), "stub"))
+    monkeypatch.setattr(rates, "fetch_index_closes", lambda cache=None: None)
+    d = DashboardData(ticker="T", company="T", subtitle="",
+                      generated=dt.date(2026, 7, 3))
+    d.last_close = 100.0
+    d.diluted_shares = [1e9]
+    d.total_debt = [debt, debt]
+    d.interest_expense = [interest]
+    d.effective_tax_rate = 0.21
+    return rates.build_wacc(d)
+
+
+def test_rd_clamp_binds_notes(monkeypatch):
+    """FIX-4: interest/avg-debt ≈ 45% must clamp to 20% with a labeled note."""
+    b = _wacc_with_debt(monkeypatch, interest=0.45e9, debt=1e9)
+    assert b.r_d == pytest.approx(0.20)
+    assert any("r_d clamped" in n for n in b.notes)
+
+
+def test_rd_no_clamp_note_when_sane(monkeypatch):
+    b = _wacc_with_debt(monkeypatch, interest=0.05e9, debt=1e9)  # 5%
+    assert b.r_d == pytest.approx(0.05)
+    assert not any("r_d clamped" in n for n in b.notes)
+
+
 def test_build_wacc_offline_degrades_to_manual():
     d = DashboardData(ticker="T", company="T", subtitle="",
                       generated=dt.date(2026, 7, 3))

@@ -250,8 +250,12 @@ def build_wacc(d: DashboardData, cache: Optional[Cache] = None,
         debt_prev = d.total_debt[-2]
     if interest is not None and debt_now and debt_now > 0:
         avg_debt = (debt_now + debt_prev) / 2 if debt_prev else debt_now
-        r_d = interest / avg_debt
-        b.r_d = min(max(r_d, b.r_f * 0.5), 0.20)  # clamp pathological ratios
+        raw_rd = interest / avg_debt
+        b.r_d = min(max(raw_rd, b.r_f * 0.5), 0.20)  # clamp pathological ratios
+        if abs(b.r_d - raw_rd) > 1e-9:
+            b.notes.append(
+                f"r_d clamped {fmt_pct(raw_rd)} → {fmt_pct(b.r_d)} — interest/avg-debt "
+                "outside [r_f/2, 20%]; check the interest tag against the debt base")
     else:
         b.r_d = b.r_f + config.DEBT_SPREAD_ASSUMPTION
         b.notes.append(f"r_d = r_f + {fmt_pct(config.DEBT_SPREAD_ASSUMPTION)} "
