@@ -78,6 +78,10 @@ DURATION_TAGS: Dict[str, List[str]] = {
     "rnd": [
         "ResearchAndDevelopmentExpense",
         "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+        # software filers (e.g. ADBE) use the software-specific variant;
+        # some (e.g. PYPL) present the line as "Technology and development"
+        "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost",
+        "TechnologyAndDevelopmentExpense",
     ],
     # Phase-4 FCFF bridge inputs (master §4.0: FCFF = FCF + after-tax interest)
     "interest_expense": [
@@ -116,11 +120,18 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "PaymentsOfDividends",
         "PaymentsOfDividendsCommonStockAndPreferredStock",
     ],
-    # Financial-model export (three-statement sheet) extras
-    "sga": [
-        "SellingGeneralAndAdministrativeExpense",
-        "GeneralAndAdministrativeExpense",
+    # Financial-model export (three-statement sheet) extras.
+    # Opex is three separate concepts because filers tag either the combined
+    # SG&A line or the split lines — never both consistently; a combined
+    # bucket mislabels bare G&A as "SG&A" (seen on PYPL/ADBE).
+    "sga": ["SellingGeneralAndAdministrativeExpense"],
+    "marketing": [
+        "SellingAndMarketingExpense",
+        "MarketingExpense",
+        "AdvertisingExpense",
     ],
+    "ga": ["GeneralAndAdministrativeExpense"],
+    "opex_total": ["OperatingExpenses", "CostsAndExpenses"],
     "cff": [
         "NetCashProvidedByUsedInFinancingActivities",
         "NetCashProvidedByUsedInFinancingActivitiesContinuingOperations",

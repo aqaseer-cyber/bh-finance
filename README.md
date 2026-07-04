@@ -205,14 +205,21 @@ pensions are not modeled. In the GUI, percent fields are entered in **percent**
 The **Financial model export** (**Financial model…** / `--model`) is the
 data deliverable: one sheet, three statements — income statement, balance
 sheet and cash-flow statement consolidated in the analyst's model-template
-layout. Columns run fiscal years, then the current fiscal year's quarters
-(`Q1'26` …), then **LTM**. Quarterly values come from as-filed 10-Q XBRL
-under the same winning tags as the annual series: discrete 3-month values
-when filed, else derived by differencing successive fiscal-YTD spans (10-Q
-cash-flow statements are YTD-only); LTM = last FY + latest YTD − year-ago
-comparative YTD; balance-sheet rows show the latest period-end balance. The
-footer records the derivation rules and the exact XBRL tag per concept. Raw
-audit-trail CSVs remain available on the CLI via `--csv`.
+layout. Columns run fiscal years, then the **last four fiscal quarters**
+(spanning the FY boundary, `Q3'25 Q4'25 Q1'26 Q2'26` style), then **LTM**.
+The sheet **adapts to each company's own SEC presentation**: lines the
+filer never tags are dropped, opex appears as the split lines (Sales &
+Marketing / G&A) or the combined SG&A — whichever the company files — and
+labels follow the winning tag (e.g. "Technology & Development"). Quarterly
+values come from as-filed 10-Q XBRL under the same winning tags as the
+annual series: discrete 3-month values when filed, else fiscal-YTD
+differencing (10-Q cash-flow statements are YTD-only), with fiscal Q4
+derived as FY − 9-month YTD; LTM = last FY + latest YTD − year-ago
+comparative YTD; balance-sheet rows show period-end balances. **% change
+rows** sit under the key line items — YoY in the fiscal-year columns, QoQ
+in the quarter columns, and the latest quarter's YoY in the LTM cell. The
+footer records the derivation rules and the exact XBRL tag per concept.
+Raw audit-trail CSVs remain available on the CLI via `--csv`.
 
 ## House assumptions file
 
