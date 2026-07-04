@@ -16,3 +16,6 @@ dist/
 
 # house assumptions (real values never committed; ship the .example only)
 house_assumptions.toml
+ledger.db
+*.db
+verdict_ledger_seed.json

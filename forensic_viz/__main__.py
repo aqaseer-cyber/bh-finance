@@ -213,6 +213,9 @@ def main(argv=None) -> int:
         run_gui()
         return 0
 
+    if config.UA_IS_PLACEHOLDER and sys.stderr is not None:
+        print(f"warning: {config.UA_WARNING}", file=sys.stderr)
+
     from .pipeline import build_dashboard_data
     try:
         data = build_dashboard_data(

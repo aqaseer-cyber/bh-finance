@@ -12,6 +12,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 call ".venv\Scripts\activate.bat"
+rem reproducible build: pin the exact resolved dependency tree (FIX-9)
+python -m pip install --quiet -r requirements.lock || (echo pip install -r requirements.lock failed & pause & exit /b 1)
 python -m pip install --quiet pyinstaller || (echo pip install pyinstaller failed & pause & exit /b 1)
 
 pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz ^

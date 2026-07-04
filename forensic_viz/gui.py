@@ -152,8 +152,9 @@ class App:
                                    command=self.fill_workbook, state=tk.DISABLED)
         self.xlsx_btn.pack(fill=tk.X, pady=2)
 
-        self.status_var = tk.StringVar(
-            value="Enter a US-listed ticker (e.g. AAPL) and press Analyze.")
+        _start_msg = ("Enter a US-listed ticker (e.g. AAPL) and press Analyze."
+                      if not config.UA_IS_PLACEHOLDER else config.UA_WARNING)
+        self.status_var = tk.StringVar(value=_start_msg)
         ttk.Label(side, textvariable=self.status_var, foreground="#52514e",
                   wraplength=160, justify="left").pack(
             side=tk.BOTTOM, anchor="w", pady=(12, 0))

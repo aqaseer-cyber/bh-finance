@@ -12,10 +12,12 @@ from pathlib import Path
 APP_NAME = "ForensicStockViz"
 APP_VERSION = "2.0.0"
 
-SEC_USER_AGENT = os.environ.get(
-    "SEC_EDGAR_USER_AGENT",
-    f"{APP_NAME}/{APP_VERSION} (contact: redacted@example.com)",
-)
+_UA_PLACEHOLDER = f"{APP_NAME}/{APP_VERSION} (contact: set SEC_EDGAR_USER_AGENT)"
+SEC_USER_AGENT = os.environ.get("SEC_EDGAR_USER_AGENT") or _UA_PLACEHOLDER
+UA_IS_PLACEHOLDER = SEC_USER_AGENT == _UA_PLACEHOLDER
+
+UA_WARNING = ("SEC requires an identifying User-Agent — set SEC_EDGAR_USER_AGENT "
+              "to 'name email' before heavy use.")
 
 # Number of fiscal years shown on the dashboard; one extra is fetched for
 # year-over-year growth and average-asset calculations.
