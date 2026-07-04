@@ -91,6 +91,7 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     path = Path(template) if template else TEMPLATE
     wb = openpyxl.load_workbook(path)
     writes = {}
+    comments = {}  # cell notes (e.g. segment names); values stay untouched
 
     def put(sheet: str, cell: str, value) -> None:
         if value is not None and value != "":
@@ -132,6 +133,30 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
         put("Phase1_Anchor", "A27", d.thesis)
 
     # ---- Phase2_UnitEcon --------------------------------------------------
+    # Revenue architecture (§2.1) from as-filed segment disclosures: top-2
+    # segments into B5/B6, remainder into B7 (B8 sums back to total). The
+    # blue cells get the values; the segment names ride as cell comments.
+    seg = getattr(d, "segments", None)
+    if seg is not None and getattr(seg, "n_segments", 0) >= 2:
+        ax = seg.axes()[0]
+        revs = [(ln.member, ln.latest()) for ln in seg.lines
+                if ln.axis == ax and ln.group == "Revenue"
+                and ln.latest() is not None]
+        if len(revs) >= 2:
+            for cell, (name, val) in zip(("B5", "B6"), revs[:2]):
+                put("Phase2_UnitEcon", cell, _mm(val))
+                comments[("Phase2_UnitEcon", cell)] = \
+                    f"{name} (as filed, by {ax})"
+            total = _latest(d.revenue)
+            rest = (max(total - revs[0][1] - revs[1][1], 0.0)
+                    if total is not None
+                    else (sum(v for _, v in revs[2:]) if len(revs) > 2
+                          else None))
+            if rest is not None:
+                put("Phase2_UnitEcon", "B7", _mm(rest))
+                others = ", ".join(m for m, _ in revs[2:]) or "remainder"
+                comments[("Phase2_UnitEcon", "B7")] = \
+                    f"{others} — total minus top-2 (as filed, by {ax})"
     put("Phase2_UnitEcon", "B11", _latest(d.revenue_yoy))
     if len(d.inventory) >= 2 and d.inventory[-1] is not None:
         prev = d.inventory[-2]
@@ -253,11 +278,18 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
 
     for (sheet, cell), value in writes.items():
         wb[sheet][cell] = value
+    from openpyxl.comments import Comment
+    for (sheet, cell), text in comments.items():
+        if (sheet, cell) in writes:
+            wb[sheet][cell].comment = Comment(text, "ForensicStockViz")
     wb.save(out_path)
-    # drop analyst rows the app has now filled (only B19 is conditional today)
-    b19_written = ("Phase1_Anchor", "B19") in writes
+    # drop analyst rows the app has now filled
+    filled_ranges = set()
+    if ("Phase1_Anchor", "B19") in writes:
+        filled_ranges.add(("Phase1_Anchor", "B19"))
+    if ("Phase2_UnitEcon", "B5") in writes:
+        filled_ranges.add(("Phase2_UnitEcon", "B5:B7"))
     remaining = [row for row in ANALYST_CELLS
-                 if not (b19_written and row[0] == "Phase1_Anchor"
-                         and row[1] == "B19")]
+                 if (row[0], row[1]) not in filled_ranges]
     return FillReport(filled=len(writes), out_path=out_path,
                       analyst_cells=remaining)

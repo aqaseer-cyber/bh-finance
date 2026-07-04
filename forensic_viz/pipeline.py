@@ -74,6 +74,21 @@ def build_dashboard_data(
             "scorecard is indicative only; Altman Z replaced by the solvency panel."
         )
 
+    progress("Fetching segment disclosures (10-K/10-Q XBRL instances)…")
+    try:
+        from .segments import fetch_segment_data
+        data.segments = fetch_segment_data(fundamentals, cache=cache)
+    except Exception:
+        data.segments = None  # enrichment only; never sink the dashboard
+    seg = data.segments
+    if seg is not None and seg.n_segments >= 2:
+        ax = seg.axes()[0]
+        names = ", ".join(seg.members(ax)[:4])
+        data.health_notes.append(
+            f"Multi-segment filer — {seg.n_segments} parts on the {ax} axis "
+            f"as filed ({names}): consider the SOTP method (§4); segment "
+            "rows are in the Financial model export.")
+
     progress("Building discount rate (live 10-Y UST, β vs S&P 500)…")
     try:
         from .rates import build_wacc

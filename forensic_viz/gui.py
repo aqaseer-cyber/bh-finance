@@ -675,10 +675,17 @@ class _ValuationDialog(tk.Toplevel):
         method_box.bind("<<ComboboxSelected>>",
                         lambda _e: self._on_method(method_box.current()))
 
-        ttk.Label(top, style="Secondary.TLabel",
-                  text=f"Pre-selected for the {data.track.title()} track "
-                       f"(SIC {data.sic_code or '—'}); override if the economic "
-                       "engine differs.").grid(
+        pre = (f"Pre-selected for the {data.track.title()} track "
+               f"(SIC {data.sic_code or '—'}); override if the economic "
+               "engine differs.")
+        seg = getattr(data, "segments", None)
+        if seg is not None and getattr(seg, "n_segments", 0) >= 2:
+            ax = seg.axes()[0]
+            pre += (f" {seg.n_segments} segments as filed (by {ax}) — SOTP "
+                    "candidate; segment values are in the Financial model "
+                    "export and the Phase-2 workbook block.")
+        ttk.Label(top, style="Secondary.TLabel", text=pre,
+                  wraplength=560, justify="left").grid(
             row=1, column=0, columnspan=4, sticky="w", padx=10)
 
         self.help_lbl = ttk.Label(top, style="Secondary.TLabel", wraplength=560,

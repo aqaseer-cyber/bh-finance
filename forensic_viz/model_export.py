@@ -286,6 +286,39 @@ def _pct(cur: Optional[float], prev: Optional[float]) -> Optional[float]:
     return cur / prev - 1.0
 
 
+def _annual_from_entries(entries, fy_ends: List[dt.date]
+                         ) -> List[Optional[float]]:
+    """Full-year values aligned to the fiscal spine (segment lines)."""
+    return [next((v for s, e, v in entries
+                  if abs((e - fe).days) <= 7 and 330 <= (e - s).days <= 400),
+                 None)
+            for fe in fy_ends]
+
+
+def _flow_row(entries, ann: List[Optional[float]], fy_ends: List[dt.date],
+              spine: List[dt.date], q_ends: List[dt.date],
+              allow_fy_diff: bool = True,
+              shares_like: bool = False) -> ModelRow:
+    """Consolidate one flow line: quarters, LTM, latest-quarter YoY."""
+    annual_map = dict(zip(fy_ends, ann))
+    qfull = [_discrete(entries, qe, fy_ends, annual_map,
+                       allow_fy_diff=allow_fy_diff) for qe in spine]
+    qs = qfull[-len(q_ends):] if q_ends else []
+    if shares_like:
+        ltm = _latest(qs)  # latest weighted count
+        if ltm is None:
+            ltm = _latest(ann)
+    else:
+        ltm = _ltm_flow(ann[-1] if ann else None, entries, fy_ends, q_ends)
+    yoy_q = None
+    if q_ends:
+        year_ago = _discrete(entries, q_ends[-1] - dt.timedelta(days=365),
+                             fy_ends, annual_map,
+                             allow_fy_diff=allow_fy_diff)
+        yoy_q = _pct(qs[-1] if qs else None, year_ago)
+    return ModelRow(ann, qs, ltm, qfull, yoy_q)
+
+
 # ----------------------------------------------------------- consolidation
 
 def build_model_rows(annual: AnnualFundamentals,
@@ -310,25 +343,10 @@ def build_model_rows(annual: AnnualFundamentals,
                 ltm = _latest(ann)  # latest period-end balance
             rows[concept] = ModelRow(ann, qs, ltm, qfull)
             continue
-        entries = qdata.duration.get(concept, [])
-        annual_map = dict(zip(fy_ends, ann))
-        qfull = [_discrete(entries, qe, fy_ends, annual_map,
-                           allow_fy_diff=concept not in _NO_FY_DIFF)
-                 for qe in spine]
-        qs = qfull[-len(q_ends):] if q_ends else []
-        if concept in _NO_FY_DIFF:
-            ltm = _latest(qs)  # latest weighted count
-            if ltm is None:
-                ltm = _latest(ann)
-        else:
-            ltm = _ltm_flow(ann[-1] if ann else None, entries, fy_ends, q_ends)
-        yoy_q = None
-        if q_ends:
-            year_ago = _discrete(entries, q_ends[-1] - dt.timedelta(days=365),
-                                 fy_ends, annual_map,
-                                 allow_fy_diff=concept not in _NO_FY_DIFF)
-            yoy_q = _pct(qs[-1] if qs else None, year_ago)
-        rows[concept] = ModelRow(ann, qs, ltm, qfull, yoy_q)
+        rows[concept] = _flow_row(
+            qdata.duration.get(concept, []), ann, fy_ends, spine, q_ends,
+            allow_fy_diff=concept not in _NO_FY_DIFF,
+            shares_like=concept in _NO_FY_DIFF)
 
     def _combine(a: ModelRow, b: ModelRow, op) -> ModelRow:
         def cell(x, y):
@@ -424,6 +442,32 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     fmt_mm = "#,##0.0;(#,##0.0)"
     fmt_eps = "0.00;(0.00)"
     fmt_pct = "0.0%;(0.0%)"
+
+    def pct_cells(row: ModelRow) -> List[Optional[float]]:
+        """FY cells YoY · quarter cells QoQ · LTM cell = latest Q YoY."""
+        fy = [None] + [_pct(row.ann[i], row.ann[i - 1])
+                       for i in range(1, len(row.ann))]
+        off = len(row.qfull) - len(row.q)
+        qs = [_pct(row.q[i], row.qfull[off + i - 1] if off + i - 1 >= 0
+                   else None) for i in range(len(row.q))]
+        return fy + qs + [row.yoy_q]
+
+    def write_pct_row(r: int, row: ModelRow) -> int:
+        pcts = pct_cells(row)
+        if all(v is None for v in pcts):
+            return r
+        ws.cell(row=r, column=1, value="   % change")
+        ws.cell(row=r, column=1).font = Font(italic=True, color=muted,
+                                             size=8.5)
+        for j, v in enumerate(pcts, start=2):
+            c = ws.cell(row=r, column=j)
+            if v is not None:
+                c.value = v
+                c.number_format = fmt_pct
+            c.font = Font(italic=True, color=muted, size=8.5)
+            c.alignment = Alignment(horizontal="right")
+        return r + 1
+
     r = 2
     for label, concept, style, pct_row in LAYOUT:
         if style == "section":
@@ -457,28 +501,46 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         if bold:
             ws.cell(row=r, column=1).border = total_border
         r += 1
-        if not pct_row:
-            continue
-        # % change row: FY cells YoY · quarter cells QoQ · LTM cell =
-        # latest quarter YoY (vs the year-ago quarter)
-        fy_pcts = [None] + [_pct(row.ann[i], row.ann[i - 1])
-                            for i in range(1, len(row.ann))]
-        off = len(row.qfull) - len(row.q)
-        q_pcts = [_pct(row.q[i], row.qfull[off + i - 1] if off + i - 1 >= 0
-                       else None) for i in range(len(row.q))]
-        pcts = fy_pcts + q_pcts + [row.yoy_q]
-        if all(v is None for v in pcts):
-            continue
-        ws.cell(row=r, column=1, value="   % change")
-        ws.cell(row=r, column=1).font = Font(italic=True, color=muted, size=8.5)
-        for j, v in enumerate(pcts, start=2):
+        if pct_row:
+            r = write_pct_row(r, row)
+
+    # ------------------------------------------------- SEGMENTS (as filed)
+    seg = getattr(d, "segments", None)
+    seg_lines = list(getattr(seg, "lines", None) or [])
+    if seg_lines:
+        spine = quarter_spine(qdata, fy_ends)
+        ws.cell(row=r, column=1, value="SEGMENTS (as filed)")
+        for j in range(1, ltm_col + 1):
             c = ws.cell(row=r, column=j)
-            if v is not None:
-                c.value = v
-                c.number_format = fmt_pct
-            c.font = Font(italic=True, color=muted, size=8.5)
-            c.alignment = Alignment(horizontal="right")
+            c.fill = section_fill
+            c.font = Font(bold=True, color=forest, size=10)
         r += 1
+        last_sub = None
+        for ln in seg_lines:
+            ann = _annual_from_entries(ln.entries, fy_ends)
+            row = _flow_row(ln.entries, ann, fy_ends, spine, q_ends)
+            cells = list(row.ann) + list(row.q) + [row.ltm]
+            if all(v is None for v in cells):
+                continue
+            sub = f"{ln.group} by {ln.axis}"
+            if sub != last_sub:
+                c = ws.cell(row=r, column=1, value=sub)
+                c.font = Font(bold=True, italic=True, color=forest, size=9)
+                r += 1
+                last_sub = sub
+            ws.cell(row=r, column=1, value=f"  {ln.member}")
+            ws.cell(row=r, column=1).font = Font(color=ink, size=10)
+            for j, v in enumerate(cells, start=2):
+                c = ws.cell(row=r, column=j)
+                if v is not None:
+                    c.value = v / _MM
+                    c.number_format = fmt_mm
+                c.font = Font(color=ink, size=10)
+                c.alignment = Alignment(horizontal="right")
+                if j == ltm_col:
+                    c.fill = ltm_fill
+            r += 1
+            r = write_pct_row(r, row)
 
     # ---------------------------------------------------------- footnotes
     notes = [
@@ -506,6 +568,18 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         "and other 'Payments…' concepts are positive outflows as filed.",
         "Not investment advice.",
     ]
+    if seg_lines:
+        src = getattr(seg, "source", "") or "latest filings"
+        notes.insert(-1, (
+            f"Segments: dimensional XBRL parsed from {src}; history depth "
+            "= as reported there (a 10-K carries 2–3 comparative years, "
+            "the 10-Q the current quarters + year-ago comparatives). "
+            "Members ordered by latest annual revenue."))
+    else:
+        notes.insert(-1, (
+            "Segments: no dimensional segment data available — it lives in "
+            "the 10-K/10-Q XBRL instance (fetched live, not in the "
+            "companyfacts API), or the filer reports a single segment."))
     tag_bits = "; ".join(f"{k} = {v}" for k, v in sorted(f.tags_used.items()))
     if tag_bits:
         notes.append(f"XBRL tags: {tag_bits}")

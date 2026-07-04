@@ -221,6 +221,18 @@ in the quarter columns, and the latest quarter's YoY in the LTM cell. The
 footer records the derivation rules and the exact XBRL tag per concept.
 Raw audit-trail CSVs remain available on the CLI via `--csv`.
 
+**Segment line items (§2.1 / SOTP).** Segment splits — reportable
+segments, product/service disaggregation (e.g. Commerce vs Fintech),
+geography (e.g. Brazil/Mexico/Other) — are **dimensional XBRL that the
+companyfacts API never returns**, so the app reads them from the
+**extracted XBRL instance of the latest 10-K and 10-Q** (fetched live,
+cached). They appear as a **SEGMENTS (as filed)** section in the financial
+model (revenue and operating income per member, with % change rows;
+history depth = what those two filings carry), auto-fill the **Phase-2
+revenue architecture block** of the valuation workbook (top-2 segments +
+remainder, names as cell comments), and when a filer reports 2+ parts the
+health page and the valuation dialog flag it as an **SOTP candidate**.
+
 ## House assumptions file
 
 ERP, the GDP cap, R&D life, and the Phase-5 stress shocks default to labeled

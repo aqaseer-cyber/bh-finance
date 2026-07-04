@@ -57,6 +57,12 @@ class DashboardData:
     # without a second fetch.
     fundamentals: Optional[AnnualFundamentals] = field(default=None, repr=False)
 
+    # Segment disclosures (dimensional XBRL from the latest 10-K/10-Q
+    # instances) — drives the SEGMENTS section of the financial model, the
+    # Phase-2 revenue architecture fill and the SOTP hint. None when the
+    # instances are unreachable (offline) or the filer reports one segment.
+    segments: Optional[object] = field(default=None, repr=False)
+
     # Fundamentals (aligned lists, oldest -> newest, DISPLAY_YEARS long)
     fy_labels: List[str] = field(default_factory=list)
     fy_ends: List[dt.date] = field(default_factory=list)

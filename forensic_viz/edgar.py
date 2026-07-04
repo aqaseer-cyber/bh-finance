@@ -219,6 +219,12 @@ class AnnualFundamentals:
     exchange_ticker: str = ""
     latest_10k_date: str = ""
     latest_10q_date: str = ""
+    # accession + primary document of the latest 10-K/10-Q, so the segment
+    # reader can locate each filing's extracted XBRL instance (…_htm.xml)
+    latest_10k_accession: str = ""
+    latest_10k_document: str = ""
+    latest_10q_accession: str = ""
+    latest_10q_document: str = ""
     # full companyfacts payload, kept so the financial-model export can pull
     # interim (10-Q) observations without a second fetch
     raw_facts: Optional[dict] = field(default=None, repr=False)
@@ -281,6 +287,34 @@ class _SecSession:
             except EdgarError:
                 raise
             except (requests.RequestException, ValueError) as exc:
+                last_err = exc
+                time.sleep(2**attempt)
+        raise EdgarError(f"SEC request failed after retries: {url} ({last_err})")
+
+    def get_text(self, url: str, ttl: float) -> str:
+        """Cached raw-text GET (XBRL instance documents), same pacing."""
+        cached = self.cache.get(url, ttl)
+        if cached is not None:
+            return cached
+        last_err: Optional[Exception] = None
+        for attempt in range(config.HTTP_RETRIES):
+            with self._lock:
+                wait = config.SEC_MIN_INTERVAL - (time.time() - self._last_call)
+                if wait > 0:
+                    time.sleep(wait)
+                self._last_call = time.time()
+            try:
+                resp = self.session.get(url, timeout=config.HTTP_TIMEOUT)
+                if resp.status_code == 404:
+                    raise EdgarError(f"SEC returned 404 for {url}")
+                if resp.status_code in (403, 429) or resp.status_code >= 500:
+                    raise requests.HTTPError(f"HTTP {resp.status_code}", response=resp)
+                resp.raise_for_status()
+                self.cache.put(url, resp.text)
+                return resp.text
+            except EdgarError:
+                raise
+            except requests.RequestException as exc:
                 last_err = exc
                 time.sleep(2**attempt)
         raise EdgarError(f"SEC request failed after retries: {url} ({last_err})")
@@ -622,13 +656,46 @@ def fetch_fundamentals(
             exch = f" ({exchanges[0]})" if exchanges and exchanges[0] else ""
             result.exchange_ticker = f"{tickers[0]}{exch}"
         recent = subs.get("filings", {}).get("recent", {})
-        for form, filed in zip(recent.get("form", []), recent.get("filingDate", [])):
+        for form, filed, accn, doc in zip(
+                recent.get("form", []), recent.get("filingDate", []),
+                recent.get("accessionNumber", []),
+                recent.get("primaryDocument", [])):
             if form == "10-K" and not result.latest_10k_date:
                 result.latest_10k_date = str(filed)
+                result.latest_10k_accession = str(accn)
+                result.latest_10k_document = str(doc)
             elif form == "10-Q" and not result.latest_10q_date:
                 result.latest_10q_date = str(filed)
+                result.latest_10q_accession = str(accn)
+                result.latest_10q_document = str(doc)
             if result.latest_10k_date and result.latest_10q_date:
                 break
     except Exception:
         pass
     return result
+
+
+def instance_url(cik: int, accession: str, primary_document: str) -> str:
+    """URL of a filing's extracted XBRL instance (…_htm.xml on EDGAR)."""
+    accn = accession.replace("-", "")
+    stem = primary_document.rsplit(".", 1)[0]
+    return (f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/"
+            f"{stem}_htm.xml")
+
+
+def fetch_segment_instances(annual: AnnualFundamentals,
+                            cache: Optional[Cache] = None) -> List[str]:
+    """XBRL instance XML of the latest 10-K and 10-Q (best-effort each)."""
+    cache = cache or Cache()
+    sec = _SecSession(cache)
+    out: List[str] = []
+    for accn, doc in ((annual.latest_10k_accession, annual.latest_10k_document),
+                      (annual.latest_10q_accession, annual.latest_10q_document)):
+        if not accn or not doc or not annual.cik:
+            continue
+        try:
+            out.append(sec.get_text(instance_url(annual.cik, accn, doc),
+                                    config.TTL_COMPANYFACTS))
+        except Exception:
+            continue  # segment data is an enrichment, never a hard failure
+    return out
