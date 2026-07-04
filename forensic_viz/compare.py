@@ -45,8 +45,10 @@ def build_compare_html(datas: List[DashboardData], path: str,
         font=dict(family="Segoe UI, system-ui, sans-serif", size=12,
                   color=P.INK_PRIMARY),
         paper_bgcolor=P.SURFACE, plot_bgcolor=P.SURFACE,
-        margin=dict(l=60, r=30, t=48, b=40), hovermode="x unified",
+        # top margin fits the title above the horizontal legend
+        margin=dict(l=60, r=30, t=88, b=40), hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        title_y=0.985, title_yanchor="top",
     )
 
     def fig(title, height=380):
@@ -141,7 +143,11 @@ def build_compare_html(datas: List[DashboardData], path: str,
 <title>Compare — {_html.escape(names)}</title>
 <style>
  body{{font-family:'Segoe UI',system-ui,sans-serif;background:{P.PAGE};
-      color:{P.INK_PRIMARY};margin:0;padding:24px 32px}}
+      color:{P.INK_PRIMARY};margin:0;padding:0 0 24px}}
+ .band{{background:{P.GUI_SIDEBAR_BG};color:{P.GUI_SIDEBAR_FG};
+       padding:20px 32px 16px;border-bottom:4px solid {P.GUI_ACCENT}}}
+ .band .sub{{color:{P.GUI_SIDEBAR_MUTED}}}
+ main{{padding:0 32px}}
  h1{{font-size:22px;margin:0 0 4px}} .sub{{color:{P.INK_SECONDARY};font-size:13px}}
  .chart{{background:{P.SURFACE};border:1px solid {P.GRIDLINE};border-radius:8px;
         margin:14px 0;padding:6px}}
@@ -151,10 +157,12 @@ def build_compare_html(datas: List[DashboardData], path: str,
  tr th:first-child{{color:{P.INK_SECONDARY};font-weight:400}}
  .note{{color:{P.INK_MUTED};font-size:11.5px;margin-top:18px}}
 </style></head><body>
+<div class="band">
 <h1>Side-by-side — {_html.escape(names)}</h1>
 <div class="sub">Colors are fixed per ticker across every chart (color follows
  the entity). Generated {datas[0].generated.isoformat()} ·
- {datas[0].display_years}-year window.</div>"""]
+ {datas[0].display_years}-year window.</div>
+</div><main>"""]
     parts.append(table)
     for i, f in enumerate(figs):
         parts.append("<div class='chart'>"
@@ -163,7 +171,7 @@ def build_compare_html(datas: List[DashboardData], path: str,
                      + "</div>")
     parts.append("<div class='note'>Sources: SEC EDGAR XBRL, Stooq/Yahoo. "
                  "Ledger rows come from your local verdict ledger (§5.7). "
-                 "Not investment advice.</div></body></html>")
+                 "Not investment advice.</div></main></body></html>")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("".join(parts))
     return path

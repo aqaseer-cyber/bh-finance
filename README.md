@@ -44,6 +44,16 @@ side-by-side interactive page for 2–4 tickers — indexed price and revenue
 pulls each name's ledger rating/FV/MoS. Colors are fixed per ticker across
 every chart (color follows the entity).
 
+**House look & display charts.** Every surface — the Tk shell, all five
+report pages, the interactive and compare reports — follows the house colour
+scheme (Colour Palette 07: forest `#0C3B2E`, tan `#BB8A52`, amber `#FFBA00`,
+sage `#6D9773` on a cream surface; brick red is reserved for negative/stale
+status, never a series colour — see `forensic_viz/palette.py` for the
+validator record). The interactive report opens with Fiscal.ai-style
+**Revenue** and **Operating Profit** display charts: value-labelled bars
+plus a YoY %-change line with point labels, **Total Change and CAGR in the
+legend**, and the %-change line **toggles off with a legend click**.
+
 **Valuation sandbox.** The interactive report embeds a **live DCF** for
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
 FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g

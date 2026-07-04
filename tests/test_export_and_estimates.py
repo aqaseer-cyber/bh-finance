@@ -72,7 +72,10 @@ def test_interactive_html_selfcontained(tmp_path, testco_facts, aapl_prices):
     assert len(body) > 1_000_000        # plotly.js embedded (offline-capable)
     assert body.count("plotly.js") >= 0  # sanity: file exists and is html
     assert "T Inc" in body and "A thesis." in body and "A risk." in body
-    assert "Revenue &amp; growth" in body or "Revenue & growth" in body
+    # Fiscal.ai-style display charts: value bars + toggleable %-change line
+    assert "Revenue Change (%)" in body
+    assert "Operating Profit" in body
+    assert "Total Change" in body and "CAGR" in body
 
 
 def test_shorter_window_flows_to_html(tmp_path, testco_facts):

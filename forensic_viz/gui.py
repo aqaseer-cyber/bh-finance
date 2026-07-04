@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
+from . import palette as P
 from .cache import Cache
 from .dashboard import (
     FIG_W, render_dashboard, render_health_report, render_unit_economics,
@@ -53,12 +54,72 @@ YEAR_CHOICES = ("3", "5", "7", "10")
 PAGES = ("Dashboard", "Unit economics", "Health checks", "Valuation", "Verdict")
 
 
+def apply_brand_theme(root: tk.Tk) -> None:
+    """House brand skin (Colour Palette 07): forest sidebar, cream page,
+    amber accent. Built on 'clam' — the one ttk theme that honours colour
+    options on every platform (the native Windows theme ignores them)."""
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        return
+    root.configure(background=P.PAGE)
+    style.configure(".", background=P.PAGE, foreground=P.INK_PRIMARY,
+                    bordercolor=P.BASELINE, focuscolor=P.GUI_ACCENT,
+                    font=(P.FONT_STACK[0], 9))
+    style.configure("TFrame", background=P.PAGE)
+    style.configure("TLabel", background=P.PAGE, foreground=P.INK_PRIMARY)
+    style.configure("Secondary.TLabel", foreground=P.INK_SECONDARY)
+    style.configure("Muted.TLabel", foreground=P.INK_MUTED)
+    # sidebar family (forest)
+    style.configure("Side.TFrame", background=P.GUI_SIDEBAR_BG)
+    style.configure("Side.TLabel", background=P.GUI_SIDEBAR_BG,
+                    foreground=P.GUI_SIDEBAR_FG)
+    style.configure("SideMuted.TLabel", background=P.GUI_SIDEBAR_BG,
+                    foreground=P.GUI_SIDEBAR_MUTED)
+    style.configure("Side.TSeparator", background=P.GUI_SIDEBAR_BTN_ACTIVE)
+    style.configure("Side.TButton", background=P.GUI_SIDEBAR_BTN,
+                    foreground=P.GUI_SIDEBAR_FG, borderwidth=0, padding=6)
+    style.map("Side.TButton",
+              background=[("disabled", P.GUI_SIDEBAR_BG),
+                          ("pressed", P.GUI_SIDEBAR_BTN_ACTIVE),
+                          ("active", P.GUI_SIDEBAR_BTN_ACTIVE)],
+              foreground=[("disabled", P.GUI_SIDEBAR_MUTED)])
+    style.configure("Accent.TButton", background=P.GUI_ACCENT,
+                    foreground=P.GUI_ACCENT_FG, borderwidth=0, padding=6)
+    style.map("Accent.TButton",
+              background=[("disabled", P.GUI_SIDEBAR_BTN),
+                          ("pressed", P.GUI_ACCENT_ACTIVE),
+                          ("active", P.GUI_ACCENT_ACTIVE)],
+              foreground=[("disabled", P.GUI_SIDEBAR_MUTED)])
+    # tabs
+    style.configure("TNotebook", background=P.PAGE, borderwidth=0)
+    style.configure("TNotebook.Tab", background=P.PAGE,
+                    foreground=P.INK_SECONDARY, padding=(14, 6))
+    style.map("TNotebook.Tab",
+              background=[("selected", P.SURFACE)],
+              foreground=[("selected", P.INK_PRIMARY),
+                          ("disabled", P.INK_MUTED)])
+    # tables & inputs
+    style.configure("Treeview", background=P.SURFACE, foreground=P.INK_PRIMARY,
+                    fieldbackground=P.SURFACE, bordercolor=P.GRIDLINE)
+    style.configure("Treeview.Heading", background=P.GUI_SIDEBAR_BG,
+                    foreground=P.GUI_SIDEBAR_FG, relief="flat")
+    style.map("Treeview.Heading", background=[("active", P.GUI_SIDEBAR_BTN)])
+    style.map("Treeview", background=[("selected", P.SERIES[3])],
+              foreground=[("selected", P.GUI_ACCENT_FG)])
+    for w in ("TEntry", "TCombobox", "TSpinbox"):
+        style.configure(w, fieldbackground="#ffffff",
+                        foreground=P.INK_PRIMARY, bordercolor=P.BASELINE)
+    style.map("TCombobox", fieldbackground=[("readonly", "#ffffff")])
+
+
 class _ScrollTab(ttk.Frame):
     """A notebook tab hosting one matplotlib figure in a scrollable viewport."""
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.canvas = tk.Canvas(self, background="#f9f9f7", highlightthickness=0)
+        self.canvas = tk.Canvas(self, background=P.PAGE, highlightthickness=0)
         vbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
         hbar = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
@@ -101,21 +162,23 @@ class App:
         self.busy = False
         self._wheel_accum = 0.0
 
-        # ---------------- sidebar (controls) ----------------
-        side = ttk.Frame(root, padding=(12, 12))
+        # ---------------- sidebar (controls, forest brand panel) ----------------
+        side = ttk.Frame(root, padding=(12, 12), style="Side.TFrame")
         side.pack(side=tk.LEFT, fill=tk.Y)
 
-        ttk.Label(side, text="Ticker").pack(anchor="w")
+        ttk.Label(side, text="Ticker", style="Side.TLabel").pack(anchor="w")
         self.ticker_var = tk.StringVar()
         entry = ttk.Entry(side, textvariable=self.ticker_var, width=14)
         entry.pack(anchor="w", pady=(2, 8))
         entry.bind("<Return>", lambda _e: self.analyze())
         entry.focus_set()
 
-        row = ttk.Frame(side)
+        row = ttk.Frame(side, style="Side.TFrame")
         row.pack(anchor="w", pady=(0, 8))
-        ttk.Label(row, text="Years").grid(row=0, column=0, sticky="w")
-        ttk.Label(row, text="Track").grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Label(row, text="Years", style="Side.TLabel").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(row, text="Track", style="Side.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(10, 0))
         self.years_var = tk.StringVar(value="10")
         ttk.Combobox(row, state="readonly", width=4, textvariable=self.years_var,
                      values=list(YEAR_CHOICES)).grid(row=1, column=0, sticky="w")
@@ -125,37 +188,45 @@ class App:
         track_box.grid(row=1, column=1, sticky="w", padx=(10, 0))
         track_box.bind("<<ComboboxSelected>>", lambda _e: self._on_track_change())
 
-        self.analyze_btn = ttk.Button(side, text="Analyze", command=self.analyze)
+        self.analyze_btn = ttk.Button(side, text="Analyze", command=self.analyze,
+                                      style="Accent.TButton")
         self.analyze_btn.pack(fill=tk.X, pady=(2, 4))
-        self.compare_btn = ttk.Button(side, text="Compare…", command=self.compare)
+        self.compare_btn = ttk.Button(side, text="Compare…", command=self.compare,
+                                      style="Side.TButton")
         self.compare_btn.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Separator(side).pack(fill=tk.X, pady=6)
+        ttk.Separator(side, style="Side.TSeparator").pack(fill=tk.X, pady=6)
         self.value_btn = ttk.Button(side, text="Intrinsic value…",
-                                    command=self.open_valuation, state=tk.DISABLED)
+                                    command=self.open_valuation, state=tk.DISABLED,
+                                    style="Side.TButton")
         self.value_btn.pack(fill=tk.X, pady=2)
         self.inputs_btn = ttk.Button(side, text="Analyst inputs…",
-                                     command=self.analyst_inputs, state=tk.DISABLED)
+                                     command=self.analyst_inputs, state=tk.DISABLED,
+                                     style="Side.TButton")
         self.inputs_btn.pack(fill=tk.X, pady=2)
 
-        ttk.Separator(side).pack(fill=tk.X, pady=6)
+        ttk.Separator(side, style="Side.TSeparator").pack(fill=tk.X, pady=6)
         self.html_btn = ttk.Button(side, text="Interactive report ↗",
-                                   command=self.open_interactive, state=tk.DISABLED)
+                                   command=self.open_interactive, state=tk.DISABLED,
+                                   style="Side.TButton")
         self.html_btn.pack(fill=tk.X, pady=2)
         self.save_btn = ttk.Button(side, text="Save PDF (A4)…",
-                                   command=self.save_pdf, state=tk.DISABLED)
+                                   command=self.save_pdf, state=tk.DISABLED,
+                                   style="Side.TButton")
         self.save_btn.pack(fill=tk.X, pady=2)
         self.csv_btn = ttk.Button(side, text="Export CSV…",
-                                  command=self.export_csv, state=tk.DISABLED)
+                                  command=self.export_csv, state=tk.DISABLED,
+                                  style="Side.TButton")
         self.csv_btn.pack(fill=tk.X, pady=2)
         self.xlsx_btn = ttk.Button(side, text="Fill workbook…",
-                                   command=self.fill_workbook, state=tk.DISABLED)
+                                   command=self.fill_workbook, state=tk.DISABLED,
+                                   style="Side.TButton")
         self.xlsx_btn.pack(fill=tk.X, pady=2)
 
         _start_msg = ("Enter a US-listed ticker (e.g. AAPL) and press Analyze."
                       if not config.UA_IS_PLACEHOLDER else config.UA_WARNING)
         self.status_var = tk.StringVar(value=_start_msg)
-        ttk.Label(side, textvariable=self.status_var, foreground="#52514e",
+        ttk.Label(side, textvariable=self.status_var, style="Side.TLabel",
                   wraplength=160, justify="left").pack(
             side=tk.BOTTOM, anchor="w", pady=(12, 0))
 
@@ -191,7 +262,7 @@ class App:
         for c, h, w in zip(cols, heads, widths):
             self.tree.heading(c, text=h)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.tag_configure("stale", foreground="#d03b3b")
+        self.tree.tag_configure("stale", foreground=P.NEGATIVE)
         vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -203,7 +274,7 @@ class App:
                    command=self._rerun_selected).pack(side=tk.LEFT)
         ttk.Button(btns, text="Remove selected",
                    command=self._remove_selected).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(btns, foreground="#898781",
+        ttk.Label(btns, style="Muted.TLabel",
                   text="Verdict ledger (§5.7) — rows log automatically when a "
                        "valuation runs; red = stale (> ~5 trading days, house §8). "
                        "Double-click to re-run.").pack(side=tk.LEFT, padx=(14, 0))
@@ -589,6 +660,7 @@ class _ValuationDialog(tk.Toplevel):
         self.title("Intrinsic value — Bear / Base / Bull")
         self.transient(parent)
         self.resizable(False, False)
+        self.configure(background=P.PAGE)
         self.method_var = tk.StringVar(value=suggest_method(data.track))
         self.wacc_var = tk.StringVar()
         self.base_var = tk.StringVar()
@@ -608,13 +680,13 @@ class _ValuationDialog(tk.Toplevel):
         method_box.bind("<<ComboboxSelected>>",
                         lambda _e: self._on_method(method_box.current()))
 
-        ttk.Label(top, foreground="#52514e",
+        ttk.Label(top, style="Secondary.TLabel",
                   text=f"Pre-selected for the {data.track.title()} track "
                        f"(SIC {data.sic_code or '—'}); override if the economic "
                        "engine differs.").grid(
             row=1, column=0, columnspan=4, sticky="w", padx=10)
 
-        self.help_lbl = ttk.Label(top, foreground="#52514e", wraplength=560,
+        self.help_lbl = ttk.Label(top, style="Secondary.TLabel", wraplength=560,
                                   justify="left")
         self.help_lbl.grid(row=2, column=0, columnspan=4, sticky="w", **pad)
 
@@ -633,8 +705,8 @@ class _ValuationDialog(tk.Toplevel):
         self.grid_frame = ttk.Frame(top)
         self.grid_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
 
-        self.estimates_lbl = ttk.Label(top, foreground="#52514e", wraplength=560,
-                                       justify="left")
+        self.estimates_lbl = ttk.Label(top, style="Secondary.TLabel",
+                                       wraplength=560, justify="left")
         self.estimates_lbl.grid(row=5, column=0, columnspan=4, sticky="w", padx=10)
 
         # Phase-5 verdict inputs (§5.3): rating is judgment; the app only
@@ -653,7 +725,7 @@ class _ValuationDialog(tk.Toplevel):
         ttk.Entry(verdict_frame, textvariable=self.optionality_var, width=34).pack(
             side=tk.LEFT)
 
-        ttk.Label(top, foreground="#898781",
+        ttk.Label(top, style="Muted.TLabel",
                   text="Percent fields (%) are entered in percent: 9 = 9%, 160 = 160%. "
                        "Dollar fields ($) are plain amounts.").grid(
             row=7, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 0))
@@ -789,6 +861,7 @@ class _AnalystInputsDialog(tk.Toplevel):
         self.title("Analyst inputs — thesis, terminal risk, fluff filter")
         self.transient(parent)
         self.resizable(False, False)
+        self.configure(background=P.PAGE)
         top = ttk.Frame(self, padding=(12, 12))
         top.pack(fill=tk.BOTH, expand=True)
 
@@ -808,14 +881,24 @@ class _AnalystInputsDialog(tk.Toplevel):
 
         ttk.Label(top, text="Investment thesis (§2.4, 3–4 sentences):").grid(
             row=2, column=0, sticky="w", pady=(0, 2))
-        self.thesis_txt = tk.Text(top, width=78, height=4, wrap="word")
+        self.thesis_txt = tk.Text(top, width=78, height=4, wrap="word",
+                                  background="#ffffff", foreground=P.INK_PRIMARY,
+                                  insertbackground=P.INK_PRIMARY,
+                                  highlightthickness=1,
+                                  highlightbackground=P.BASELINE,
+                                  highlightcolor=P.GUI_ACCENT, relief="flat")
         self.thesis_txt.grid(row=3, column=0, sticky="w", pady=(0, 10))
         self.thesis_txt.insert("1.0", data.thesis)
 
         ttk.Label(top, text="Terminal risk (§2.3, cite 10-K Item 1A — anchors "
                             "the Phase-5 rating):").grid(
             row=4, column=0, sticky="w", pady=(0, 2))
-        self.risk_txt = tk.Text(top, width=78, height=3, wrap="word")
+        self.risk_txt = tk.Text(top, width=78, height=3, wrap="word",
+                                background="#ffffff", foreground=P.INK_PRIMARY,
+                                insertbackground=P.INK_PRIMARY,
+                                highlightthickness=1,
+                                highlightbackground=P.BASELINE,
+                                highlightcolor=P.GUI_ACCENT, relief="flat")
         self.risk_txt.grid(row=5, column=0, sticky="w", pady=(0, 10))
         self.risk_txt.insert("1.0", data.terminal_risk)
 
@@ -869,9 +952,6 @@ class _AnalystInputsDialog(tk.Toplevel):
 
 def run_gui():
     root = tk.Tk()
-    try:
-        ttk.Style().theme_use("vista")  # native look on Windows
-    except tk.TclError:
-        pass
+    apply_brand_theme(root)  # house colour scheme on every widget
     App(root)
     root.mainloop()

@@ -356,8 +356,8 @@ def _panel_price(ax, fig, d: DashboardData):
 
 def _panel_drawdown(ax, fig, d: DashboardData):
     _panel_title(ax, "Drawdown", f"% below rolling {_price_span(d)}y peak")
-    ax.plot(d.price_dates, d.drawdown, color=P.SERIES[5], linewidth=1.2, zorder=3)
-    ax.fill_between(d.price_dates, d.drawdown, 0, color=P.SERIES[5], alpha=0.10,
+    ax.plot(d.price_dates, d.drawdown, color=P.NEGATIVE, linewidth=1.2, zorder=3)
+    ax.fill_between(d.price_dates, d.drawdown, 0, color=P.NEGATIVE, alpha=0.10,
                     zorder=2)
     ax.set_xlim(d.price_dates[0], d.price_dates[-1])
     worst = d.max_drawdown or 0.0
@@ -366,7 +366,7 @@ def _panel_drawdown(ax, fig, d: DashboardData):
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
     _pct_axis(ax)
     if d.max_drawdown is not None and d.max_drawdown_date is not None:
-        ax.plot(d.max_drawdown_date, d.max_drawdown, "o", color=P.SERIES[5],
+        ax.plot(d.max_drawdown_date, d.max_drawdown, "o", color=P.NEGATIVE,
                 markersize=5.6, markeredgecolor=P.SURFACE, markeredgewidth=1.2,
                 zorder=4)
         ax.annotate(f"max {fmt_pct(d.max_drawdown)}",
@@ -973,9 +973,9 @@ def _panel_altman(ax, fig, d: DashboardData):
     ax.set_xticklabels(d.fy_labels)
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
     y0, y1 = ax.get_ylim()
-    ax.axhspan(y0, config.ALTMAN_DISTRESS, color="#d03b3b", alpha=0.06, zorder=1)
-    ax.axhspan(config.ALTMAN_DISTRESS, config.ALTMAN_SAFE, color="#f0efec",
-               alpha=0.8, zorder=1)
+    ax.axhspan(y0, config.ALTMAN_DISTRESS, color=P.NEGATIVE, alpha=0.06, zorder=1)
+    ax.axhspan(config.ALTMAN_DISTRESS, config.ALTMAN_SAFE, color=P.GRIDLINE,
+               alpha=0.55, zorder=1)
     for y, lab, va in ((config.ALTMAN_DISTRESS, "distress < 1.81", "top"),
                        (config.ALTMAN_SAFE, "safe > 2.99", "bottom")):
         ax.text(0.02, y + (0.03 * span if va == "bottom" else -0.03 * span), lab,
@@ -1304,9 +1304,9 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
     for w in res.warnings + case_warns:
         fig.text(0.055, y, "⚠ " + w, fontsize=6.8, color=P.DELTA_BAD, va="bottom")
         y -= 0.016
-    notes = ("Equity bridge simplification: net debt = total debt − cash; minority interest, "
-             "preferred and non-operating investments are not yet pulled from XBRL (master §4.A). "
-             "All outputs code-computed.  Not investment advice.")
+    notes = ("Equity bridge (FCFF_DCF!B31): net debt + minority interest + preferred "
+             "− non-operating investments; MI/preferred from XBRL (0 when untagged), "
+             "non-op investments analyst input. All outputs code-computed.  Not investment advice.")
     fig.text(0.055, max(y, 0.012), notes, fontsize=6.6, color=P.INK_MUTED, va="bottom")
 
     if out_path:
@@ -1348,7 +1348,7 @@ def _panel_stress(ax, fig, res, v):
         sv = stressed.get(i)
         if sv is not None:
             _rounded_bar(ax, fig, i + offsets[0], val, width, P.SERIES[0])
-            _rounded_bar(ax, fig, i + offsets[1], sv, width, P.SERIES[5])
+            _rounded_bar(ax, fig, i + offsets[1], sv, width, P.NEGATIVE)
             # dodge the pair of cap labels horizontally so they never collide
             _cap_label(ax, i + offsets[0] - _px_to_x(ax, fig, 14), val,
                        f"${val:,.2f}", above=True, fig=fig, size=6.8)
@@ -1358,7 +1358,7 @@ def _panel_stress(ax, fig, res, v):
         else:
             _rounded_bar(ax, fig, i, val, width, P.SERIES[0])
             _cap_label(ax, i, val, f"${val:,.2f}", above=True, fig=fig, size=6.8)
-    _legend(ax, [_series_swatch(P.SERIES[0]), _series_swatch(P.SERIES[5])],
+    _legend(ax, [_series_swatch(P.SERIES[0]), _series_swatch(P.NEGATIVE)],
             ["Base", "Stressed"])
 
 

@@ -37,11 +37,19 @@ _LAYOUT = dict(
     font=dict(family="Segoe UI, system-ui, sans-serif", size=12,
               color=P.INK_PRIMARY),
     paper_bgcolor=P.SURFACE, plot_bgcolor=P.SURFACE,
-    margin=dict(l=60, r=30, t=48, b=40),
+    # top margin fits a (two-line) title above the horizontal legend
+    margin=dict(l=60, r=30, t=88, b=40),
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    title_y=0.985, title_yanchor="top",
     colorway=P.SERIES,
 )
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return (f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},"
+            f"{int(h[4:6], 16)},{alpha})")
 
 
 def _fig(title: str, height: int = 380):
@@ -71,6 +79,74 @@ def _lines(f, x, series, names, pct=True):
             else "%{y:,.2f}<extra>" + name + "</extra>"))
 
 
+def _yoy(vals) -> List[Optional[float]]:
+    """YoY % change; None where the prior year is missing or non-positive."""
+    out: List[Optional[float]] = [None]
+    for prev, cur in zip(vals, vals[1:]):
+        out.append(cur / prev - 1.0
+                   if (prev is not None and prev > 0 and cur is not None)
+                   else None)
+    return out
+
+
+def _display_chart(fy, vals, label: str):
+    """Fiscal.ai-style display chart: value bars with $ labels plus a
+    %-change line with point labels on a hidden secondary axis. The bar's
+    legend entry carries Total Change and CAGR over the window; clicking
+    the %-change legend entry toggles the line off/on."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    idx = [i for i, v in enumerate(vals) if v is not None]
+    name = label
+    if idx and vals[idx[0]] and vals[idx[0]] > 0:
+        f0, l0, yrs = vals[idx[0]], vals[idx[-1]], idx[-1] - idx[0]
+        extras = []
+        if l0 is not None:
+            extras.append(f"Total Change: {(l0 / f0 - 1) * 100:,.2f}%")
+        if l0 is not None and l0 > 0 and yrs > 0:
+            extras.append(f"CAGR: {((l0 / f0) ** (1 / yrs) - 1) * 100:.2f}%")
+        if extras:
+            name = f"{label} (" + ") (".join(extras) + ")"
+
+    f = make_subplots(specs=[[{"secondary_y": True}]])
+    f.add_trace(go.Bar(
+        x=fy, y=vals, name=name, marker_color=P.SERIES[0],
+        text=[fmt_money(v) if v is not None else "" for v in vals],
+        textposition="outside", cliponaxis=False,
+        textfont=dict(size=11, color=P.INK_PRIMARY),
+        hovertemplate="%{y:$,.3s}<extra>" + label + "</extra>"),
+        secondary_y=False)
+    pct = _yoy(vals)
+    f.add_trace(go.Scatter(
+        x=fy, y=pct, name=f"{label} Change (%)", mode="lines+markers+text",
+        line=dict(color=P.SERIES[2], width=2.5),
+        marker=dict(size=8, line=dict(color=P.SERIES[0], width=1.2)),
+        text=[f"{v * 100:.1f}%" if v is not None else "" for v in pct],
+        textposition="top center",
+        textfont=dict(size=10.5, color=P.INK_SECONDARY),
+        hovertemplate="%{y:.1%}<extra>YoY change</extra>"),
+        secondary_y=True)
+    f.update_layout(title=dict(
+        text=f"{label}<br><sup>bars = $ value · line = YoY % change · "
+             "click the legend to toggle the line</sup>",
+        font=dict(size=15)), height=440, **_LAYOUT)
+    # template style: no axes/grid — the direct labels carry every value.
+    # Bars fill the lower band; the %-line floats in the top band so its
+    # point labels always sit on the cream surface, never on a dark bar.
+    vmax = max([v for v in vals if v is not None] + [0.0])
+    vmin = min([v for v in vals if v is not None] + [0.0])
+    f.update_yaxes(visible=False, showgrid=False, secondary_y=False,
+                   range=[vmin * 1.25 if vmin < 0 else 0, (vmax * 1.55) or 1.0])
+    ps = [v for v in pct if v is not None] or [0.0]
+    pmin, pmax = min(ps), max(ps)
+    span = (pmax - pmin) or max(abs(pmax), 0.01)
+    f.update_yaxes(visible=False, showgrid=False, secondary_y=True,
+                   range=[pmin - 3.6 * span, pmax + 0.4 * span])
+    f.update_xaxes(showgrid=False)
+    return f
+
+
 def _kpi_row(pairs) -> str:
     cells = "".join(
         f"<div class='kpi'><div class='kpi-label'>{_html.escape(label)}</div>"
@@ -94,10 +170,10 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         f.add_trace(go.Scatter(x=d.price_dates, y=d.price_closes,
                                name="Close", line=dict(color=P.SERIES[0], width=2),
                                fill="tozeroy",
-                               fillcolor="rgba(42,120,214,0.08)"), row=1, col=1)
+                               fillcolor=_rgba(P.SERIES[0], 0.08)), row=1, col=1)
         f.add_trace(go.Scatter(x=d.price_dates, y=d.drawdown, name="Drawdown",
-                               line=dict(color=P.SERIES[5], width=1.6),
-                               fill="tozeroy", fillcolor="rgba(227,73,72,0.08)",
+                               line=dict(color=P.NEGATIVE, width=1.6),
+                               fill="tozeroy", fillcolor=_rgba(P.NEGATIVE, 0.08),
                                hovertemplate="%{y:.1%}<extra>Drawdown</extra>"),
                     row=2, col=1)
         f.update_layout(title=dict(
@@ -108,22 +184,11 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         figs.append(f)
 
     if fy:
-        f = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                          row_heights=[0.65, 0.35], vertical_spacing=0.08)
-        f.add_trace(go.Bar(x=fy, y=d.revenue, name="Revenue",
-                           marker_color=P.SERIES[0],
-                           hovertemplate="%{y:$,.3s}<extra>Revenue</extra>"),
-                    row=1, col=1)
-        f.add_trace(go.Scatter(x=fy, y=d.revenue_yoy, name="YoY growth",
-                               mode="lines+markers",
-                               line=dict(color=P.SERIES[1], width=2),
-                               hovertemplate="%{y:.1%}<extra>YoY</extra>"),
-                    row=2, col=1)
-        f.update_layout(title=dict(text="Revenue & growth", font=dict(size=15)),
-                        height=460, **_LAYOUT)
-        f.update_yaxes(tickformat="$,.3s", row=1, col=1, gridcolor=P.GRIDLINE)
-        f.update_yaxes(tickformat=".0%", row=2, col=1, gridcolor=P.GRIDLINE)
-        figs.append(f)
+        # Revenue / Operating Profit display charts (house template):
+        # value bars + toggleable %-change line, Total Change & CAGR in legend
+        figs.append(_display_chart(fy, d.revenue, "Revenue"))
+        if any(v is not None for v in d.ebit_reported):
+            figs.append(_display_chart(fy, d.ebit_reported, "Operating Profit"))
 
         f = _fig("Margins — gross / operating / net")
         _lines(f, fy, [d.gross_margin, d.operating_margin, d.net_margin],
@@ -139,7 +204,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
 
         f = _fig("Operating accruals & Sloan ratio (flag > |10%|)")
         f.add_trace(go.Bar(x=fy, y=d.accruals_ratio, name="(NI−CFO)/avg assets",
-                           marker_color=[P.SERIES[5] if v and v > 0.10 else P.SERIES[0]
+                           marker_color=[P.NEGATIVE if v and v > 0.10 else P.SERIES[0]
                                          for v in d.accruals_ratio],
                            hovertemplate="%{y:.1%}<extra>Operating accruals</extra>"))
         f.add_trace(go.Scatter(x=fy, y=d.sloan_full, name="Sloan (NI−CFO−CFI)/avg TA",
@@ -186,7 +251,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         if any(z is not None for z in d.altman_z):
             f.add_trace(go.Scatter(x=fy, y=d.altman_z, name="Altman Z",
                                    mode="lines+markers",
-                                   line=dict(color=P.SERIES[2], width=2)))
+                                   line=dict(color=P.SERIES[5], width=2)))
         figs.append(f)
 
         f = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -218,7 +283,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         f.add_trace(go.Bar(
             y=names, x=fvs, orientation="h", name="FV / share",
             marker_color=[P.DELTA_GOOD if v is not None and v >= res.price
-                          else "#d03b3b" for v in fvs],
+                          else P.NEGATIVE for v in fvs],
             hovertemplate="$%{x:,.2f}<extra>%{y}</extra>"))
         f.add_vline(x=res.price, line_color=P.INK_SECONDARY,
                     annotation_text=f"P₀ ${res.price:,.2f}")
@@ -248,7 +313,12 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
 <title>{_html.escape(d.ticker)} — forensic report</title>
 <style>
  body{{font-family:'Segoe UI',system-ui,sans-serif;background:{P.PAGE};
-      color:{P.INK_PRIMARY};margin:0;padding:24px 32px}}
+      color:{P.INK_PRIMARY};margin:0;padding:0 0 24px}}
+ .band{{background:{P.GUI_SIDEBAR_BG};color:{P.GUI_SIDEBAR_FG};
+       padding:20px 32px 16px;border-bottom:4px solid {P.GUI_ACCENT}}}
+ .band .sub{{color:{P.GUI_SIDEBAR_MUTED}}}
+ .band .warn{{color:{P.GUI_ACCENT}}}
+ main{{padding:0 32px}}
  h1{{font-size:22px;margin:0 0 4px}} .sub{{color:{P.INK_SECONDARY};font-size:13px}}
  .warn{{color:{P.DELTA_BAD};font-weight:600;font-size:13px}}
  .kpi-row{{display:flex;gap:28px;margin:18px 0;flex-wrap:wrap}}
@@ -258,6 +328,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         margin:14px 0;padding:6px}}
  .note{{color:{P.INK_MUTED};font-size:11.5px;margin-top:18px}}
 </style></head><body>
+<div class="band">
 <h1>{_html.escape(d.company)}</h1>
 <div class="sub">{_html.escape(d.subtitle)} · generated {d.generated.isoformat()}
  · {d.display_years}-year window · interactive rendition (PDF is the print copy)</div>"""]
@@ -267,6 +338,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
     if d.terminal_risk:
         parts.append(f"<div class='warn' style='margin-top:4px'>Terminal risk (§2.3): "
                      f"{_html.escape(d.terminal_risk)}</div>")
+    parts.append("</div><main>")
     parts.append(_kpi_row(kpis))
     for i, f in enumerate(figs):
         parts.append("<div class='chart'>"
@@ -278,7 +350,7 @@ def build_html(d: DashboardData, path: str, res=None, verdict=None) -> str:
         parts.append(sandbox)
     parts.append("<div class='note'>Sources: SEC EDGAR XBRL (as filed), "
                  "Stooq/Yahoo prices. All values also in the CSV audit trail. "
-                 "Not investment advice.</div></body></html>")
+                 "Not investment advice.</div></main></body></html>")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("".join(parts))
     return path
@@ -390,7 +462,7 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
     el("warn").textContent = warn.join("; ");
     Plotly.react("sandbox-chart", [{{
       type: "bar", orientation: "h", y: ["FV"], x: [fv],
-      marker: {{ color: mos >= 0 ? "{P.DELTA_GOOD}" : "#d03b3b" }},
+      marker: {{ color: mos >= 0 ? "{P.DELTA_GOOD}" : "{P.DELTA_BAD}" }},
       hovertemplate: "$%{{x:,.2f}}<extra>FV</extra>"
     }}], {{
       margin: {{ l: 30, r: 10, t: 8, b: 28 }}, height: 190, width: 380,
