@@ -26,7 +26,7 @@ IR → web; analyst memory never a valuation input).
 | B5–B10 | P0, basic/diluted shares, 52-wk range | AUTO — prices (Stooq/Yahoo) + XBRL share counts. House §8: P0 max 5 trading days stale |
 | B14/B15 | Total debt / cash | AUTO — XBRL (§2c simplification: converts & finance leases not split out — check the debt footnote) |
 | B17/B18 | Minority interest / preferred | AUTO — `MinorityInterest` / `PreferredStockValue` (0 when untagged; confirm in the equity statement) |
-| B19 | Non-operating investments | ANALYST — 10-K investments footnote (equity stakes, at fair value) |
+| B19 | Non-operating investments | ANALYST — 10-K investments footnote (equity stakes, at fair value); the app writes it when entered via Analyst inputs… / `--non-op-investments` |
 | B22/B23 | 10-K / 10-Q filing dates | AUTO — EDGAR submissions API |
 | B24 | Earnings transcript date | ANALYST — company IR page |
 | A27 | Bull thesis | ANALYST — §2.4, entered in Analyst inputs… |
@@ -90,5 +90,7 @@ IR → web; analyst memory never a valuation input).
 ## Not yet in the app (from the master prompt)
 
 - **Sizing (§5.6)** — needs the house R2 bucket table (attach `SKILL_Sizing` + house file)
-- **Verdict ledger (§5.7)** — the SQLite Layer-C port; seed from `verdict_ledger_seed.json`
 - **IBKR live P0/beta** — the app uses free sources; wire IBKR Client Portal for the §1 rung-2 ladder
+
+(The **verdict ledger §5.7** shipped — SQLite store with append-only history;
+`--ledger` / `--ledger-import` / the Watchlist tab.)

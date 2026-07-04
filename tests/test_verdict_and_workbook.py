@@ -95,6 +95,26 @@ def test_render_verdict_page(tmp_path):
     assert len(fig.axes) >= 3
 
 
+def test_shell_has_exactly_133_blue_input_cells():
+    """FIX-8: the shell's 133-blue-cell contract is load-bearing (workbook.py
+    docstring, preflight lint). Guard it so a future shell swap fails loudly."""
+    import openpyxl
+
+    from forensic_viz.workbook import _template_path
+    wb = openpyxl.load_workbook(str(_template_path()))
+    blue = 0
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if c.value is None:
+                    continue
+                col = c.font.color
+                if col is not None and getattr(col, "rgb", None) \
+                        and str(col.rgb).endswith("0000FF"):
+                    blue += 1
+    assert blue == 133
+
+
 def test_workbook_fill_roundtrip(tmp_path, testco_facts):
     import openpyxl
 

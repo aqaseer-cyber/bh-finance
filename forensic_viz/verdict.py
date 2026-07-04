@@ -1,10 +1,18 @@
 """Phase 5 — stress test, dual-track FV average, MoS, and the rating gate.
 
-Mechanics mirror the workbook (Control / Phase5_Verdict tabs) exactly:
+Core mechanics follow the workbook (Control / Phase5_Verdict tabs):
 - FV_avg = average(FV_A, FV_B);  MoS = (FV_avg − P0) / P0     (master §5.2)
-- coherence flag: MoS < −15% AND rating in (Hold, Buy) → CHECK (Control!B67),
-  unless the §4.D optionality is named (the master's one allowed exception)
 - Standard-track stress: −5% shock to FCFF₁ (Phase5_Verdict!B22 default)
+
+Deliberate deviations from the shell (documented per the parity rule):
+- The coherence gate is a SUPERSET of Control!B67: it adds "Strong Buy" to the
+  Hold/Buy set, and adds a named-optionality exception that also requires the
+  §4.D reverse-DCF implied g to exceed the GDP cap (the shell's B67 has no
+  optionality carve-out).
+- Stress is applied to BOTH tracks and averaged (stressed FV_A and FV_B), where
+  the shell's Phase5!B23/B24 stresses Track B only.
+- The reverse-DCF basis feeding the optionality exception is the Track-B ex-SBC
+  base over market EV including the bridge legs, matching Control!B58 (FIX-2).
 
 Dual-track mapping in this app (documented approximation of §4 Track A/B):
 - DCF:   Track A = Bear-case growths on the as-reported FCFF base;

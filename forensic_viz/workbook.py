@@ -193,9 +193,7 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     put("FCFF_DCF", "B43", _mm(capex))
     put("FCFF_DCF", "C43", _mm(capex))
     if res is not None and res.method == "dcf":
-        bear, base = res.cases[0], res.cases[1]  # Bear, Base order guaranteed
-        # growths as entered: parse back from CaseInputs via assumptions is
-        # brittle — the caller passes ValuationInputs through `res._inputs`
+        # growths as entered come through ValuationInputs on `res._inputs`
         inputs = getattr(res, "_inputs", None)
         if inputs is not None:
             put("FCFF_DCF", "B9", inputs.cases["Bear"].g0)

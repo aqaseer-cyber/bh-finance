@@ -136,11 +136,13 @@ automatically with every valuation. Dual-track FVs (Track A = as-reported
 FCFF with Bear growths; Track B = ex-SBC base with Base growths, house §2b),
 **FV_avg = average(A, B)** and MoS exactly as the workbook computes them,
 the track-specific stress (Standard −5% FCFF₁ · Banks −100 bps NIM ·
-Insurance +5 pts CR · REITs +100 bps yield) re-run through the same model,
-and the **rating coherence gate** mirroring Control!B67: MoS < −15% with a
-Hold/Buy rating → CHECK, unless the §4.D optionality is named. The rating
-itself is yours (dialog dropdown / `--rating`); the app never invents one.
-Sizing (§5.6) and the verdict ledger (§5.7) are not yet ported.
+Insurance +5 pts CR · REITs +100 bps yield) re-run through the same model on
+**both** tracks (the shell stresses Track B only), and the **rating coherence
+gate** — a superset of Control!B67: MoS < −15% with a Hold/Buy/Strong-Buy
+rating → CHECK, unless the §4.D optionality is named *and* the reverse-DCF
+implied g exceeds the GDP cap. The rating itself is yours (dialog dropdown /
+`--rating`); the app never invents one. Sizing (§5.6) is not yet ported; the
+verdict ledger (§5.7) shipped (Watchlist tab / `--ledger`).
 
 **Page 4 — intrinsic value, Bear / Base / Bull (master prompt Phase 4):**
 
@@ -162,8 +164,8 @@ default — every value editable in the dialog, and the source + analyst count
 shown. The app returns FV per share and **margin of safety vs the last
 close** for all three cases, drawn as a football field against the price
 line, with the **reverse-DCF sanity frame (§4.D)** printed under the case
-table: what growth the market EV implies on the same base, vs the 3.5% GDP
-cap.
+table. The implied g is computed on the **Track-B ex-SBC base over market EV
+including the bridge legs, mirroring Control!B58/B57** — vs the 3.5% GDP cap.
 
 **The discount rate auto-builds (master §4.0)** and pre-fills the dialog
 (editable): live **10-Y UST** from FRED's keyless CSV (Stooq's 10-year yield
@@ -175,15 +177,19 @@ rate-build audit line; every missing leg degrades to a labeled ASSUMPTION and
 the analyst can always override the final number.
 
 For the DCF the base is **true FCFF** — levered FCF (CFO − capex) plus
-after-tax interest (§4.0), so discounting at WACC and bridging by net debt is
+after-tax interest (§4.0), so discounting at WACC and the net-debt bridge are
 internally consistent; with no interest-expense tag it falls back to levered
 FCF and says so. Guardrails: terminal g capped at 3.5% (warned), discount rate
 must exceed terminal g (hard error), TV-share-of-EV flagged when dominant,
-stale price (> 5 trading days) warned (house §8). The **equity bridge is
-simplified** — net debt = total debt − cash, no minority-interest / preferred /
-non-operating legs yet — and this is stated on the page. In the GUI, percent
-fields are entered in **percent** (`9` = 9%, `160` = 160%); on the CLI,
-`--wacc`/`--bear`/… take **fractions** (`0.09`).
+stale price (> 5 trading days) warned (house §8). The **equity bridge** is
+`net debt + minority interest + preferred − non-operating investments`
+(FCFF_DCF!B31): MI and preferred come from XBRL automatically (0 when untagged,
+with a note), and non-operating investments are analyst input via the Analyst
+inputs… dialog or `--non-op-investments`. Remaining simplifications, stated on
+the page: converts and finance leases are not split out of total debt, and
+pensions are not modeled. In the GUI, percent fields are entered in **percent**
+(`9` = 9%, `160` = 160%); on the CLI, `--wacc`/`--bear`/… take **fractions**
+(`0.09`).
 
 The **CSV export** is the table-view twin of the chart: every plotted value,
 plus fiscal year-end dates, plus the exact XBRL tag used for each concept —
@@ -239,7 +245,7 @@ Cached responses live in `%LOCALAPPDATA%\ForensicStockViz\cache`
 
 ```bash
 pip install -r requirements.txt pytest
-python -m pytest tests/          # 25 tests: parsing, metrics, prices, rendering
+python -m pytest tests/          # full offline suite; must pass 100%
 python -m forensic_viz AAPL --years 5 --html   # cached after the first run
 ```
 
