@@ -1,0 +1,18 @@
+# House assumptions — EXAMPLE (values here are the code defaults).
+#
+# Copy to house_assumptions.toml and set your firm's numbers; that file is
+# gitignored and never committed. When present, these override the app's
+# ASSUMPTION defaults and the report labels flip "ASSUMPTION" -> "house".
+# Point at a specific file with the HOUSE_ASSUMPTIONS_FILE env var.
+
+erp = 0.046                 # equity risk premium (Damodaran implied ERP)
+debt_spread = 0.015         # r_d fallback spread over r_f (no interest tag)
+gdp_cap = 0.035             # terminal-growth GDP cap (master §4.A/4.D)
+rnd_life_years = 5          # straight-line R&D capitalization life n (§3.2)
+rnd_materiality = 0.05      # R&D/revenue threshold for the capitalization audit
+sloan_flag = 0.10           # |Sloan ratio| flag threshold (§3.3)
+beta_window_years = 5       # beta regression window (fixed, not the display trim)
+standard_fcff_shock = -0.05 # Phase-5 Standard stress (Phase5_Verdict!B22)
+bank_nim_shock = -0.01      # Phase-5 Banks stress: −100 bps NIM
+insurance_cr_shock = 0.05   # Phase-5 Insurance stress: +5 pts combined ratio
+reit_yield_shock = 0.01     # Phase-5 REIT stress: +100 bps target AFFO yield

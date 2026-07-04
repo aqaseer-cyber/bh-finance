@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from . import config
 from .metrics import DashboardData, fmt_pct
 from .valuation import (
     CASE_NAMES, ValuationInputs, ValuationResult, dcf_fcff, residual_income,
@@ -32,10 +33,11 @@ from .valuation import (
 
 RATINGS = ("", "Strong Buy", "Buy", "Hold", "Sell")
 COHERENCE_MOS = -0.15  # Control!B67 threshold
-STANDARD_FCFF_SHOCK = -0.05      # Phase5_Verdict!B22
-BANK_NIM_SHOCK = -0.01           # master §5.1
-INSURANCE_CR_SHOCK = 0.05
-REIT_YIELD_SHOCK = 0.01
+# House-overridable stress shocks (FIX-7); names kept for back-compat.
+STANDARD_FCFF_SHOCK = config.STANDARD_FCFF_SHOCK  # Phase5_Verdict!B22
+BANK_NIM_SHOCK = config.BANK_NIM_SHOCK            # master §5.1
+INSURANCE_CR_SHOCK = config.INSURANCE_CR_SHOCK
+REIT_YIELD_SHOCK = config.REIT_YIELD_SHOCK
 
 
 @dataclass
@@ -192,7 +194,7 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
         v.coherence_detail = "FV_avg unavailable — see notes"
     elif mos < COHERENCE_MOS and v.rating in ("Hold", "Buy", "Strong Buy"):
         named = bool(v.optionality)
-        over_cap = res.implied_g is not None and res.implied_g > 0.035
+        over_cap = res.implied_g is not None and res.implied_g > config.GDP_CAP
         if named and over_cap:
             v.coherence = "ok (optionality named)"
             v.coherence_detail = (f"MoS {fmt_pct(mos)} vs '{v.rating}' is carried by "

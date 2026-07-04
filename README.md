@@ -189,6 +189,14 @@ The **CSV export** is the table-view twin of the chart: every plotted value,
 plus fiscal year-end dates, plus the exact XBRL tag used for each concept —
 the audit trail for tying numbers back to the filings.
 
+## House assumptions file
+
+ERP, the GDP cap, R&D life, and the Phase-5 stress shocks default to labeled
+ASSUMPTIONs. To use your firm's numbers, copy `house_assumptions.example.toml`
+to `house_assumptions.toml` (gitignored — real values are never committed) and
+edit it, or point `HOUSE_ASSUMPTIONS_FILE` at a file elsewhere. When a house
+file loads, the report labels flip from "ASSUMPTION" to "house".
+
 ## Data sources & methodology
 
 - **Fundamentals** — SEC EDGAR XBRL `companyfacts` API. Annual (10-K family)

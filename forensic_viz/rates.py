@@ -63,7 +63,8 @@ class WaccBuild:
             parts.append(f"r_f {fmt_pct(self.r_f)} ({src})")
         if self.beta is not None:
             parts.append(f"β {self.beta:.2f} (Blume, raw {self.beta_raw:.2f})")
-        parts.append(f"ERP {fmt_pct(self.erp)} (ASSUMPTION)")
+        parts.append(f"ERP {fmt_pct(self.erp)} "
+                     f"({'house' if config.HOUSE_LOADED else 'ASSUMPTION'})")
         if self.r_e is not None:
             parts.append(f"r_e {fmt_pct(self.r_e)}")
         if self.wacc is not None:
@@ -216,6 +217,8 @@ def build_wacc(d: DashboardData, cache: Optional[Cache] = None,
     """
     b = WaccBuild()
     cache = cache or Cache()
+    if config.HOUSE_LOADED:
+        b.notes.append(f"house assumptions loaded from {config.HOUSE_PATH}")
     beta_dates = price_dates if price_dates is not None else d.price_dates
     beta_closes = price_closes if price_closes is not None else d.price_closes
 
@@ -233,8 +236,9 @@ def build_wacc(d: DashboardData, cache: Optional[Cache] = None,
         b.beta = blume_adjust(raw)
         b.notes.append("β: Blume-adjusted regression vs S&P 500 (bottom-up "
                        "relevered preferred but sector table not available)")
+        label = "house" if config.HOUSE_LOADED else "ASSUMPTION"
         b.notes.append(
-            f"β window {config.BETA_WINDOW_YEARS}y weekly (ASSUMPTION; house "
+            f"β window {config.BETA_WINDOW_YEARS}y weekly ({label}; house "
             "prefers bottom-up relevered)")
     else:
         b.beta_raw, b.beta = None, 1.0

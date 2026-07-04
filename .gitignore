@@ -13,3 +13,6 @@ dist/
 *_interactive_*.html
 *_fundamentals.csv
 *_prices.csv
+
+# house assumptions (real values never committed; ship the .example only)
+house_assumptions.toml

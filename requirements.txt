@@ -3,3 +3,4 @@ matplotlib>=3.7
 openpyxl>=3.1
 pypdf>=4
 plotly>=5.18
+tomli>=2; python_version < "3.11"

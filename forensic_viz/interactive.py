@@ -9,6 +9,7 @@ from __future__ import annotations
 import html as _html
 from typing import List, Optional
 
+from . import config
 from . import palette as P
 from .metrics import DashboardData, fmt_money, fmt_pct
 
@@ -352,7 +353,7 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
 <script>
 (function() {{
   const SHARES={shares:.6g}, PRICE={d.last_close:.6g}, BRIDGE={bridge:.6g},
-        BASE_A={base_a:.6g}, SBC={sbc:.6g}, CAP=0.035;
+        BASE_A={base_a:.6g}, SBC={sbc:.6g}, CAP={config.GDP_CAP:.6g};
   const el = id => document.getElementById(id);
 {SANDBOX_DCF_JS}
   function fmtPct(x) {{ return (x >= 0 ? "+" : "") + (100 * x).toFixed(1) + "%"; }}

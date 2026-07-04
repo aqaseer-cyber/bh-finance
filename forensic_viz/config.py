@@ -24,14 +24,59 @@ FETCH_YEARS = DISPLAY_YEARS + 1
 
 PRICE_YEARS = 10
 
-# Phase-3 health-check defaults. house_assumptions.md is not part of this
-# export, so these are labeled ASSUMPTIONs (shown on the report) until the
-# house file is provided.
-RND_LIFE_YEARS = 5          # straight-line R&D capitalization life (n)
-RND_MATERIALITY = 0.05      # capitalize only if avg R&D/revenue exceeds this
-SLOAN_FLAG = 0.10           # |Sloan| flag threshold (master prompt §3.3)
-ALTMAN_DISTRESS = 1.81      # Altman Z zone boundaries (original 1968 model)
-ALTMAN_SAFE = 2.99
+def _load_house() -> dict:
+    """Load house_assumptions.toml if present (env override, cwd, or repo root).
+
+    Real house values are never committed — only house_assumptions.example.toml
+    (with the code defaults) ships. When a file is found, its keys override the
+    ASSUMPTION defaults below and the report labels flip ASSUMPTION -> house.
+    """
+    import pathlib
+
+    cands = []
+    env = os.environ.get("HOUSE_ASSUMPTIONS_FILE")
+    if env:
+        cands.append(pathlib.Path(env))
+    cands += [pathlib.Path.cwd() / "house_assumptions.toml",
+              pathlib.Path(__file__).resolve().parent.parent / "house_assumptions.toml"]
+    for c in cands:
+        try:
+            if c.is_file():
+                try:
+                    import tomllib
+                except ModuleNotFoundError:
+                    import tomli as tomllib  # py3.10
+                with open(c, "rb") as fh:
+                    out = dict(tomllib.load(fh))
+                out["_path"] = str(c)
+                return out
+        except Exception:
+            continue
+    return {}
+
+
+_HOUSE = _load_house()
+HOUSE_LOADED = bool(_HOUSE)
+HOUSE_PATH = _HOUSE.get("_path", "")
+
+# Phase-3 health-check defaults + discount-rate/stress ASSUMPTIONs. Overridable
+# via house_assumptions.toml (FIX-7); labeled on the report as ASSUMPTION when
+# no house file is loaded, "house" when one is.
+ERP_ASSUMPTION          = float(_HOUSE.get("erp", 0.046))
+DEBT_SPREAD_ASSUMPTION  = float(_HOUSE.get("debt_spread", 0.015))
+GDP_CAP                 = float(_HOUSE.get("gdp_cap", 0.035))
+RND_LIFE_YEARS          = int(_HOUSE.get("rnd_life_years", 5))
+RND_MATERIALITY         = float(_HOUSE.get("rnd_materiality", 0.05))
+SLOAN_FLAG              = float(_HOUSE.get("sloan_flag", 0.10))
+BETA_WINDOW_YEARS       = int(_HOUSE.get("beta_window_years", 5))
+STANDARD_FCFF_SHOCK     = float(_HOUSE.get("standard_fcff_shock", -0.05))
+BANK_NIM_SHOCK          = float(_HOUSE.get("bank_nim_shock", -0.01))
+INSURANCE_CR_SHOCK      = float(_HOUSE.get("insurance_cr_shock", 0.05))
+REIT_YIELD_SHOCK        = float(_HOUSE.get("reit_yield_shock", 0.01))
+
+ALTMAN_DISTRESS = 1.81      # Altman Z zone boundaries (original 1968 model —
+ALTMAN_SAFE = 2.99          # a fixed academic constant, not a house parameter)
+BETA_MIN_OBS = 40           # minimum weekly observations for the regression
 
 HTTP_TIMEOUT = 30  # seconds per request
 HTTP_RETRIES = 3
@@ -43,16 +88,6 @@ TTL_SUBMISSIONS = 7 * 86400
 TTL_COMPANYFACTS = 86400
 TTL_PRICES = 6 * 3600
 TTL_RATES = 12 * 3600
-
-# Discount-rate build (master §4.0) — labeled ASSUMPTIONs until the house
-# assumptions file is attached.
-ERP_ASSUMPTION = 0.046        # Damodaran-style implied equity risk premium
-DEBT_SPREAD_ASSUMPTION = 0.015  # r_d fallback spread over r_f
-BETA_MIN_OBS = 40             # minimum weekly observations for the regression
-BETA_WINDOW_YEARS = 5         # beta regression window — fixed, independent of
-                              # the --years display trim (a chart parameter must
-                              # never move intrinsic value)
-
 
 def cache_dir() -> Path:
     """Per-user cache directory (LOCALAPPDATA on Windows, ~/.cache elsewhere)."""

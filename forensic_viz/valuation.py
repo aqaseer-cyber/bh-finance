@@ -26,10 +26,11 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from . import config
 from .metrics import DashboardData, fmt_money, fmt_pct
 
 HORIZON = 10
-GDP_CAP = 0.035
+GDP_CAP = config.GDP_CAP  # house-overridable (FIX-7); tests import this name
 HIGH_TV_SHARE = 0.75
 PRICE_STALENESS_DAYS = 7  # ~5 trading days, house §8
 
