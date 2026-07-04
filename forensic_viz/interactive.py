@@ -12,6 +12,25 @@ from typing import List, Optional
 from . import palette as P
 from .metrics import DashboardData, fmt_money, fmt_pct
 
+# The sandbox's DCF engine — a line-for-line JS replica of valuation.dcf_fcff
+# (§4.A: 10-year linear fade, Gordon TV). Extracted so a test can execute it in
+# a JS engine and assert numeric parity against the Python model. Plain string
+# (single braces): interpolated into the sandbox <script> via {SANDBOX_DCF_JS}.
+SANDBOX_DCF_JS = """
+  function dcf(base, wacc, g0, g) {
+    if (wacc <= g) return null;
+    let f = base, pv = 0;
+    for (let i = 1; i <= 10; i++) {
+      const gi = g0 + (g - g0) * (i - 1) / 9;
+      f *= 1 + gi;
+      pv += f / Math.pow(1 + wacc, i);
+    }
+    const tv = f * (1 + g) / (wacc - g);
+    return { ev: pv + tv / Math.pow(1 + wacc, 10),
+             tvShare: (tv / Math.pow(1 + wacc, 10)) / (pv + tv / Math.pow(1 + wacc, 10)) };
+  }
+"""
+
 _LAYOUT = dict(
     template="plotly_white",
     font=dict(family="Segoe UI, system-ui, sans-serif", size=12,
@@ -335,18 +354,7 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
   const SHARES={shares:.6g}, PRICE={d.last_close:.6g}, BRIDGE={bridge:.6g},
         BASE_A={base_a:.6g}, SBC={sbc:.6g}, CAP=0.035;
   const el = id => document.getElementById(id);
-  function dcf(base, wacc, g0, g) {{
-    if (wacc <= g) return null;
-    let f = base, pv = 0;
-    for (let i = 1; i <= 10; i++) {{
-      const gi = g0 + (g - g0) * (i - 1) / 9;
-      f *= 1 + gi;
-      pv += f / Math.pow(1 + wacc, i);
-    }}
-    const tv = f * (1 + g) / (wacc - g);
-    return {{ ev: pv + tv / Math.pow(1 + wacc, 10),
-              tvShare: (tv / Math.pow(1 + wacc, 10)) / (pv + tv / Math.pow(1 + wacc, 10)) }};
-  }}
+{SANDBOX_DCF_JS}
   function fmtPct(x) {{ return (x >= 0 ? "+" : "") + (100 * x).toFixed(1) + "%"; }}
   function update() {{
     const wacc = +el("wacc").value / 100, g0 = +el("g0").value / 100,

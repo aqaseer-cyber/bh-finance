@@ -48,8 +48,9 @@ every chart (color follows the entity).
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
 FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g
 recompute instantly in the browser — a JS replica of the §4.A engine,
-parity-tested against the Python model, which remains the audited record for
-every export.
+numerically parity-tested against the Python model
+(`tests/test_sandbox_parity.py`, 200-point grid, 1e-9), which remains the
+audited record for every export.
 
 Command line (same launcher):
 
