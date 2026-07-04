@@ -97,7 +97,9 @@ class ValuationResult:
     shares: float
     cases: List[CaseResult]
     implied_g: Optional[float] = None            # §4.D reverse DCF
+    implied_g_basis: str = ""
     market_ev: Optional[float] = None
+    bridge: Optional[float] = None               # net debt + MI + pref − non-op
     rate_build: str = ""                         # §4.0 build audit string
     warnings: List[str] = field(default_factory=list)
     _inputs: Optional[ValuationInputs] = field(default=None, repr=False)
@@ -267,9 +269,34 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
                             "not true FCFF; FV is conservative for a leveraged firm")
         if net_debt is None:
             warnings.append("net debt unavailable — equity bridge assumes 0 (check XBRL tags)")
-        market_ev = price * shares + (net_debt or 0.0)
+        # Full equity bridge, mirroring FCFF_DCF!B31 / Control!B57:
+        # EV − net debt − minority interest − preferred + non-op investments
+        mi = _latest(d.minority_interest) or 0.0
+        pref = _latest(d.preferred_equity) or 0.0
+        nonop = d.non_op_investments or 0.0
+        bridge = (net_debt or 0.0) + mi + pref - nonop
+        result.bridge = bridge
+        if mi or pref:
+            warnings.append(f"equity bridge includes MI {fmt_money(mi)} / "
+                            f"preferred {fmt_money(pref)} (Phase1_Anchor B17/B18)")
+        if d.non_op_investments is None:
+            warnings.append("non-operating investments not entered — bridge "
+                            "assumes 0 (Phase1_Anchor!B19, analyst input)")
+        market_ev = price * shares + bridge
         result.market_ev = market_ev
-        result.implied_g = reverse_dcf_implied_g(base, rate, market_ev)
+        # Reverse-DCF basis is Track B ex-SBC, mirroring Control!B58 (which
+        # divides FCFF_DCF!C5 — the ex-SBC base — by the full market EV)
+        sbc_latest = _latest(d.sbc) or 0.0
+        base_b = base if inputs.ex_sbc else base - sbc_latest
+        if base_b > 0:
+            result.implied_g = reverse_dcf_implied_g(base_b, rate, market_ev)
+            result.implied_g_basis = ("Track B ex-SBC base / market EV incl. "
+                                      "MI+pref−non-op (Control!B58)")
+        else:
+            result.implied_g = None
+            warnings.append("ex-SBC base non-positive — reverse-DCF frame "
+                            "(Control!B58 basis) unavailable; normalize per "
+                            "house §2b")
         if result.implied_g is not None and result.implied_g > GDP_CAP:
             warnings.append(
                 f"reverse-DCF implied g {fmt_pct(result.implied_g)} exceeds the "
@@ -279,7 +306,7 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
             c = inputs.cases[name]
             g0, g_term = _require(c.g0, f"{name} g0"), _require(c.g_term, f"{name} terminal g")
             out = dcf_fcff(base, rate, g0, g_term)
-            equity = out["ev"] - (net_debt or 0.0)
+            equity = out["ev"] - bridge
             fv = equity / shares
             cw = _case_warnings(g_term)
             if out["tv_share"] and out["tv_share"] > HIGH_TV_SHARE:

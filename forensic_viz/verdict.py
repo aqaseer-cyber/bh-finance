@@ -66,9 +66,9 @@ def _latest(seq):
 
 
 def _dcf_fv(base: float, rate: float, g0: float, g_term: float,
-            net_debt: float, shares: float) -> float:
+            bridge: float, shares: float) -> float:
     out = dcf_fcff(base, rate, g0, g_term)
-    return (out["ev"] - net_debt) / shares
+    return (out["ev"] - bridge) / shares
 
 
 def _ri_fv(bv0: float, rate: float, roe: float, g0: float, g_term: float,
@@ -84,7 +84,9 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
     method = inputs.method
     bear, base = inputs.cases["Bear"], inputs.cases["Base"]
     rate = res.discount_rate
-    net_debt = res.net_debt or 0.0
+    # Full equity bridge from the valuation (FIX-2); net-debt-only fallback
+    # covers results built before the bridge existed.
+    bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
     shares = res.shares
     notes: List[str] = []
     tau = d.effective_tax_rate if d.effective_tax_rate is not None else 0.21
@@ -104,15 +106,15 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
         track_b_label = "Track B — ex-SBC FCFF (house §2b), Base growths"
         shock_label = f"FCFF shock {fmt_pct(STANDARD_FCFF_SHOCK, signed=True)} (§5.1 Standard)"
         if base_a is not None and base_a > 0:
-            fv_a = _dcf_fv(base_a, rate, bear.g0, bear.g_term, net_debt, shares)
+            fv_a = _dcf_fv(base_a, rate, bear.g0, bear.g_term, bridge, shares)
             s_a = _dcf_fv(base_a * (1 + STANDARD_FCFF_SHOCK), rate,
-                          bear.g0, bear.g_term, net_debt, shares)
+                          bear.g0, bear.g_term, bridge, shares)
         else:
             notes.append("Track A base unavailable — as-reported FCFF missing")
         if base_b is not None and base_b > 0:
-            fv_b = _dcf_fv(base_b, rate, base.g0, base.g_term, net_debt, shares)
+            fv_b = _dcf_fv(base_b, rate, base.g0, base.g_term, bridge, shares)
             s_b = _dcf_fv(base_b * (1 + STANDARD_FCFF_SHOCK), rate,
-                          base.g0, base.g_term, net_debt, shares)
+                          base.g0, base.g_term, bridge, shares)
         else:
             notes.append("Track B ex-SBC base non-positive — SBC exceeds FCFF; "
                          "normalize manually (house §2b)")

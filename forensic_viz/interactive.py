@@ -282,8 +282,14 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
         return ""  # DCF sandbox only where an FCFF base exists
     sbc = _latest(d.sbc) or 0.0
     base_b = max(base_a - sbc, 0.0)
-    debt, cash = _latest(d.total_debt), _latest(d.cash)
-    net_debt = (debt or 0.0) - (cash or 0.0)
+    if res is not None and res.bridge is not None:
+        bridge = res.bridge  # audited bridge from the valuation run
+    else:  # recompute: net debt + MI + pref − non-op (FCFF_DCF!B31 legs)
+        debt, cash = _latest(d.total_debt), _latest(d.cash)
+        bridge = ((debt or 0.0) - (cash or 0.0)
+                  + (_latest(d.minority_interest) or 0.0)
+                  + (_latest(d.preferred_equity) or 0.0)
+                  - (d.non_op_investments or 0.0))
     build = getattr(d, "wacc_build", None)
     wacc0 = build.wacc if build is not None and build.wacc else 0.09
     est = d.analyst_estimates or {}
@@ -300,8 +306,8 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
 <h2 style="font-size:16px;margin:0 0 2px">Valuation sandbox — live DCF (§4.A)</h2>
 <div class="sub">Drag to test rates; the app's valuation page and exports stay
  the audited record. FCFF 2-stage, 10-year linear fade; equity bridge
- net debt = ${net_debt / 1e6:,.0f}mm; {shares / 1e6:,.1f}mm diluted shares;
- P₀ ${d.last_close:,.2f}.</div>
+ (net debt + MI + pref − non-op) = ${bridge / 1e6:,.0f}mm;
+ {shares / 1e6:,.1f}mm diluted shares; P₀ ${d.last_close:,.2f}.</div>
 <div style="display:flex;gap:36px;flex-wrap:wrap;margin-top:12px">
  <div style="min-width:330px">
   <label>WACC <b id="waccv"></b></label><br>
@@ -326,7 +332,7 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
 </div>
 <script>
 (function() {{
-  const SHARES={shares:.6g}, PRICE={d.last_close:.6g}, NET_DEBT={net_debt:.6g},
+  const SHARES={shares:.6g}, PRICE={d.last_close:.6g}, BRIDGE={bridge:.6g},
         BASE_A={base_a:.6g}, SBC={sbc:.6g}, CAP=0.035;
   const el = id => document.getElementById(id);
   function dcf(base, wacc, g0, g) {{
@@ -360,15 +366,18 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
                                           "base FCFF must be positive";
       return;
     }}
-    const equity = out.ev - NET_DEBT, fv = equity / SHARES,
-          mos = fv / PRICE - 1,
-          impliedG = wacc - base / (PRICE * SHARES + NET_DEBT);
+    const equity = out.ev - BRIDGE, fv = equity / SHARES,
+          mos = fv / PRICE - 1;
+    // reverse DCF on the Track-B ex-SBC base over full market EV (Control!B58)
+    const baseB = el("exsbc").checked ? base : Math.max(base - SBC, 0);
+    const impliedG = baseB > 0 ? wacc - baseB / (PRICE * SHARES + BRIDGE) : null;
     el("fv").textContent = "$" + fv.toFixed(2);
     el("mos").textContent = fmtPct(mos) + " MoS vs P\\u2080";
     el("mos").style.color = mos >= 0 ? "{P.DELTA_GOOD}" : "{P.DELTA_BAD}";
     el("detail").textContent = "EV $" + (out.ev / 1e9).toFixed(1) + "B \\u00b7 TV " +
       (100 * out.tvShare).toFixed(0) + "% of EV \\u00b7 reverse-DCF implied g " +
-      fmtPct(impliedG) + (impliedG > CAP ? " (market pays for optionality, \\u00a74.D)" : "");
+      (impliedG === null ? "n/a (ex-SBC base \\u2264 0)" :
+        fmtPct(impliedG) + (impliedG > CAP ? " (market pays for optionality, \\u00a74.D)" : ""));
     el("warn").textContent = warn.join("; ");
     Plotly.react("sandbox-chart", [{{
       type: "bar", orientation: "h", y: ["FV"], x: [fv],

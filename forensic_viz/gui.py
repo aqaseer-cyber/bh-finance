@@ -818,8 +818,17 @@ class _AnalystInputsDialog(tk.Toplevel):
         self.risk_txt.grid(row=5, column=0, sticky="w", pady=(0, 10))
         self.risk_txt.insert("1.0", data.terminal_risk)
 
+        ttk.Label(top, text="Non-operating investments, $ (equity bridge, "
+                            "Phase1_Anchor!B19 — equity stakes at fair value):").grid(
+            row=6, column=0, sticky="w", pady=(0, 2))
+        self.nonop_var = tk.StringVar(
+            value="" if data.non_op_investments is None
+            else f"{data.non_op_investments:.0f}")
+        ttk.Entry(top, textvariable=self.nonop_var, width=24).grid(
+            row=7, column=0, sticky="w", pady=(0, 10))
+
         btns = ttk.Frame(top)
-        btns.grid(row=6, column=0, sticky="e")
+        btns.grid(row=8, column=0, sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(btns, text="Apply", command=self._apply).pack(
             side=tk.RIGHT, padx=(0, 8))
@@ -835,9 +844,19 @@ class _AnalystInputsDialog(tk.Toplevel):
             messagebox.showerror("Check the inputs",
                                  f"Adjusted net income: {exc}", parent=self)
             return
+        nonop_raw = self.nonop_var.get().strip().replace(",", "")
+        try:
+            nonop = float(nonop_raw) if nonop_raw else None
+            if nonop is not None and not math.isfinite(nonop):
+                raise ValueError("must be finite")
+        except ValueError as exc:
+            messagebox.showerror("Check the inputs",
+                                 f"Non-op investments: {exc}", parent=self)
+            return
         set_adjusted_ni(self.data, adjusted)
         self.data.thesis = self.thesis_txt.get("1.0", "end").strip()
         self.data.terminal_risk = self.risk_txt.get("1.0", "end").strip()
+        self.data.non_op_investments = nonop
         try:
             self.on_done()
         except Exception:

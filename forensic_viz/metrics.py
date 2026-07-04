@@ -133,6 +133,7 @@ class DashboardData:
     # Phase-2 analyst inputs (§2.3/§2.4): judgment, printed on the report
     thesis: str = ""
     terminal_risk: str = ""
+    non_op_investments: Optional[float] = None  # Phase1_Anchor!B19, analyst ($)
 
     # Workbook ties & bridge legs (Control / Phase1_Anchor tabs)
     eps_diluted: List[Optional[float]] = field(default_factory=list)

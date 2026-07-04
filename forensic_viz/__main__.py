@@ -126,6 +126,9 @@ def main(argv=None) -> int:
                         help="investment thesis (§2.4), printed on the unit-economics page")
     parser.add_argument("--terminal-risk",
                         help="terminal risk (§2.3, cite Item 1A); anchors the Phase-5 rating")
+    parser.add_argument("--non-op-investments", type=float, metavar="DOLLARS",
+                        help="non-operating investments for the equity bridge "
+                             "(Phase1_Anchor!B19, analyst input; $ not $mm)")
 
     val = parser.add_argument_group("intrinsic value (Bear/Base/Bull)")
     val.add_argument("--value", choices=["dcf", "ri", "affo", "manual"],
@@ -222,6 +225,8 @@ def main(argv=None) -> int:
         data.thesis = args.thesis
     if args.terminal_risk:
         data.terminal_risk = args.terminal_risk
+    if args.non_op_investments is not None:
+        data.non_op_investments = args.non_op_investments
 
     from .dashboard import (
         render_dashboard, render_health_report, render_unit_economics,

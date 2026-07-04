@@ -122,6 +122,8 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     put("Phase1_Anchor", "B15", _mm(_latest(d.cash)))
     put("Phase1_Anchor", "B17", _mm(_latest(d.minority_interest)) or 0)
     put("Phase1_Anchor", "B18", _mm(_latest(d.preferred_equity)) or 0)
+    if d.non_op_investments is not None:
+        put("Phase1_Anchor", "B19", _mm(d.non_op_investments))
     if d.latest_10k_date:
         put("Phase1_Anchor", "B22", f"10-K — filed {d.latest_10k_date}")
     if d.latest_10q_date:
@@ -254,5 +256,10 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     for (sheet, cell), value in writes.items():
         wb[sheet][cell] = value
     wb.save(out_path)
+    # drop analyst rows the app has now filled (only B19 is conditional today)
+    b19_written = ("Phase1_Anchor", "B19") in writes
+    remaining = [row for row in ANALYST_CELLS
+                 if not (b19_written and row[0] == "Phase1_Anchor"
+                         and row[1] == "B19")]
     return FillReport(filled=len(writes), out_path=out_path,
-                      analyst_cells=list(ANALYST_CELLS))
+                      analyst_cells=remaining)
