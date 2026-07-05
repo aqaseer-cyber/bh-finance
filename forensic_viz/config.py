@@ -97,12 +97,16 @@ TTL_COMPANYFACTS = 86400
 TTL_PRICES = 6 * 3600
 TTL_RATES = 12 * 3600
 
-# FIX-10: segment-history fetch (house-overridable keys land in FIX-10e;
+# FIX-10: segment history — house-overridable (FIX-10e;
 # TTL_FILING_INSTANCE is defined once above, at FIX-13d)
-SEGMENT_HISTORY_YEARS = 10
-SEGMENT_MAX_INSTANCE_MB = 40  # parse cost on mega-cap instances is real
-SEGMENT_TIE_TOL = 0.02        # Σ members vs consolidated tie tolerance
-SEGMENT_ALIASES: dict = {}    # ticker -> {old member label: canonical label}
+SEGMENT_HISTORY_YEARS   = int(_HOUSE.get("segment_history_years", 10))
+SEGMENT_TIE_TOL         = float(_HOUSE.get("segment_tie_tol", 0.02))
+SEGMENT_MAX_INSTANCE_MB = float(_HOUSE.get("segment_max_instance_mb", 40))
+# ticker -> {old member label: canonical label}; analyst-declared identity
+# across a segment recast — never fuzzy-matched
+SEGMENT_ALIASES = {
+    str(t).upper(): {str(k): str(v) for k, v in (m or {}).items()}
+    for t, m in (_HOUSE.get("segment_aliases", {}) or {}).items()}
 
 def cache_dir() -> Path:
     """Per-user cache directory (LOCALAPPDATA on Windows, ~/.cache elsewhere)."""

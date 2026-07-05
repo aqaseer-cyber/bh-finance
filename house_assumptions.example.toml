@@ -19,3 +19,10 @@ reit_yield_shock = 0.01     # Phase-5 REIT stress: +100 bps target AFFO yield
 
 # ---- FIX-11: income-statement basis coherence --------------------------
 # is_tie_tol = 0.02   # Revenue ≈ GrossProfit + CostOfRevenue tolerance
+
+# ---- FIX-10: segment history ------------------------------------------
+# segment_history_years = 10     # 10-K instances fetched for segment lines
+# segment_tie_tol = 0.02         # Σ members vs consolidated tie tolerance
+# segment_max_instance_mb = 40   # skip oversized filing instances
+# [segment_aliases.MELI]
+# "Marketplace" = "Commerce"     # analyst-declared identity across a recast

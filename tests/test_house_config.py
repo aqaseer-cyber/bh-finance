@@ -58,3 +58,28 @@ def test_is_tie_tol_house_override(tmp_path, monkeypatch):
     finally:
         monkeypatch.delenv("HOUSE_ASSUMPTIONS_FILE")
         importlib.reload(cfg)
+
+
+def test_segment_alias_table_round_trips(tmp_path, monkeypatch):
+    """FIX-10e: a [segment_aliases.<TICKER>] table loads into the nested
+    {TICKER: {old: canonical}} shape config expects."""
+    p = tmp_path / "house.toml"
+    p.write_text(
+        "segment_history_years = 7\n"
+        "segment_tie_tol = 0.03\n"
+        "[segment_aliases.meli]\n"
+        '"Marketplace" = "Commerce"\n'
+        '"Mercado Pago" = "Fintech"\n',
+        encoding="utf-8")
+    monkeypatch.setenv("HOUSE_ASSUMPTIONS_FILE", str(p))
+    import importlib
+    from forensic_viz import config as cfg
+    importlib.reload(cfg)
+    try:
+        assert cfg.SEGMENT_HISTORY_YEARS == 7
+        assert cfg.SEGMENT_TIE_TOL == 0.03
+        assert cfg.SEGMENT_ALIASES == {
+            "MELI": {"Marketplace": "Commerce", "Mercado Pago": "Fintech"}}
+    finally:
+        monkeypatch.delenv("HOUSE_ASSUMPTIONS_FILE")
+        importlib.reload(cfg)
