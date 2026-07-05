@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from . import config
 from .metrics import DashboardData
 
 def _template_path() -> Path:
@@ -85,6 +86,18 @@ def _latest(seq):
     return None
 
 
+def _consolidated_at(d, span_end):
+    """Consolidated revenue at the fiscal year matching a segment span.
+
+    Returns (total, aligned): aligned=False means no fiscal year matched
+    within 7 days and the latest FY was used as a fallback.
+    """
+    for fe, v in zip(d.fy_ends or [], d.revenue or []):
+        if v is not None and abs((fe - span_end).days) <= 7:
+            return v, True
+    return _latest(d.revenue), False
+
+
 def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
                   template: Optional[str] = None) -> FillReport:
     import openpyxl
@@ -137,47 +150,74 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     # Revenue architecture (§2.1) from as-filed segment disclosures: top-2
     # segments into B5/B6, remainder into B7 (B8 sums back to total). The
     # blue cells get the values; the segment names ride as cell comments.
-    # TIE-OUT GATE: Σ(members) is checked against consolidated revenue —
-    # XBRL axes routinely carry hierarchical members (a parent "Commerce"
-    # plus its child "Commerce Services"), and picking top-2 by size would
-    # double-count while the B8 sum still ties. Σ above total ⇒ skip.
+    # TIE-OUT GATE (FIX-10d: on the last COMMON fiscal-year span): XBRL
+    # axes routinely carry hierarchical members (parent "Commerce" plus its
+    # child "Commerce Services") — top-2 by size would double-count while
+    # B8 still ties; and with N years of history, retired members would
+    # otherwise mix fiscal years into sigma as the common case.
     fill_notes: List[str] = []
     seg = getattr(d, "segments", None)
     if seg is not None and getattr(seg, "n_segments", 0) >= 2:
         ax = seg.axes()[0]
         rev_lines = [ln for ln in seg.lines
-                     if ln.axis == ax and ln.group == "Revenue"
-                     and ln.latest() is not None]
-        revs = [(ln.member, ln.latest(), bool(ln.synth)) for ln in rev_lines]
-        total = _latest(d.revenue)
-        sigma = sum(v for _, v, _ in revs)
-        if len(revs) >= 2 and total and sigma > total * 1.02:
+                     if ln.axis == ax and ln.group == "Revenue"]
+        span_count: dict = {}
+        for ln in rev_lines:
+            for s, e, _ in ln.entries:
+                if 330 <= (e - s).days <= 400:
+                    span_count[(s, e)] = span_count.get((s, e), 0) + 1
+        gate_span = max((sp for sp, n in span_count.items() if n >= 2),
+                        key=lambda sp: sp[1], default=None)
+        if gate_span is None:
             fill_notes.append(
-                f"Phase-2 segment fill SKIPPED: Σ {ax} members "
-                f"(${sigma / 1e6:,.0f}mm) exceeds consolidated revenue "
-                f"(${total / 1e6:,.0f}mm) by {sigma / total - 1:+.1%} — "
-                "hierarchical (parent + child) members share the axis; "
-                "fill Phase2_UnitEcon!B5:B7 manually from the segment note.")
-        elif len(revs) >= 2:
-            for cell, (name, val, synth) in zip(("B5", "B6"), revs[:2]):
-                put("Phase2_UnitEcon", cell, _mm(val))
-                note = f"{name} (as filed, by {ax})"
-                if synth:
-                    note += " (synthesized from the two-axis table)"
-                comments[("Phase2_UnitEcon", cell)] = note
-            rest = (max(total - revs[0][1] - revs[1][1], 0.0)
-                    if total is not None
-                    else (sum(v for _, v, _ in revs[2:]) if len(revs) > 2
-                          else None))
-            if rest is not None:
-                put("Phase2_UnitEcon", "B7", _mm(rest))
-                others = ", ".join(m for m, _, _ in revs[2:]) or "remainder"
-                note = f"{others} — total minus top-2 (as filed, by {ax})"
-                if total and sigma < total * 0.98:
-                    note += (f"; members Σ cover only {sigma / total:.0%} of "
-                             "consolidated revenue — the remainder absorbs "
-                             "the untagged gap")
-                comments[("Phase2_UnitEcon", "B7")] = note
+                f"Phase-2 segment fill skipped: no fiscal-year span shared "
+                f"by two or more {ax} members — fill "
+                "Phase2_UnitEcon!B5:B7 manually from the segment note.")
+        else:
+            def at_span(ln):
+                return next((v for s, e, v in ln.entries
+                             if (s, e) == gate_span), None)
+            revs = [(ln.member, at_span(ln), gate_span in ln.synth)
+                    for ln in rev_lines if at_span(ln) is not None]
+            revs.sort(key=lambda t: -t[1])
+            total, aligned = _consolidated_at(d, gate_span[1])
+            sigma = sum(v for _, v, _ in revs)
+            tol = config.SEGMENT_TIE_TOL
+            fy_tag = f"FY{gate_span[1].year}"
+            if len(revs) >= 2 and total and sigma > total * (1 + tol):
+                fill_notes.append(
+                    f"Phase-2 segment fill SKIPPED: Σ {ax} members at "
+                    f"{fy_tag} (${sigma / 1e6:,.0f}mm) exceeds consolidated "
+                    f"revenue (${total / 1e6:,.0f}mm) by "
+                    f"{sigma / total - 1:+.1%} — hierarchical (parent + "
+                    "child) members share the axis; fill "
+                    "Phase2_UnitEcon!B5:B7 manually from the segment note.")
+            elif len(revs) >= 2:
+                for cell, (name, val, synth) in zip(("B5", "B6"), revs[:2]):
+                    put("Phase2_UnitEcon", cell, _mm(val))
+                    note = f"{name} (as filed {fy_tag}, by {ax})"
+                    if synth:
+                        note += " (synthesized from the two-axis table)"
+                    comments[("Phase2_UnitEcon", cell)] = note
+                rest = (max(total - revs[0][1] - revs[1][1], 0.0)
+                        if total is not None
+                        else (sum(v for _, v, _ in revs[2:])
+                              if len(revs) > 2 else None))
+                if rest is not None:
+                    put("Phase2_UnitEcon", "B7", _mm(rest))
+                    others = (", ".join(m for m, _, _ in revs[2:])
+                              or "remainder")
+                    note = (f"{others} — total minus top-2 "
+                            f"(as filed {fy_tag}, by {ax})")
+                    if total and sigma < total * (1 - tol):
+                        note += (f"; members Σ cover only "
+                                 f"{sigma / total:.0%} of consolidated "
+                                 "revenue — the remainder absorbs the "
+                                 "untagged gap")
+                    if not aligned:
+                        note += ("; consolidated total from the latest FY "
+                                 "(no fiscal-year match — verify)")
+                    comments[("Phase2_UnitEcon", "B7")] = note
     put("Phase2_UnitEcon", "B11", _latest(d.revenue_yoy))
     if len(d.inventory) >= 2 and d.inventory[-1] is not None:
         prev = d.inventory[-2]
@@ -199,7 +239,6 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
         put("Phase3_Forensic", "B4", "NI")
         put("Phase3_Forensic", "B5", _mm(ni))
         put("Phase3_Forensic", "B6", _mm(d.adjusted_ni))
-    from . import config
     put("Phase3_Forensic", "B16", config.RND_LIFE_YEARS)
     rnd = [v for v in d.rnd if v is not None]
     for offset, cell in enumerate(("B17", "B18", "B19", "B20", "B21")):

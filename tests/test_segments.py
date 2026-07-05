@@ -540,3 +540,55 @@ def test_interior_gap_with_axis_peers_marks_discontinuous():
     by = {ln.member: ln for ln in seg.lines if ln.group == "Revenue"}
     assert by["Ads"].discontinuous is True
     assert by["Commerce"].discontinuous is False
+
+
+# ---------------------------------------------------------------- FIX-10d
+
+def test_retired_member_does_not_poison_the_same_span_gate(tmp_path):
+    """A member whose last data is FY-1 must not mix fiscal years into
+    sigma: the gate works on the last COMMON span, the fill proceeds."""
+    total = REVENUE[2025]
+    xml = _annual_instance({
+        "meli:CommerceMember": {2024: 1000e6, 2025: total - 800e6},
+        "meli:FintechMember": {2024: 850e6, 2025: 800e6},
+        "meli:LegacyMember": {2024: 50e6},              # retired after FY24
+    })
+    facts = build_testco_companyfacts()
+    d = DashboardData(ticker="TESTCO", company="TESTCO Inc", subtitle="",
+                      generated=dt.date(2026, 5, 1))
+    d.sic_code = "3571"
+    apply_track(d, "auto")
+    build_fundamental_metrics(parse_companyfacts(facts, "TESTCO"), d)
+    d.segments = build_segment_data([("10-K k (FY2025)", xml)])
+    report = fill_workbook(d, str(tmp_path / "wb.xlsx"))
+    assert not any("SKIPPED" in n for n in (report.notes or []))
+    wb = load_workbook(str(tmp_path / "wb.xlsx"))
+    ws = wb["Phase2_UnitEcon"]
+    assert ws["B5"].value == pytest.approx((total - 800e6) / 1e6)  # FY25 top
+    assert ws["B6"].value == pytest.approx(800.0)
+    assert "FY2025" in ws["B5"].comment.text
+    # old latest()-based gate would have summed 1100+800+50 > total*1.02
+
+
+def test_audit_footnotes_carry_coverage_breaks_and_recasts(tmp_path):
+    old = _annual_instance({"meli:MarketplaceMember":
+                            {2023: 900e6, 2024: 950e6}})
+    new = _annual_instance({"meli:CommerceMember":
+                            {2024: 990e6, 2025: 1100e6},
+                            "meli:FintechMember":
+                            {2024: 850e6, 2025: 800e6}})
+    d = _data_with_segments()
+    d.segments = build_segment_data([("10-K k24 (FY2024)", old),
+                                     ("10-K k25 (FY2025)", new)])
+    assert d.segments.breaks       # membership changed at the shared FY24
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    ws = load_workbook(str(out))["Financial Model"]
+    labels = [str(ws.cell(row=r, column=1).value or "")
+              for r in range(1, ws.max_row + 1)]
+    joined = " ".join(labels)
+    assert "Segment coverage: dimensional facts found in 2/2 instances" \
+        in joined
+    assert "Segment recast — series are not comparable across this " \
+           "boundary" in joined
+    assert "retired ['Marketplace']" in joined

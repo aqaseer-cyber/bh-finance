@@ -669,7 +669,8 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             r = _write_check_row(ws, r, "   vs consolidated (gap %)",
                                  [_pct(sv, cv) for sv, cv
                                   in zip(sums, cons_cells)], ltm_col,
-                                 pct_fmt=True)
+                                 pct_fmt=True,
+                                 tol=config.SEGMENT_TIE_TOL)  # FIX-10d
 
     # ---------------------------------------------------------- footnotes
     notes = [
@@ -717,6 +718,28 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                 "two-axis disaggregation table (not directly filed); the "
                 "gap row shows how completely that table covers the "
                 "consolidated total."))
+        # FIX-10d: the audit trail rides in the footnotes
+        cov = list(getattr(seg, "coverage", None) or [])
+        if cov:
+            matched = sum(1 for _, n in cov if n > 0)
+            notes.insert(-1, (
+                f"Segment coverage: dimensional facts found in {matched}/"
+                f"{len(cov)} instances ({cov[0][0]} … {cov[-1][0]})."))
+        for b in getattr(seg, "breaks", None) or []:
+            notes.insert(-1, ("Segment recast — series are not comparable "
+                              "across this boundary: " + b))
+        recasts = list(getattr(seg, "recast_log", None) or [])
+        if recasts:
+            notes.insert(-1, (
+                f"{len(recasts)} restated segment value(s) across filings: "
+                + " | ".join(recasts[:3])
+                + (" | …" if len(recasts) > 3 else "")))
+        disc = [f"{ln.member} ({ln.group} by {ln.axis})" for ln in seg_lines
+                if getattr(ln, "discontinuous", False)]
+        if disc:
+            notes.insert(-1, (
+                "Discontinuous segment series (interior fiscal year missing "
+                "while axis peers report one): " + ", ".join(disc) + "."))
     else:
         why = getattr(seg, "status", "") if seg is not None else \
             "not fetched in this run"
@@ -982,7 +1005,8 @@ def _write_segments_sheet(wb, d: DashboardData,
         r = _write_check_row(ws, r, "   Σ members", sums, ltm_col=0)
         r = _write_check_row(ws, r, "   vs consolidated (gap %)",
                              [_pct(sv, cv) for sv, cv in zip(sums, cons_vals)],
-                             ltm_col=0, pct_fmt=True)
+                             ltm_col=0, pct_fmt=True,
+                             tol=config.SEGMENT_TIE_TOL)  # FIX-10d
 
     foot = [f"Source: {getattr(seg, 'source', '') or 'latest filings'} · "
             "columns are the fiscal spans as reported; italic cells were "
