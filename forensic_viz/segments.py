@@ -32,6 +32,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from . import config
 from .cache import Cache
 from .edgar import (
     DURATION_TAGS, AnnualFundamentals, fetch_segment_instances,
@@ -89,6 +90,9 @@ class SegmentLine:
     # spans whose value was summed from the two-axis table (not filed
     # directly) — rendered distinctly so a reader can tell them apart
     synth: set = field(default_factory=set)
+    # an interior fiscal year is missing while axis peers have it —
+    # usually the shadow of a recast the filer did not restate backward
+    discontinuous: bool = False
 
     def latest(self) -> Optional[float]:
         annual = [v for s, e, v in self.entries if 330 <= (e - s).days <= 400]
@@ -100,6 +104,10 @@ class SegmentData:
     lines: List[SegmentLine] = field(default_factory=list)
     source: str = ""
     status: str = ""  # human-readable diagnosis (footnoted when empty)
+    recast_log: List[str] = field(default_factory=list)   # value overrides
+    breaks: List[str] = field(default_factory=list)       # membership changes
+    coverage: List[Tuple[str, int]] = field(default_factory=list)
+    #                                 (instance label, matched fact count)
 
     def axes(self) -> List[str]:
         seen: List[str] = []
@@ -269,35 +277,150 @@ def parse_instance(xml_text: str) -> ParsedInstance:
     return out
 
 
-def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
-    """Merge parsed instances into ordered segment lines.
+def _is_fy_span(span: Span) -> bool:
+    return 330 <= (span[1] - span[0]).days <= 400
 
-    Later instances win on identical spans. Single-axis totals missing
-    from the filing are synthesized by summing the two-axis disaggregation
-    across the crossing axis (complete per span in a disaggregation
-    table). Within each (axis, member, group), the concept with the most
+
+def _alias_parsed(parsed: ParsedInstance,
+                  aliases: Dict[str, str]) -> ParsedInstance:
+    """Rewrite member labels through the analyst alias map, pre-merge.
+
+    Aliases are analyst-declared identity (old label → canonical label);
+    applying them before keying makes a renamed member merge naturally
+    under later-wins. No fuzzy matching anywhere — an alias exists only
+    if the analyst wrote it in the house file.
+    """
+    if not aliases:
+        return parsed
+    out = ParsedInstance()
+    # the FIX-13 bookkeeping rides along; qname accounting follows the
+    # canonical (post-alias) label so merges stay attributed correctly
+    out.n_multi = parsed.n_multi
+    out.conflicts = list(parsed.conflicts)
+    for (axis, member), qns in parsed.member_qnames.items():
+        mkey = (axis, aliases.get(member, member))
+        out.member_qnames.setdefault(mkey, set()).update(qns)
+    for (axis, member, concept), spans in parsed.singles.items():
+        key = (axis, aliases.get(member, member), concept)
+        out.singles.setdefault(key, {}).update(spans)
+    for (ax1, m1, ax2, m2, concept), spans in parsed.crosses.items():
+        key = (ax1, aliases.get(m1, m1), ax2, aliases.get(m2, m2), concept)
+        out.crosses.setdefault(key, {}).update(spans)
+    return out
+
+
+def _default_source(labels: List[str]) -> str:
+    """'10-K …(FY2016)…(FY2025)… + 10-Q q26' → '10-K FY2016–FY2025 + 10-Q …'."""
+    years = sorted({int(m.group(1)) for lbl in labels
+                    for m in [re.search(r"\(FY(\d{4})\)", lbl)] if m})
+    bits = []
+    if years:
+        bits.append(f"10-K FY{years[0]}–FY{years[-1]}" if len(years) > 1
+                    else f"10-K FY{years[0]}")
+    tenq = next((lbl for lbl in labels if lbl.startswith("10-Q")), None)
+    if tenq:
+        bits.append(tenq)
+    return " + ".join(bits) or ", ".join(labels)
+
+
+def build_segment_data(instances: List[Tuple[str, str]],  # (label, xml)
+                       source: str = "",
+                       aliases: Optional[Dict[str, str]] = None,
+                       skipped: Optional[List[str]] = None) -> SegmentData:
+    """Merge parsed instances into ordered segment lines, with provenance.
+
+    Instances arrive oldest→newest with the 10-Q last, so a plain
+    later-wins per exact span equals latest-restated. The merge refuses to
+    hide history: value overrides beyond 1% land in ``recast_log`` (with
+    both instance labels), membership changes at a shared fiscal year land
+    in ``breaks`` (a recast boundary is NEVER auto-spliced — a renamed
+    member stays two lines unless the analyst declares the identity in the
+    alias map), per-instance match counts land in ``coverage``, and a
+    member missing an interior year its peers have is flagged
+    discontinuous. Single-axis totals missing from the filings are
+    synthesized by summing the two-axis disaggregation across the crossing
+    axis; within each (axis, member, group) the concept with the most
     observations represents the group; members order by latest revenue.
     """
+    aliases = aliases or {}
+    result_skipped: List[str] = list(skipped or [])
     singles: Dict[Tuple[str, str, str], Dict[Span, float]] = {}
     crosses: Dict[Tuple[str, str, str, str, str], Dict[Span, float]] = {}
-    n_multi = 0
-    member_qnames: Dict[Tuple[str, str], set] = {}
+    n_multi = 0                                        # FIX-13b accounting
+    member_qnames: Dict[Tuple[str, str], set] = {}     # FIX-13c accounting
     conflicts: List[str] = []
-    for xml_text in instances:
+    origin: Dict[Tuple, Dict[Span, str]] = {}  # merged key -> span -> label
+    coverage: List[Tuple[str, int]] = []
+    recast_log: List[str] = []
+    breaks: List[str] = []
+    # per-annual-instance membership index for break detection:
+    # [(label, {axis: {FY span: set(members)}})], discarded after use
+    membership: List[Tuple[str, Dict[str, Dict[Span, set]]]] = []
+
+    def merge(target, key, spans, label, describe):
+        tgt = target.setdefault(key, {})
+        org = origin.setdefault(key, {})
+        for span, val in spans.items():
+            old = tgt.get(span)
+            if old is not None and abs(val - old) > max(0.01 * abs(old), 1.0):
+                recast_log.append(
+                    f"{describe} {span[0].isoformat()}–{span[1].isoformat()}: "
+                    f"{old:,.0f} → {val:,.0f} "
+                    f"({org.get(span, '?')} → {label})")
+            tgt[span] = val
+            org[span] = label
+
+    for label, xml_text in instances:
         try:
             parsed = parse_instance(xml_text)
         except ET.ParseError:
+            result_skipped.append(f"{label}: parse error")
             continue
+        parsed = _alias_parsed(parsed, aliases)
         n_multi += parsed.n_multi
         for mkey, qns in parsed.member_qnames.items():
             member_qnames.setdefault(mkey, set()).update(qns)
         for warn in parsed.conflicts:
             if warn not in conflicts:
                 conflicts.append(warn)
+        n_facts = (sum(len(s) for s in parsed.singles.values())
+                   + sum(len(s) for s in parsed.crosses.values()))
+        coverage.append((label, n_facts))
+        if not label.startswith("10-Q"):
+            idx: Dict[str, Dict[Span, set]] = {}
+            for (axis, member, _c), spans in parsed.singles.items():
+                for span in spans:
+                    if _is_fy_span(span):
+                        idx.setdefault(axis, {}).setdefault(span,
+                                                            set()).add(member)
+            for (ax1, m1, ax2, m2, _c), spans in parsed.crosses.items():
+                for span in spans:
+                    if _is_fy_span(span):
+                        idx.setdefault(ax1, {}).setdefault(span,
+                                                           set()).add(m1)
+                        idx.setdefault(ax2, {}).setdefault(span,
+                                                           set()).add(m2)
+            membership.append((label, idx))
         for key, spans in parsed.singles.items():
-            singles.setdefault(key, {}).update(spans)
+            axis, member, concept = key
+            merge(singles, key, spans, label, f"{axis}/{member} {concept}")
         for key, spans in parsed.crosses.items():
-            crosses.setdefault(key, {}).update(spans)
+            ax1, m1, ax2, m2, concept = key
+            merge(crosses, key, spans, label,
+                  f"{ax1}/{m1} × {ax2}/{m2} {concept}")
+
+    # membership breaks: adjacent annual filings, shared FY spans per axis
+    for (label_i, idx_i), (label_j, idx_j) in zip(membership, membership[1:]):
+        for axis in sorted(set(idx_i) & set(idx_j)):
+            for span in sorted(set(idx_i[axis]) & set(idx_j[axis])):
+                retired = idx_i[axis][span] - idx_j[axis][span]
+                introduced = idx_j[axis][span] - idx_i[axis][span]
+                if retired or introduced:
+                    breaks.append(
+                        f"{axis} @ FY{span[1].year}: "
+                        f"retired {sorted(retired)}, "
+                        f"introduced {sorted(introduced)} "
+                        f"({label_i} → {label_j})")
 
     # synthesize single-axis totals from the two-axis table where absent
     synthesized = 0
@@ -342,19 +465,50 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
                                _GROUP_RANK.get(ln.group, 9),
                                rev_size.get((ln.axis, ln.member), 0.0),
                                ln.member))
-    notes: List[str] = []
+
+    # discontinuity: an interior FY hole while (axis, group) peers have it
+    def fy_years(ln: SegmentLine) -> set:
+        return {e.year for s, e, _ in ln.entries if _is_fy_span((s, e))}
+
+    for ln in lines:
+        mine = fy_years(ln)
+        if len(mine) < 2:
+            continue
+        peers = set().union(*(fy_years(o) for o in lines
+                              if o is not ln and o.axis == ln.axis
+                              and o.group == ln.group), set())
+        ln.discontinuous = any(y not in mine and y in peers
+                               for y in range(min(mine) + 1, max(mine)))
+
+    bits: List[str] = []
     if synthesized:
-        notes.append(f"{synthesized} single-axis spans aggregated from the "
-                     "two-axis disaggregation table")
-    for (_axis, label), qns in sorted(member_qnames.items()):
+        bits.append(f"{synthesized} single-axis spans aggregated from the "
+                    "two-axis disaggregation table")
+    # FIX-13c: duplicate-qname merges declared per (axis, label)
+    for (_axis, mlabel), qns in sorted(member_qnames.items()):
         if len(qns) >= 2:  # a merge actually collapsed distinct qnames
-            notes.append(f"member aliases merged: {label} "
-                         f"({len(qns)} qnames)")
-    notes.extend(conflicts)
-    if n_multi:
-        notes.append(f"{n_multi} facts at 3+ segment axes ignored "
-                     "(beyond the 2-axis model)")
-    return SegmentData(lines=lines, source=source, status="; ".join(notes))
+            bits.append(f"member aliases merged: {mlabel} "
+                        f"({len(qns)} qnames)")
+    bits.extend(conflicts)
+    if n_multi:  # FIX-13b: honest 3+-axis boundary
+        bits.append(f"{n_multi} facts at 3+ segment axes ignored "
+                    "(beyond the 2-axis model)")
+    if coverage:
+        matched = sum(1 for _, n in coverage if n > 0)
+        bits.append(f"dimensional facts in {matched}/{len(coverage)} "
+                    "instances")
+    if recast_log:
+        bits.append(f"{len(recast_log)} restated segment value(s) "
+                    "across filings")
+    if breaks:
+        bits.append(f"{len(breaks)} membership break(s)")
+    if result_skipped:
+        bits.append("skipped: " + "; ".join(result_skipped))
+    if not source:
+        source = _default_source([lbl for lbl, _ in instances])
+    return SegmentData(lines=lines, source=source, status="; ".join(bits),
+                       recast_log=recast_log, breaks=breaks,
+                       coverage=coverage)
 
 
 def fetch_segment_data(annual: AnnualFundamentals,
@@ -373,10 +527,18 @@ def fetch_segment_data(annual: AnnualFundamentals,
         return SegmentData(status=(
             "filing XBRL instances unreachable (offline, or an unexpected "
             "EDGAR layout for this filer)"))
-    data = build_segment_data([xml for _, xml in instances],
-                              source=", ".join(lbl for lbl, _ in instances))
+    aliases = config.SEGMENT_ALIASES.get((annual.ticker or "").upper(), {})
+    data = build_segment_data(instances, aliases=aliases, skipped=skipped)
+    # honest shortfall: fewer annual instances than the history window asks
+    n_annual = sum(1 for lbl, _ in instances if not lbl.startswith("10-Q"))
+    want = min(config.SEGMENT_HISTORY_YEARS,
+               len(annual.fy_ends) or config.SEGMENT_HISTORY_YEARS)
+    if annual.annual_filings and n_annual < want:
+        data.status = ((data.status + "; ") if data.status else "") + \
+            f"only {n_annual} annual instance(s) available (requested {want})"
     if not data.lines:
-        data.status = (f"{len(instances)} instance(s) fetched but no facts "
-                       "matched the segment axes — please report this "
-                       "filer so the axis map can be extended")
+        data.status = ((f"{len(instances)} instance(s) fetched but no facts "
+                        "matched the segment axes — please report this "
+                        "filer so the axis map can be extended")
+                       + (("; " + data.status) if data.status else ""))
     return data

@@ -286,6 +286,7 @@ class AnnualFundamentals:
     entity_name: str
     fy_ends: List[dt.date]
     series: Dict[str, List[Optional[float]]]
+    ticker: str = ""  # normalized; keys the house segment-alias map
     tags_used: Dict[str, str] = field(default_factory=dict)
     sic_description: str = ""
     sic_code: str = ""
@@ -757,7 +758,7 @@ def parse_companyfacts(
 
     result = AnnualFundamentals(
         cik=cik, entity_name=entity, fy_ends=fy_ends, series=series,
-        tags_used=tags_used, raw_facts=facts,
+        ticker=_norm_ticker(ticker), tags_used=tags_used, raw_facts=facts,
     )
     _apply_revenue_coherence(result, gaap)
     return result

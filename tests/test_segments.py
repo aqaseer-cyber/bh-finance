@@ -132,7 +132,8 @@ def test_parse_instance_accepts_segment_axes_and_rejects_noise():
 
 
 def test_build_orders_members_by_revenue_and_merges_instances():
-    seg = build_segment_data([_tenk_instance(), _tenq_instance()], "test")
+    seg = build_segment_data([("10-K a25 (FY2025)", _tenk_instance()),
+                              ("10-Q q26", _tenq_instance())], "test")
     assert seg.axes() == ["product / service", "geography"]
     assert seg.members("geography") == ["Brazil", "Mexico", "Other Countries"]
     assert seg.n_segments == 2  # primary axis = product / service
@@ -160,7 +161,7 @@ def test_two_axis_only_disaggregation_is_aggregated():
                           "2025-01-01", "2025-12-31", extra))
         parts.append(_fact(REV, f"x{i}", v))
     parts.append("</xbrl>")
-    seg = build_segment_data(["".join(parts)], "x")
+    seg = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "x")
     by = {(ln.axis, ln.member): ln for ln in seg.lines
           if ln.group == "Revenue"}
     span = (dt.date(2025, 1, 1), dt.date(2025, 12, 31))
@@ -199,7 +200,8 @@ def test_subsegments_axis_accepted_as_revenue_stream():
                           *span, extra))
         parts.append(_fact(REV, f"cx{i}", v))
     parts.append("</xbrl>")
-    seg = build_segment_data(["".join(parts)], "meli-style")
+    seg = build_segment_data([("10-K m24 (FY2024)", "".join(parts))],
+                             "meli-style")
 
     assert "revenue stream" in seg.axes()
     # axis ordering follows _AXIS_ORDER: stream before geography
@@ -244,7 +246,8 @@ def test_duplicate_member_qnames_merge_to_one_line():
                           m, *span))
         parts.append(_fact(REV, f"o{i}", 889e6))
     parts.append("</xbrl>")
-    seg = build_segment_data(["".join(parts)], "meli-style")
+    seg = build_segment_data([("10-K m24 (FY2024)", "".join(parts))],
+                             "meli-style")
 
     members = seg.members("business segments")
     assert members.count("Other Countries") == 1      # one line, not two
@@ -270,7 +273,7 @@ def test_disagreeing_qname_aliases_keep_first_and_warn():
                           m, *span))
         parts.append(_fact(REV, f"o{i}", v))
     parts.append("</xbrl>")
-    seg = build_segment_data(["".join(parts)], "x")
+    seg = build_segment_data([("10-K x24 (FY2024)", "".join(parts))], "x")
     dspan = (dt.date(2024, 1, 1), dt.date(2024, 12, 31))
     ln = next(x for x in seg.lines if x.member == "Other Countries")
     assert {(s, e): v for s, e, v in ln.entries}[dspan] == 889e6  # first kept
@@ -299,7 +302,7 @@ def test_three_axis_facts_counted_not_modeled():
     assert parsed.n_multi == 1
     assert all(k[1] != "Brazil" for k in parsed.singles)  # not modeled
 
-    seg = build_segment_data(["".join(parts)], "x")
+    seg = build_segment_data([("10-K x24 (FY2024)", "".join(parts))], "x")
     assert "1 facts at 3+ segment axes ignored" in seg.status
     assert seg.members("revenue stream") == ["Commerce"]
 
@@ -311,7 +314,8 @@ def _data_with_segments():
     d.sic_code = "3571"
     apply_track(d, "auto")
     build_fundamental_metrics(parse_companyfacts(facts, "TESTCO"), d)
-    d.segments = build_segment_data([_tenk_instance(), _tenq_instance()], "t")
+    d.segments = build_segment_data([("10-K a25 (FY2025)", _tenk_instance()),
+                                     ("10-Q q26", _tenq_instance())], "t")
     return d
 
 
@@ -398,7 +402,7 @@ def test_hierarchical_members_skip_phase2_fill(tmp_path):
     d.sic_code = "3571"
     apply_track(d, "auto")
     build_fundamental_metrics(parse_companyfacts(facts, "TESTCO"), d)
-    d.segments = build_segment_data([xml], "t")
+    d.segments = build_segment_data([("10-K a25 (FY2025)", xml)], "t")
     report = fill_workbook(d, str(tmp_path / "wb.xlsx"))
     assert any("SKIPPED" in n and "hierarchical" in n
                for n in (report.notes or []))
@@ -427,7 +431,7 @@ def test_incomplete_cross_table_flagged_by_tie_rows(tmp_path):
     parts.append("</xbrl>")
 
     d = _data_with_segments()
-    d.segments = build_segment_data(["".join(parts)], "t")
+    d.segments = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "t")
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
     ws = load_workbook(str(out))["Financial Model"]
@@ -455,3 +459,84 @@ def test_tie_rows_show_zero_gap_when_members_are_complete(tmp_path):
     fy25 = header.index("FY2025") + 1
     gap_row = labels.index("   vs consolidated (gap %)") + 1
     assert ws.cell(row=gap_row, column=fy25).value == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------- FIX-10c
+
+def _annual_instance(member_years, axis="srt:ProductOrServiceAxis", tag=REV):
+    """{member qname: {year: value}} -> one-axis annual instance XML."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    i = 0
+    for m, years in member_years.items():
+        for y, v in years.items():
+            parts.append(_ctx(f"c{i}", axis, m, f"{y}-01-01", f"{y}-12-31"))
+            parts.append(_fact(tag, f"c{i}", v))
+            i += 1
+    parts.append("</xbrl>")
+    return "".join(parts)
+
+
+def test_stitch_across_instances_latest_restated_wins_with_recast_log():
+    i1 = _annual_instance({"meli:CommerceMember": {2021: 100e6, 2022: 110e6}})
+    i2 = _annual_instance({"meli:CommerceMember": {2023: 120e6, 2024: 130e6}})
+    i3 = _annual_instance({"meli:CommerceMember": {2024: 135e6,   # restated
+                                                   2025: 150e6}})
+    seg = build_segment_data([("10-K k21 (FY2022)", i1),
+                              ("10-K k23 (FY2024)", i2),
+                              ("10-K k25 (FY2025)", i3)])
+    ln = next(l for l in seg.lines
+              if l.member == "Commerce" and l.group == "Revenue")
+    got = {e.year: v for s, e, v in ln.entries}
+    assert got == {2021: 100e6, 2022: 110e6, 2023: 120e6,
+                   2024: 135e6, 2025: 150e6}   # five years, newest FY24 wins
+    assert len(seg.recast_log) == 1
+    assert "10-K k23 (FY2024)" in seg.recast_log[0]
+    assert "10-K k25 (FY2025)" in seg.recast_log[0]
+    assert "135,000,000" in seg.recast_log[0]
+    assert seg.source == "10-K FY2022–FY2025"  # derived from the labels
+
+
+def test_rename_at_boundary_never_splices_without_an_alias():
+    old = _annual_instance({"meli:MarketplaceMember":
+                            {2021: 100e6, 2022: 110e6}})
+    new = _annual_instance({"meli:CommerceMember":
+                            {2022: 110e6, 2023: 120e6}})
+    inst = [("10-K k22 (FY2022)", old), ("10-K k23 (FY2023)", new)]
+
+    seg = build_segment_data(inst)
+    members = {ln.member for ln in seg.lines if ln.group == "Revenue"}
+    assert members == {"Marketplace", "Commerce"}   # two lines, no merge
+    assert len(seg.breaks) == 1
+    assert "retired ['Marketplace']" in seg.breaks[0]
+    assert "introduced ['Commerce']" in seg.breaks[0]
+
+    aliased = build_segment_data(inst, aliases={"Marketplace": "Commerce"})
+    lines = [ln for ln in aliased.lines if ln.group == "Revenue"]
+    assert [ln.member for ln in lines] == ["Commerce"]  # one spliced line
+    assert {e.year for s, e, v in lines[0].entries} == {2021, 2022, 2023}
+    assert aliased.breaks == []                     # identity was declared
+
+
+def test_coverage_counts_and_malformed_instance_skipped():
+    good1 = _annual_instance({"meli:CommerceMember": {2024: 100e6}})
+    good2 = _annual_instance({"meli:CommerceMember": {2025: 120e6}})
+    seg = build_segment_data([("10-K a (FY2024)", good1),
+                              ("10-K broken (FY2025)", "not xml <<<"),
+                              ("10-K b (FY2025)", good2)])
+    assert [c for c in seg.coverage] == [("10-K a (FY2024)", 1),
+                                         ("10-K b (FY2025)", 1)]
+    assert any("10-K broken (FY2025): parse error" in s
+               for s in seg.status.split("skipped: ")[-1:])
+    assert len(seg.lines) == 1 and not seg.lines[0].discontinuous
+
+
+def test_interior_gap_with_axis_peers_marks_discontinuous():
+    xml = _annual_instance({
+        "meli:AdsMember": {2021: 50e6, 2023: 60e6},           # hole at 2022
+        "meli:CommerceMember": {2021: 100e6, 2022: 110e6, 2023: 120e6},
+    })
+    seg = build_segment_data([("10-K k (FY2023)", xml)])
+    by = {ln.member: ln for ln in seg.lines if ln.group == "Revenue"}
+    assert by["Ads"].discontinuous is True
+    assert by["Commerce"].discontinuous is False

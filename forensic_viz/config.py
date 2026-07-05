@@ -101,6 +101,7 @@ TTL_RATES = 12 * 3600
 # TTL_FILING_INSTANCE is defined once above, at FIX-13d)
 SEGMENT_HISTORY_YEARS = 10
 SEGMENT_MAX_INSTANCE_MB = 40  # parse cost on mega-cap instances is real
+SEGMENT_ALIASES: dict = {}    # ticker -> {old member label: canonical label}
 
 def cache_dir() -> Path:
     """Per-user cache directory (LOCALAPPDATA on Windows, ~/.cache elsewhere)."""
