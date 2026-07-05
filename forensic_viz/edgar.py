@@ -912,7 +912,7 @@ def _discover_instance_url(sec: _SecSession, cik: int,
     accn = accession.replace("-", "")
     base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}"
     try:
-        idx = sec.get_json(f"{base}/index.json", config.TTL_COMPANYFACTS)
+        idx = sec.get_json(f"{base}/index.json", config.TTL_FILING_INSTANCE)
     except Exception:
         return None
     names = [str(item.get("name", ""))
@@ -927,30 +927,76 @@ def _discover_instance_url(sec: _SecSession, cik: int,
     return f"{base}/{cands[0]}" if cands else None
 
 
-def fetch_segment_instances(annual: AnnualFundamentals,
-                            cache: Optional[Cache] = None) -> List[str]:
-    """XBRL instance XML of the latest 10-K and 10-Q (best-effort each)."""
+def fetch_segment_instances(
+    annual: AnnualFundamentals, cache: Optional[Cache] = None,
+    years: Optional[int] = None,
+) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """[(label, xml_text)] — annual instances oldest→newest, latest 10-Q
+    LAST, so build_segment_data's later-wins merge equals latest-restated.
+
+    Second output: labels of anything skipped (unreachable instance, an
+    oversized instance beyond SEGMENT_MAX_INSTANCE_MB). A 10-K/A without
+    XBRL falls back to the same fiscal year's plain 10-K before skipping.
+    """
     _require_declared_ua()  # FIX-13a: Archives 403s the placeholder UA
     cache = cache or Cache()
     sec = _SecSession(cache)
-    out: List[str] = []
-    for accn, doc in ((annual.latest_10k_accession, annual.latest_10k_document),
-                      (annual.latest_10q_accession, annual.latest_10q_document)):
-        if not accn or not doc or not annual.cik:
-            continue
+    if years is None:
+        years = config.SEGMENT_HISTORY_YEARS
+    out: List[Tuple[str, str]] = []
+    skipped: List[str] = []
+
+    def fetch_one(accn: str, doc: str) -> Optional[str]:
+        if not accn or not doc:
+            return None
         try:
-            out.append(sec.get_text(instance_url(annual.cik, accn, doc),
-                                    config.TTL_COMPANYFACTS))
-            continue
+            return sec.get_text(instance_url(annual.cik, accn, doc),
+                                config.TTL_FILING_INSTANCE)
         except Exception:
             pass  # fall through to index.json discovery
         try:
             url = _discover_instance_url(sec, annual.cik, accn)
-            if url:
-                out.append(sec.get_text(url, config.TTL_COMPANYFACTS))
+            return (sec.get_text(url, config.TTL_FILING_INSTANCE)
+                    if url else None)
         except Exception:
-            continue  # segment data is an enrichment, never a hard failure
-    return out
+            return None  # enrichment, never a hard failure
+
+    def add(label: str, xml: Optional[str]) -> None:
+        if xml is None:
+            skipped.append(f"{label}: instance unreachable")
+            return
+        size_mb = len(xml) / 1e6
+        if size_mb > config.SEGMENT_MAX_INSTANCE_MB:
+            skipped.append(f"{label}: instance {size_mb:.0f}MB > "
+                           f"{config.SEGMENT_MAX_INSTANCE_MB:.0f}MB cap")
+            return
+        out.append((label, xml))
+
+    if not annual.cik:
+        return out, skipped
+    if annual.annual_filings:
+        for filing in select_annual_filings(annual.annual_filings, years):
+            label = (f"{filing.form} {filing.accession} "
+                     f"(FY{filing.report_date.year})")
+            xml = fetch_one(filing.accession, filing.document)
+            if xml is None and filing.form == "10-K/A":
+                sib = sibling_annual_filing(annual.annual_filings, filing)
+                if sib is not None:  # amendments sometimes ship without XBRL
+                    xml = fetch_one(sib.accession, sib.document)
+                    if xml is not None:
+                        label = (f"{sib.form} {sib.accession} "
+                                 f"(FY{sib.report_date.year})")
+            add(label, xml)
+    elif annual.latest_10k_accession:
+        # metadata without the filing history: previous (latest-10-K) path
+        add(f"10-K {annual.latest_10k_accession}",
+            fetch_one(annual.latest_10k_accession,
+                      annual.latest_10k_document))
+    if annual.latest_10q_accession:
+        add(f"10-Q {annual.latest_10q_accession}",
+            fetch_one(annual.latest_10q_accession,
+                      annual.latest_10q_document))
+    return out, skipped
 
 
 # --------------------------------- as-filed statement structure (FIX-13d)

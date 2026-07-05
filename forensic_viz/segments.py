@@ -365,17 +365,16 @@ def fetch_segment_data(annual: AnnualFundamentals,
     says why (unreachable instances vs no matching dimensional facts) so
     the workbook footnote can report the actual cause.
     """
-    instances = fetch_segment_instances(annual, cache=cache)
+    instances, skipped = fetch_segment_instances(annual, cache=cache)
     if not instances:
+        if skipped:
+            return SegmentData(
+                status="all instances skipped: " + "; ".join(skipped))
         return SegmentData(status=(
             "filing XBRL instances unreachable (offline, or an unexpected "
             "EDGAR layout for this filer)"))
-    bits = []
-    if annual.latest_10k_accession:
-        bits.append(f"10-K {annual.latest_10k_accession}")
-    if annual.latest_10q_accession:
-        bits.append(f"10-Q {annual.latest_10q_accession}")
-    data = build_segment_data(instances, source=", ".join(bits))
+    data = build_segment_data([xml for _, xml in instances],
+                              source=", ".join(lbl for lbl, _ in instances))
     if not data.lines:
         data.status = (f"{len(instances)} instance(s) fetched but no facts "
                        "matched the segment axes — please report this "
