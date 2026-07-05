@@ -3,10 +3,13 @@
 The companyfacts API returns only undimensioned totals, so segment splits —
 MELI's Brazil/Mexico/Argentina revenue, a Commerce vs Fintech split, classic
 reportable segments — never appear there. This module reads the **extracted
-XBRL instance** (…_htm.xml) of the latest 10-K and 10-Q, where those facts
-live as contexts dimensioned by:
+XBRL instances** (…_htm.xml) of up to ``SEGMENT_HISTORY_YEARS`` fiscal
+years of 10-Ks plus the latest 10-Q, where those facts live as contexts
+dimensioned by:
 
 - ``us-gaap:StatementBusinessSegmentsAxis`` (reportable segments),
+- ``srt:SubsegmentsAxis``                 (revenue streams, FIX-13b —
+  MELI's Commerce/Fintech split),
 - ``srt:ProductOrServiceAxis``            (revenue disaggregation; the
   pre-2020 ``ProductsAndServicesAxis`` alias is accepted too),
 - ``srt:StatementGeographicalAxis``       (geographic split).
@@ -20,9 +23,15 @@ Filers like MELI tag their disaggregation table on TWO axes at once
 are synthesized by summing across the other axis wherever the filer did
 not tag the single-axis total directly — recorded in the status string.
 
-History depth equals what the two filings carry (a 10-K brings 2–3
-comparative years; the 10-Q the current quarters + year-ago comparatives).
-Parsing is pure; fetching lives in ``edgar``.
+**Merge order is the policy (FIX-10):** instances arrive oldest→newest
+with the 10-Q LAST, so a plain later-wins per exact span equals
+latest-restated — the 10-Q's comparatives are the freshest view of every
+period they cover. The merge refuses to hide history: value revisions
+land in ``recast_log``, membership changes at a shared fiscal year land
+in ``breaks`` (a recast is never auto-spliced into one continuous-looking
+series), and a renamed member merges only through the analyst-declared
+alias map in the house file. Parsing is pure; fetching lives in
+``edgar``.
 """
 from __future__ import annotations
 

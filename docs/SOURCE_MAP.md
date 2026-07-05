@@ -43,7 +43,7 @@ export's "Interim gap-fill" footnotes.
 
 | Cell | Input | Source |
 |---|---|---|
-| B5–B7 | Segment revenue | AUTO when the 10-K/10-Q instance parses (dimensional XBRL, top-2 + remainder, gated on the Σ-members tie) — else ANALYST from the 10-K segment footnote (ASC 280); requires a declared SEC_EDGAR_USER_AGENT (FIX-13a) |
+| B5–B7 | Segment revenue | AUTO (FIX-10) — dimensional XBRL from an N-year 10-K instance history + the latest 10-Q (`segment_history_years`, default 10); requires a declared SEC_EDGAR_USER_AGENT (FIX-13a). Merge: later-filed wins per exact span (latest-restated); membership breaks are detected and footnoted, never auto-spliced; renamed members merge only via an analyst-declared alias in `house_assumptions.toml` (`[segment_aliases.<TICKER>]`). The fill is gated on the Σ-members vs consolidated tie at the last common fiscal year (`segment_tie_tol`); hierarchical (parent+child) member sets skip the fill and fall back to ANALYST from the 10-K segment footnote (ASC 280). |
 | B11 | Total revenue growth | AUTO |
 | B12–B15 | Organic/inorganic, price/volume | ANALYST — MD&A + earnings release; deal 8-Ks for acquired revenue (the CELH/ADBE lesson) |
 | B19/B20 | Avg inventory / COGS | AUTO |

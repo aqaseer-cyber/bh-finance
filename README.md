@@ -242,13 +242,22 @@ payment transactions) are not XBRL-tagged and are outside this export.
 segments, product/service disaggregation (e.g. Commerce vs Fintech),
 geography (e.g. Brazil/Mexico/Other) — are **dimensional XBRL that the
 companyfacts API never returns**, so the app reads them from the
-**extracted XBRL instance of the latest 10-K and 10-Q** (fetched live,
-cached). They appear as a **SEGMENTS (as filed)** section in the financial
-model (revenue and operating income per member, with % change rows;
-history depth = what those two filings carry), auto-fill the **Phase-2
-revenue architecture block** of the valuation workbook (top-2 segments +
+**extracted XBRL instances of up to `segment_history_years` fiscal years
+of 10-Ks (default 10) plus the latest 10-Q** (fetched live, cached for a
+year — filed instances are immutable). Values merge **as-latest-restated
+per span** (later-filed wins); **recasts, membership breaks, and
+per-instance coverage are footnoted in the model export** — a segment
+definition change is never auto-spliced into a continuous-looking series,
+and a renamed member merges only via an analyst-declared alias in the
+house file (`[segment_aliases.<TICKER>]`). They appear as a **SEGMENTS
+(as filed)** section in the financial model (revenue and operating income
+per member, with % change rows), auto-fill the **Phase-2 revenue
+architecture block** of the valuation workbook (top-2 segments +
 remainder, names as cell comments), and when a filer reports 2+ parts the
 health page and the valuation dialog flag it as an **SOTP candidate**.
+Honesty clause: dimensional tagging of the segment note is reliable for
+large filers from roughly FY2012–2013; older and smaller filers may yield
+blanks that no fetcher fixes.
 Every revenue block carries a visible **tie-out** — `Σ members` and
 `vs consolidated (gap %)` rows against the consolidated statement: a
 positive gap flags hierarchical (parent + child) members double-counting
