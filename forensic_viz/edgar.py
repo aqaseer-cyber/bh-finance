@@ -213,6 +213,72 @@ class EdgarError(RuntimeError):
 
 
 @dataclass
+class AnnualFiling:
+    """One 10-K-family filing row from the submissions index."""
+
+    form: str            # "10-K" or "10-K/A"
+    filed: dt.date
+    report_date: dt.date  # fiscal period the filing covers
+    accession: str
+    document: str        # primaryDocument
+
+
+def _collect_annual_filings(recent: dict) -> List[AnnualFiling]:
+    """Every 10-K / 10-K/A row in the submissions 'recent' arrays (pure).
+
+    Rows with unparseable dates are dropped — a filing we cannot place on
+    the fiscal timeline cannot participate in per-year selection.
+    """
+    out: List[AnnualFiling] = []
+    for form, filed, report, accn, doc in zip(
+            recent.get("form", []), recent.get("filingDate", []),
+            recent.get("reportDate", []), recent.get("accessionNumber", []),
+            recent.get("primaryDocument", [])):
+        if form not in ("10-K", "10-K/A"):
+            continue
+        filed_d, report_d = _parse_date(str(filed)), _parse_date(str(report))
+        if filed_d is None or report_d is None:
+            continue
+        out.append(AnnualFiling(form=str(form), filed=filed_d,
+                                report_date=report_d, accession=str(accn),
+                                document=str(doc)))
+    return out
+
+
+def select_annual_filings(filings: List[AnnualFiling],
+                          years: int) -> List[AnnualFiling]:
+    """One filing per fiscal year, newest `years` years, oldest first.
+
+    Group by report_date (±14 days folds duplicate periods); within a
+    group prefer the 10-K/A with the latest filed date, else the 10-K
+    with the latest filed date (house rule: latest amendment wins).
+    """
+    groups: List[List[AnnualFiling]] = []
+    for f in sorted(filings, key=lambda f: f.report_date):
+        if groups and abs((f.report_date
+                           - groups[-1][0].report_date).days) <= 14:
+            groups[-1].append(f)
+        else:
+            groups.append([f])
+    chosen: List[AnnualFiling] = []
+    for group in groups:
+        amendments = [f for f in group if f.form == "10-K/A"]
+        pool = amendments or group
+        chosen.append(max(pool, key=lambda f: f.filed))
+    return chosen[-years:]
+
+
+def sibling_annual_filing(filings: List[AnnualFiling],
+                          preferred: AnnualFiling) -> Optional[AnnualFiling]:
+    """The same fiscal year's plain 10-K, for a 10-K/A that ships without
+    XBRL (amendments sometimes carry none)."""
+    pool = [f for f in filings if f.form == "10-K"
+            and f.accession != preferred.accession
+            and abs((f.report_date - preferred.report_date).days) <= 14]
+    return max(pool, key=lambda f: f.filed) if pool else None
+
+
+@dataclass
 class AnnualFundamentals:
     """As-filed annual series, keyed by fiscal-year end date (ascending)."""
 
@@ -236,6 +302,9 @@ class AnnualFundamentals:
     # supplied that year) and human-readable selection decisions
     year_sources: Dict[str, Dict[dt.date, str]] = field(default_factory=dict)
     selection_notes: List[str] = field(default_factory=list)
+    # every 10-K / 10-K/A row from the submissions index (FIX-10a) — the
+    # segment-history fetch selects one per fiscal year from these
+    annual_filings: List["AnnualFiling"] = field(default_factory=list)
     # full companyfacts payload, kept so the financial-model export can pull
     # interim (10-Q) observations without a second fetch
     raw_facts: Optional[dict] = field(default=None, repr=False)
@@ -798,6 +867,8 @@ def fetch_fundamentals(
             exch = f" ({exchanges[0]})" if exchanges and exchanges[0] else ""
             result.exchange_ticker = f"{tickers[0]}{exch}"
         recent = subs.get("filings", {}).get("recent", {})
+        # one full walk: latest 10-K/10-Q markers AND the whole 10-K-family
+        # history (FIX-10a) — the arrays are already in memory, cost is nil
         for form, filed, accn, doc in zip(
                 recent.get("form", []), recent.get("filingDate", []),
                 recent.get("accessionNumber", []),
@@ -810,8 +881,7 @@ def fetch_fundamentals(
                 result.latest_10q_date = str(filed)
                 result.latest_10q_accession = str(accn)
                 result.latest_10q_document = str(doc)
-            if result.latest_10k_date and result.latest_10q_date:
-                break
+        result.annual_filings = _collect_annual_filings(recent)
     except Exception:
         pass
     return result
