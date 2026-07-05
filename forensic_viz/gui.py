@@ -586,6 +586,11 @@ class App:
             return
         notes = Path(path).with_suffix(".analyst_cells.txt")
         with open(notes, "w", encoding="utf-8") as fh:
+            if report.notes:
+                fh.write("Data-quality notes:\n")
+                for n in report.notes:
+                    fh.write(f"  ! {n}\n")
+                fh.write("\n")
             fh.write("Blue cells left for the analyst (judgment stays with "
                      "you) — suggested sources:\n\n")
             for sheet, cells, label, source in report.analyst_cells:

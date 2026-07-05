@@ -233,6 +233,12 @@ history depth = what those two filings carry), auto-fill the **Phase-2
 revenue architecture block** of the valuation workbook (top-2 segments +
 remainder, names as cell comments), and when a filer reports 2+ parts the
 health page and the valuation dialog flag it as an **SOTP candidate**.
+Every revenue block carries a visible **tie-out** — `Σ members` and
+`vs consolidated (gap %)` rows against the consolidated statement: a
+positive gap flags hierarchical (parent + child) members double-counting
+on the axis (which also **gates the Phase-2 auto-fill**), a negative gap
+means untagged members; values synthesized from a two-axis
+disaggregation render in italics.
 
 ## House assumptions file
 

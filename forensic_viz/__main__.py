@@ -350,6 +350,8 @@ def main(argv=None) -> int:
         xlsx_path = args.xlsx or f"{data.ticker}_forensic_model_{stamp}.xlsx"
         report = fill_workbook(data, xlsx_path, res=res, verdict=verdict)
         print(f"wrote {xlsx_path} ({report.filled} blue cells filled)")
+        for n in report.notes or []:
+            print(f"  ! {n}")
         print("  analyst cells remaining (judgment stays with you):")
         for sheet, cells, label, source in report.analyst_cells:
             print(f"    {sheet}!{cells:<8} {label} -> {source}")

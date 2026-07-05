@@ -71,6 +71,7 @@ class FillReport:
     filled: int
     out_path: str
     analyst_cells: List[tuple]  # (sheet, cells, label, source)
+    notes: List[str] = None  # tie-out / data-quality notes (may be None)
 
 
 def _mm(v: Optional[float]) -> Optional[float]:
@@ -136,27 +137,47 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     # Revenue architecture (§2.1) from as-filed segment disclosures: top-2
     # segments into B5/B6, remainder into B7 (B8 sums back to total). The
     # blue cells get the values; the segment names ride as cell comments.
+    # TIE-OUT GATE: Σ(members) is checked against consolidated revenue —
+    # XBRL axes routinely carry hierarchical members (a parent "Commerce"
+    # plus its child "Commerce Services"), and picking top-2 by size would
+    # double-count while the B8 sum still ties. Σ above total ⇒ skip.
+    fill_notes: List[str] = []
     seg = getattr(d, "segments", None)
     if seg is not None and getattr(seg, "n_segments", 0) >= 2:
         ax = seg.axes()[0]
-        revs = [(ln.member, ln.latest()) for ln in seg.lines
-                if ln.axis == ax and ln.group == "Revenue"
-                and ln.latest() is not None]
-        if len(revs) >= 2:
-            for cell, (name, val) in zip(("B5", "B6"), revs[:2]):
+        rev_lines = [ln for ln in seg.lines
+                     if ln.axis == ax and ln.group == "Revenue"
+                     and ln.latest() is not None]
+        revs = [(ln.member, ln.latest(), bool(ln.synth)) for ln in rev_lines]
+        total = _latest(d.revenue)
+        sigma = sum(v for _, v, _ in revs)
+        if len(revs) >= 2 and total and sigma > total * 1.02:
+            fill_notes.append(
+                f"Phase-2 segment fill SKIPPED: Σ {ax} members "
+                f"(${sigma / 1e6:,.0f}mm) exceeds consolidated revenue "
+                f"(${total / 1e6:,.0f}mm) by {sigma / total - 1:+.1%} — "
+                "hierarchical (parent + child) members share the axis; "
+                "fill Phase2_UnitEcon!B5:B7 manually from the segment note.")
+        elif len(revs) >= 2:
+            for cell, (name, val, synth) in zip(("B5", "B6"), revs[:2]):
                 put("Phase2_UnitEcon", cell, _mm(val))
-                comments[("Phase2_UnitEcon", cell)] = \
-                    f"{name} (as filed, by {ax})"
-            total = _latest(d.revenue)
+                note = f"{name} (as filed, by {ax})"
+                if synth:
+                    note += " (synthesized from the two-axis table)"
+                comments[("Phase2_UnitEcon", cell)] = note
             rest = (max(total - revs[0][1] - revs[1][1], 0.0)
                     if total is not None
-                    else (sum(v for _, v in revs[2:]) if len(revs) > 2
+                    else (sum(v for _, v, _ in revs[2:]) if len(revs) > 2
                           else None))
             if rest is not None:
                 put("Phase2_UnitEcon", "B7", _mm(rest))
-                others = ", ".join(m for m, _ in revs[2:]) or "remainder"
-                comments[("Phase2_UnitEcon", "B7")] = \
-                    f"{others} — total minus top-2 (as filed, by {ax})"
+                others = ", ".join(m for m, _, _ in revs[2:]) or "remainder"
+                note = f"{others} — total minus top-2 (as filed, by {ax})"
+                if total and sigma < total * 0.98:
+                    note += (f"; members Σ cover only {sigma / total:.0%} of "
+                             "consolidated revenue — the remainder absorbs "
+                             "the untagged gap")
+                comments[("Phase2_UnitEcon", "B7")] = note
     put("Phase2_UnitEcon", "B11", _latest(d.revenue_yoy))
     if len(d.inventory) >= 2 and d.inventory[-1] is not None:
         prev = d.inventory[-2]
@@ -292,4 +313,4 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
     remaining = [row for row in ANALYST_CELLS
                  if (row[0], row[1]) not in filled_ranges]
     return FillReport(filled=len(writes), out_path=out_path,
-                      analyst_cells=remaining)
+                      analyst_cells=remaining, notes=fill_notes)

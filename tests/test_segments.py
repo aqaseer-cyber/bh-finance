@@ -231,3 +231,90 @@ def test_no_segments_keeps_workbook_and_export_working(tmp_path):
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     assert "SEGMENTS (as filed)" not in labels
     assert any("no dimensional segment data" in str(v) for v in labels)
+
+
+def _single_axis_instance(members: dict, total_span=("2025-01-01", "2025-12-31")):
+    """One-axis product/service instance with the given member -> value map."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    for i, (m, v) in enumerate(members.items()):
+        parts.append(_ctx(f"s{i}", "srt:ProductOrServiceAxis", m,
+                          *total_span))
+        parts.append(_fact(REV, f"s{i}", v))
+    parts.append("</xbrl>")
+    return "".join(parts)
+
+
+def test_hierarchical_members_skip_phase2_fill(tmp_path):
+    """Parent + child on one axis: Σ members > consolidated revenue. The
+    Phase-2 fill must be SKIPPED with a note — top-2-by-size would put a
+    child inside its parent, double-count, and still tie at B8."""
+    total = REVENUE[2025]
+    xml = _single_axis_instance({
+        "meli:CommerceMember": total * 0.60,
+        "meli:CommerceServicesMember": total * 0.35,  # child of Commerce
+        "meli:AdvertisingMember": total * 0.10,
+    })
+    facts = build_testco_companyfacts()
+    d = DashboardData(ticker="TESTCO", company="TESTCO Inc", subtitle="",
+                      generated=dt.date(2026, 5, 1))
+    d.sic_code = "3571"
+    apply_track(d, "auto")
+    build_fundamental_metrics(parse_companyfacts(facts, "TESTCO"), d)
+    d.segments = build_segment_data([xml], "t")
+    report = fill_workbook(d, str(tmp_path / "wb.xlsx"))
+    assert any("SKIPPED" in n and "hierarchical" in n
+               for n in (report.notes or []))
+    wb = load_workbook(str(tmp_path / "wb.xlsx"))
+    assert wb["Phase2_UnitEcon"]["B5"].value == 6000  # shell placeholder kept
+    assert any(r[0] == "Phase2_UnitEcon" and r[1] == "B5:B7"
+               for r in report.analyst_cells)  # still on the analyst to-do
+
+
+def test_incomplete_cross_table_flagged_by_tie_rows(tmp_path):
+    """Cross-only table covering ~80% of consolidated revenue: synthesized
+    totals are italic and the gap row shows the shortfall in red-flag
+    territory."""
+    total = REVENUE[2025]
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    cells = {("country:BR", "meli:CommerceMember"): total * 0.42,
+             ("country:BR", "meli:FintechMember"): total * 0.21,
+             ("country:MX", "meli:CommerceMember"): total * 0.17}
+    for i, ((geo, biz), v) in enumerate(cells.items()):
+        extra = ('<xbrldi:explicitMember dimension="srt:ProductOrServiceAxis">'
+                 f"{biz}</xbrldi:explicitMember>")
+        parts.append(_ctx(f"x{i}", "srt:StatementGeographicalAxis", geo,
+                          "2025-01-01", "2025-12-31", extra))
+        parts.append(_fact(REV, f"x{i}", v))
+    parts.append("</xbrl>")
+
+    d = _data_with_segments()
+    d.segments = build_segment_data(["".join(parts)], "t")
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    ws = load_workbook(str(out))["Financial Model"]
+    header = [c.value for c in ws[1]]
+    labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    fy25 = header.index("FY2025") + 1
+    # synthesized Brazil total renders italic
+    br_row = labels.index("  Brazil") + 1
+    assert ws.cell(row=br_row, column=fy25).font.italic
+    # tie rows present; the FY2025 gap reads Σ/consolidated − 1 = −20%
+    gap_row = labels.index("   vs consolidated (gap %)") + 1
+    assert ws.cell(row=gap_row, column=fy25).value == pytest.approx(-0.20)
+    sig_row = labels.index("   Σ members") + 1
+    assert ws.cell(row=sig_row, column=fy25).value == pytest.approx(
+        total * 0.80 / 1e6)
+
+
+def test_tie_rows_show_zero_gap_when_members_are_complete(tmp_path):
+    d = _data_with_segments()  # product members sum to 1900 = consolidated
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    ws = load_workbook(str(out))["Financial Model"]
+    header = [c.value for c in ws[1]]
+    labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    fy25 = header.index("FY2025") + 1
+    gap_row = labels.index("   vs consolidated (gap %)") + 1
+    assert ws.cell(row=gap_row, column=fy25).value == pytest.approx(0.0)

@@ -43,7 +43,7 @@ from .edgar import (
     INSTANT_TAGS, AnnualFundamentals, QuarterlyFundamentals,
     parse_quarterly_facts,
 )
-from .metrics import DashboardData
+from .metrics import DashboardData, fy_label
 
 _MM = 1e6
 _SPAN_TOL = 14    # days tolerance matching a filed span boundary
@@ -196,8 +196,11 @@ def quarter_spine(qdata: QuarterlyFundamentals,
 def quarter_label(qe: dt.date, fy_ends: List[dt.date]) -> str:
     fy_start, containing = _fy_bounds(qe, fy_ends)
     idx = max(1, min(4, round((qe - fy_start).days / 91.3)))
-    fy_year = containing.year if containing else fy_ends[-1].year + 1
-    return f"Q{idx}'{fy_year % 100:02d}"
+    # year suffix from the dashboard's fiscal-year convention (fy_label),
+    # so off-calendar filers label consistently across the app
+    ref = containing if containing is not None \
+        else fy_ends[-1] + dt.timedelta(days=365)
+    return f"Q{idx}'{fy_label(ref)[-2:]}"
 
 
 def _ytd(entries, fy_start: dt.date, end: dt.date) -> Optional[float]:
@@ -292,6 +295,14 @@ def _annual_from_entries(entries, fy_ends: List[dt.date]
                          ) -> List[Optional[float]]:
     """Full-year values aligned to the fiscal spine (segment lines)."""
     return [next((v for s, e, v in entries
+                  if abs((e - fe).days) <= 7 and 330 <= (e - s).days <= 400),
+                 None)
+            for fe in fy_ends]
+
+
+def _annual_spans(entries, fy_ends: List[dt.date]):
+    """The matched full-year span per fiscal year (for synth-flagging)."""
+    return [next(((s, e) for s, e, v in entries
                   if abs((e - fe).days) <= 7 and 330 <= (e - s).days <= 400),
                  None)
             for fe in fy_ends]
@@ -402,7 +413,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     qdata = parse_quarterly_facts(f.raw_facts, f)
     rows, fy_ends, q_ends = build_model_rows(f, qdata)
 
-    headers = ([f"FY{e.year}" for e in fy_ends]
+    headers = ([fy_label(e) for e in fy_ends]
                + [quarter_label(qe, fy_ends) for qe in q_ends]
                + ["LTM"])
     ltm_col = 1 + len(headers)  # 1-based; column A is the line items
@@ -498,6 +509,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     # ------------------------------------------------- SEGMENTS (as filed)
     seg = getattr(d, "segments", None)
     seg_lines = list(getattr(seg, "lines", None) or [])
+    any_synth_cell = False
     if seg_lines:
         ws.cell(row=r, column=1, value="SEGMENTS (as filed)")
         for j in range(1, ltm_col + 1):
@@ -505,32 +517,84 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             c.fill = section_fill
             c.font = Font(bold=True, color=forest, size=10)
         r += 1
-        last_sub = None
-        for ln in seg_lines:
-            ann = _annual_from_entries(ln.entries, fy_ends)
-            row = _flow_row(ln.entries, ann, fy_ends, q_ends)
-            cells = list(row.ann) + list(row.q) + [row.ltm]
-            if all(v is None for v in cells):
-                continue
-            sub = f"{ln.group} by {ln.axis}"
-            if sub != last_sub:
-                c = ws.cell(row=r, column=1, value=sub)
-                c.font = Font(bold=True, italic=True, color=forest, size=9)
-                r += 1
-                last_sub = sub
-            ws.cell(row=r, column=1, value=f"  {ln.member}")
-            ws.cell(row=r, column=1).font = Font(color=ink, size=10)
-            for j, v in enumerate(cells, start=2):
+
+        def write_check_row(r, label, values, pct_fmt=False):
+            """Muted checksum row (Σ members / gap-vs-consolidated)."""
+            ws.cell(row=r, column=1, value=label)
+            ws.cell(row=r, column=1).font = Font(italic=True, color=muted,
+                                                 size=8.5)
+            bad = P.DELTA_BAD.lstrip("#").upper()
+            for j, v in enumerate(values, start=2):
                 c = ws.cell(row=r, column=j)
+                color = muted
                 if v is not None:
-                    c.value = v / _MM
-                    c.number_format = fmt_mm
-                c.font = Font(color=ink, size=10)
+                    c.value = v if pct_fmt else v / _MM
+                    c.number_format = fmt_pct if pct_fmt else fmt_mm
+                    if pct_fmt and abs(v) > 0.02:
+                        color = bad  # the tie is off — make it read as a flag
+                c.font = Font(italic=True, color=color, size=8.5)
                 c.alignment = Alignment(horizontal="right")
-                if j == ltm_col:
-                    c.fill = ltm_fill
+            return r + 1
+
+        blocks: List[Tuple[Tuple[str, str], List]] = []
+        for ln in seg_lines:  # group into (measure, axis) blocks, in order
+            key = (ln.group, ln.axis)
+            if not blocks or blocks[-1][0] != key:
+                blocks.append((key, []))
+            blocks[-1][1].append(ln)
+        for (group, axis), lns in blocks:
+            rendered = []
+            for ln in lns:
+                ann = _annual_from_entries(ln.entries, fy_ends)
+                rowv = _flow_row(ln.entries, ann, fy_ends, q_ends)
+                if any(v is not None for v in
+                       list(rowv.ann) + list(rowv.q) + [rowv.ltm]):
+                    rendered.append((ln, rowv))
+            if not rendered:
+                continue
+            c = ws.cell(row=r, column=1, value=f"{group} by {axis}")
+            c.font = Font(bold=True, italic=True, color=forest, size=9)
             r += 1
-            r = write_pct_row(r, row)
+            for ln, rowv in rendered:
+                spans = _annual_spans(ln.entries, fy_ends)
+                flags = ([sp is not None and sp in ln.synth for sp in spans]
+                         + [any(abs((e - qe).days) <= _SPAN_TOL
+                                for _, e in ln.synth) for qe in q_ends]
+                         + [bool(ln.synth)
+                            and any(e >= fy_ends[-1] for _, e in ln.synth)])
+                cells = list(rowv.ann) + list(rowv.q) + [rowv.ltm]
+                ws.cell(row=r, column=1, value=f"  {ln.member}")
+                ws.cell(row=r, column=1).font = Font(color=ink, size=10)
+                for j, (v, fl) in enumerate(zip(cells, flags), start=2):
+                    c = ws.cell(row=r, column=j)
+                    if v is not None:
+                        c.value = v / _MM
+                        c.number_format = fmt_mm
+                        if fl:
+                            any_synth_cell = True
+                    c.font = Font(color=ink, size=10, italic=fl)
+                    c.alignment = Alignment(horizontal="right")
+                    if j == ltm_col:
+                        c.fill = ltm_fill
+                r += 1
+                r = write_pct_row(r, rowv)
+            if group != "Revenue":
+                continue
+            # visible tie-out (house scale-tie doctrine): Σ of the members
+            # vs the consolidated statement, per column — a positive gap
+            # means hierarchical members double-count on this axis
+            cons = rows["revenue"]
+            cons_cells = list(cons.ann) + list(cons.q) + [cons.ltm]
+            sums: List[Optional[float]] = []
+            for i in range(len(cons_cells)):
+                vals = [(list(rv.ann) + list(rv.q) + [rv.ltm])[i]
+                        for _, rv in rendered]
+                vals = [v for v in vals if v is not None]
+                sums.append(sum(vals) if vals else None)
+            r = write_check_row(r, "   Σ members", sums)
+            r = write_check_row(r, "   vs consolidated (gap %)",
+                                [_pct(sv, cv) for sv, cv
+                                 in zip(sums, cons_cells)], pct_fmt=True)
 
     # ---------------------------------------------------------- footnotes
     notes = [
@@ -541,7 +605,8 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         "Quarter columns are the last four fiscal quarters: discrete "
         "3-month values as filed, else fiscal-YTD differencing (10-Q "
         "cash-flow statements are YTD-only); a fiscal Q4 is derived as "
-        "FY − 9-month YTD (or FY − ΣQ1..Q3).",
+        "FY − 9-month YTD (or FY − ΣQ1..Q3) — note a restated FY places "
+        "the full restatement delta in that derived Q4.",
         "LTM (flows) = last FY + latest fiscal YTD − year-ago comparative "
         "YTD (= the FY itself when the latest period end is the FY end, or "
         "when a concept has no current-year interim data). Balance-sheet "
@@ -565,8 +630,18 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             f"Segments: dimensional XBRL parsed from {src}; history depth "
             "= as reported there (a 10-K carries 2–3 comparative years, "
             "the 10-Q the current quarters + year-ago comparatives). "
-            "Members ordered by latest annual revenue."
+            "Members ordered by latest annual revenue. The 'Σ members' / "
+            "'vs consolidated (gap %)' rows tie each revenue block to the "
+            "consolidated statement — a positive gap beyond +2% signals "
+            "hierarchical (parent + child) members double-counting on that "
+            "axis; a negative gap means members the filer left untagged."
             + (f" Note: {extra}." if extra else "")))
+        if any_synth_cell:
+            notes.insert(-1, (
+                "Italic segment cells were synthesized by summing the "
+                "two-axis disaggregation table (not directly filed); the "
+                "gap row shows how completely that table covers the "
+                "consolidated total."))
     else:
         why = getattr(seg, "status", "") if seg is not None else \
             "not fetched in this run"
@@ -574,6 +649,15 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             "Segments: no dimensional segment data in this workbook — "
             + (why or "it lives in the 10-K/10-Q XBRL instance (fetched "
                       "live, not in the companyfacts API)") + "."))
+    tagged_pt, merged_pt = rows["pretax_income"], rows["=pretax"]
+    if any(t is None and m is not None for t, m in zip(
+            list(tagged_pt.ann) + list(tagged_pt.q) + [tagged_pt.ltm],
+            list(merged_pt.ann) + list(merged_pt.q) + [merged_pt.ltm])):
+        notes.insert(-1, (
+            "Income Before Taxes cells without a filed pretax tag are "
+            "derived as Net Income + Tax Provision; parent-attributable "
+            "net income understates pretax income when minority interest "
+            "is material."))
     tag_bits = "; ".join(f"{k} = {v}" for k, v in sorted(f.tags_used.items()))
     if tag_bits:
         notes.append(f"XBRL tags: {tag_bits}")

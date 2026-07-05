@@ -83,6 +83,9 @@ class SegmentLine:
     member: str          # display label, e.g. "Brazil"
     group: str           # "Revenue" / "Operating income" / …
     entries: List[Entry] = field(default_factory=list)
+    # spans whose value was summed from the two-axis table (not filed
+    # directly) — rendered distinctly so a reader can tell them apart
+    synth: set = field(default_factory=set)
 
     def latest(self) -> Optional[float]:
         annual = [v for s, e, v in self.entries if 330 <= (e - s).days <= 400]
@@ -241,6 +244,7 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
     # synthesize single-axis totals from the two-axis table where absent
     synthesized = 0
     synth: Dict[Tuple[str, str, str], Dict[Span, float]] = {}
+    adopted: Dict[Tuple[str, str, str], set] = {}
     for (ax1, m1, ax2, m2, concept), spans in crosses.items():
         for side_axis, side_member in ((ax1, m1), (ax2, m2)):
             key = (side_axis, side_member, concept)
@@ -253,6 +257,7 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
         for span, val in spans.items():
             if span not in singles.get(key, {}):
                 singles.setdefault(key, {})[span] = val
+                adopted.setdefault(key, set()).add(span)
                 synthesized += 1
 
     # pick one concept per (axis, member, group): most observations wins
@@ -269,7 +274,8 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
         spans = singles[(axis, member, concept)]
         lines.append(SegmentLine(
             axis=axis, member=member, group=group,
-            entries=[(s, e, v) for (s, e), v in sorted(spans.items())]))
+            entries=[(s, e, v) for (s, e), v in sorted(spans.items())],
+            synth=adopted.get((axis, member, concept), set())))
 
     axis_rank = {a: i for i, a in enumerate(_AXIS_ORDER)}
     rev_size = {(ln.axis, ln.member): -(ln.latest() or 0.0)

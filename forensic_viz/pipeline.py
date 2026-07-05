@@ -76,10 +76,14 @@ def build_dashboard_data(
 
     progress("Fetching segment disclosures (10-K/10-Q XBRL instances)…")
     try:
-        from .segments import fetch_segment_data
-        data.segments = fetch_segment_data(fundamentals, cache=cache)
+        from .segments import SegmentData, fetch_segment_data
+        try:
+            data.segments = fetch_segment_data(fundamentals, cache=cache)
+        except Exception as exc:  # enrichment only — but keep the reason
+            data.segments = SegmentData(
+                status=f"segment fetch failed: {type(exc).__name__}: {exc}")
     except Exception:
-        data.segments = None  # enrichment only; never sink the dashboard
+        data.segments = None  # segments module itself unavailable
     seg = data.segments
     if seg is not None and seg.n_segments >= 2:
         ax = seg.axes()[0]
