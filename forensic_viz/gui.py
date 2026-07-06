@@ -918,8 +918,18 @@ class _AnalystInputsDialog(tk.Toplevel):
         ttk.Entry(top, textvariable=self.nonop_var, width=24).grid(
             row=7, column=0, sticky="w", pady=(0, 10))
 
+        ttk.Label(top, text="SBC override, $/yr (comp note — for a dead "
+                            "tagged series or cash-settled LTRP-style "
+                            "compensation; drives the Track B ex-SBC basis):").grid(
+            row=8, column=0, sticky="w", pady=(0, 2))
+        self.sbc_var = tk.StringVar(
+            value="" if data.sbc_override is None
+            else f"{data.sbc_override:.0f}")
+        ttk.Entry(top, textvariable=self.sbc_var, width=24).grid(
+            row=9, column=0, sticky="w", pady=(0, 10))
+
         btns = ttk.Frame(top)
-        btns.grid(row=8, column=0, sticky="e")
+        btns.grid(row=10, column=0, sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(btns, text="Apply", command=self._apply).pack(
             side=tk.RIGHT, padx=(0, 8))
@@ -944,10 +954,20 @@ class _AnalystInputsDialog(tk.Toplevel):
             messagebox.showerror("Check the inputs",
                                  f"Non-op investments: {exc}", parent=self)
             return
+        sbc_raw = self.sbc_var.get().strip().replace(",", "")
+        try:
+            sbc_over = float(sbc_raw) if sbc_raw else None
+            if sbc_over is not None and not math.isfinite(sbc_over):
+                raise ValueError("must be finite")
+        except ValueError as exc:
+            messagebox.showerror("Check the inputs",
+                                 f"SBC override: {exc}", parent=self)
+            return
         set_adjusted_ni(self.data, adjusted)
         self.data.thesis = self.thesis_txt.get("1.0", "end").strip()
         self.data.terminal_risk = self.risk_txt.get("1.0", "end").strip()
         self.data.non_op_investments = nonop
+        self.data.sbc_override = sbc_over
         try:
             self.on_done()
         except Exception:

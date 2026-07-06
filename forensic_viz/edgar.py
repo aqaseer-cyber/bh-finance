@@ -71,6 +71,9 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "NetCashProvidedByUsedInInvestingActivities",
         "NetCashProvidedByUsedInInvestingActivitiesContinuingOperations",
     ],
+    # capitalized-cost SBC elements (…CapitalizedAmount) are excluded by
+    # design — capitalized ≠ expensed (MELI: the only covered ShareBased
+    # concept is a capitalized amount; using it would misstate the expense)
     "sbc": [
         "ShareBasedCompensation",
         "AllocatedShareBasedCompensationExpense",
@@ -83,12 +86,15 @@ DURATION_TAGS: Dict[str, List[str]] = {
         "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost",
         "TechnologyAndDevelopmentExpense",
     ],
-    # Phase-4 FCFF bridge inputs (master §4.0: FCFF = FCF + after-tax interest)
+    # Phase-4 FCFF bridge inputs (master §4.0: FCFF = FCF + after-tax
+    # interest). FinanceLeaseInterestExpense is a component — excluded to
+    # avoid double-count when filers tag both it and a total.
     "interest_expense": [
         "InterestExpense",
         "InterestExpenseDebt",
         "InterestAndDebtExpense",
         "InterestExpenseNonoperating",
+        "InterestExpenseAndOtherFinancialCharges",  # MELI FY2019+ rotation
     ],
     "tax_expense": ["IncomeTaxExpenseBenefit"],
     "pretax_income": [

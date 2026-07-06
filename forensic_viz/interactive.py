@@ -381,7 +381,8 @@ def _sandbox_html(d: DashboardData, res=None) -> str:
     if d.last_close is None or not shares or base_a is None or base_a <= 0 \
             or d.track in ("bank", "insurance"):
         return ""  # DCF sandbox only where an FCFF base exists
-    sbc = _latest(d.sbc) or 0.0
+    from .valuation import effective_sbc  # FIX-11d: override-aware SBC
+    sbc = effective_sbc(d) or 0.0
     base_b = max(base_a - sbc, 0.0)
     if res is not None and res.bridge is not None:
         bridge = res.bridge  # audited bridge from the valuation run

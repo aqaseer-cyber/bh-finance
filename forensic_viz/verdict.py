@@ -36,7 +36,8 @@ from typing import List, Optional
 from . import config
 from .metrics import DashboardData, fmt_pct
 from .valuation import (
-    CASE_NAMES, ValuationInputs, ValuationResult, dcf_fcff, residual_income,
+    CASE_NAMES, ValuationInputs, ValuationResult, dcf_fcff, effective_sbc,
+    residual_income,
 )
 
 RATINGS = ("", "Strong Buy", "Buy", "Hold", "Sell")
@@ -110,7 +111,9 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
         base_a = res.base_value if not inputs.ex_sbc else None
         if base_a is None:
             base_a = _latest(d.fcff)
-        sbc = _latest(d.sbc) or 0.0
+        # FIX-11d: same SBC read as valuation (override-aware) — the two
+        # engines cannot diverge on the Track B basis
+        sbc = effective_sbc(d) or 0.0
         base_b = (base_a - sbc) if base_a is not None else None
         track_a_label = "Track A — as-reported FCFF, Bear growths"
         track_b_label = "Track B — ex-SBC FCFF (house §2b), Base growths"

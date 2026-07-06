@@ -173,6 +173,33 @@ def _latest(seq) -> Optional[float]:
     return None
 
 
+def effective_sbc(d) -> Optional[float]:
+    """Analyst override wins; else latest tagged SBC; None when neither.
+
+    The single SBC read for the ex-SBC base and the FIX-2 reverse-DCF
+    basis (Track B), so valuation and verdict cannot diverge (FIX-11d).
+    """
+    return d.sbc_override if d.sbc_override is not None else _latest(d.sbc)
+
+
+def sbc_series_warning(d) -> Optional[str]:
+    """Warn when the tagged SBC series dies before the latest fiscal year
+    and no analyst override is set — Track B then rides a stale (or
+    missing) SBC figure without saying so."""
+    if getattr(d, "sbc_override", None) is not None or not d.sbc \
+            or d.sbc[-1] is not None:
+        return None
+    idx = [i for i, v in enumerate(d.sbc) if v is not None]
+    if not idx:
+        return None  # never tagged at all: ex-SBC == as-reported by design
+    last = (d.fy_labels[idx[-1]] if d.fy_labels
+            and idx[-1] < len(d.fy_labels) else "an earlier year")
+    return (f"SBC series ends {last} under all candidate tags — Track B "
+            "currently rides that stale figure; if compensation is "
+            "cash-settled (LTRP-style) label the decision, otherwise set "
+            "the SBC override from the comp note")
+
+
 def _require(value: Optional[float], what: str) -> float:
     if value is None:
         raise ValuationError(f"{what} is required for this method.")
@@ -246,7 +273,7 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
         if base is None:
             base = _latest(d.fcff)  # FCF + after-tax interest (master §4.0)
             if base is not None and inputs.ex_sbc:
-                sbc = _latest(d.sbc)
+                sbc = effective_sbc(d)
                 if sbc is not None:
                     base -= sbc
             # the base's leveredness is a property of the LATEST year only:
@@ -287,7 +314,10 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
         result.market_ev = market_ev
         # Reverse-DCF basis is Track B ex-SBC, mirroring Control!B58 (which
         # divides FCFF_DCF!C5 — the ex-SBC base — by the full market EV)
-        sbc_latest = _latest(d.sbc) or 0.0
+        sbc_warn = sbc_series_warning(d)
+        if sbc_warn:
+            warnings.append(sbc_warn)
+        sbc_latest = effective_sbc(d) or 0.0
         base_b = base if inputs.ex_sbc else base - sbc_latest
         if base_b > 0:
             result.implied_g = reverse_dcf_implied_g(base_b, rate, market_ev)

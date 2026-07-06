@@ -135,6 +135,10 @@ def main(argv=None) -> int:
     parser.add_argument("--non-op-investments", type=float, metavar="DOLLARS",
                         help="non-operating investments for the equity bridge "
                              "(Phase1_Anchor!B19, analyst input; $ not $mm)")
+    parser.add_argument("--sbc-override", type=float, metavar="DOLLARS",
+                        help="annual SBC override for the Track B ex-SBC "
+                             "basis (comp note; use when the tagged series "
+                             "dies or compensation is cash-settled)")
 
     val = parser.add_argument_group("intrinsic value (Bear/Base/Bull)")
     val.add_argument("--value", choices=["dcf", "ri", "affo", "manual"],
@@ -247,6 +251,8 @@ def main(argv=None) -> int:
         data.terminal_risk = args.terminal_risk
     if args.non_op_investments is not None:
         data.non_op_investments = args.non_op_investments
+    if args.sbc_override is not None:
+        data.sbc_override = args.sbc_override
 
     from .dashboard import (
         render_dashboard, render_health_report, render_unit_economics,

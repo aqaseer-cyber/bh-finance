@@ -121,6 +121,10 @@ class DashboardData:
     # Fluff filter (master §3.1) — analyst-supplied non-GAAP figure
     adjusted_ni: Optional[float] = None
     adjustment_burden: Optional[float] = None
+    # FIX-11d: analyst SBC override (annual $, from the comp note) — for
+    # filers whose SBC series dies under every candidate tag, or whose
+    # compensation is cash-settled (LTRP-style)
+    sbc_override: Optional[float] = None
 
     # Phase-2 unit economics (aligned with fy_labels)
     dsi: List[Optional[float]] = field(default_factory=list)   # days inventory
