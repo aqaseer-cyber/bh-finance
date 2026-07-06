@@ -51,6 +51,9 @@ def build_dashboard_data(
     data.latest_10q_date = fundamentals.latest_10q_date
     apply_track(data, track)
     build_fundamental_metrics(fundamentals, data)
+    # FIX-11a: tag-selection decisions (revenue basis coherence) surface on
+    # the health page and in the audit CSV like any other health note
+    data.health_notes.extend(fundamentals.selection_notes)
 
     progress(f"Fetching {data.display_years}-year price history…")
     full_dates: list = []

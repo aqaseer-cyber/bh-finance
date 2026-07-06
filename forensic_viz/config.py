@@ -76,6 +76,9 @@ BANK_NIM_SHOCK          = float(_HOUSE.get("bank_nim_shock", -0.01))
 INSURANCE_CR_SHOCK      = float(_HOUSE.get("insurance_cr_shock", 0.05))
 REIT_YIELD_SHOCK        = float(_HOUSE.get("reit_yield_shock", 0.01))
 
+# FIX-11: income-statement basis coherence (house-wired in FIX-11e)
+IS_TIE_TOL = 0.02  # Revenue ≈ GrossProfit + CostOfRevenue tolerance
+
 ALTMAN_DISTRESS = 1.81      # Altman Z zone boundaries (original 1968 model —
 ALTMAN_SAFE = 2.99          # a fixed academic constant, not a house parameter)
 BETA_MIN_OBS = 40           # minimum weekly observations for the regression

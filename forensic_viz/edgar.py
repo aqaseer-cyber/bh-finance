@@ -225,6 +225,10 @@ class AnnualFundamentals:
     latest_10k_document: str = ""
     latest_10q_accession: str = ""
     latest_10q_document: str = ""
+    # FIX-11a: per-year tag provenance (concept -> fy_end -> tag that
+    # supplied that year) and human-readable selection decisions
+    year_sources: Dict[str, Dict[dt.date, str]] = field(default_factory=dict)
+    selection_notes: List[str] = field(default_factory=list)
     # full companyfacts payload, kept so the financial-model export can pull
     # interim (10-Q) observations without a second fetch
     raw_facts: Optional[dict] = field(default=None, repr=False)
@@ -629,10 +633,95 @@ def parse_companyfacts(
                 values, candidates, tag, units, _annual_instant_obs, _match_instant)
         series[concept] = values
 
-    return AnnualFundamentals(
+    result = AnnualFundamentals(
         cik=cik, entity_name=entity, fy_ends=fy_ends, series=series,
         tags_used=tags_used, raw_facts=facts,
     )
+    _apply_revenue_coherence(result, gaap)
+    return result
+
+
+def _year_span(fy_ends: List[dt.date]) -> str:
+    years = sorted(fe.year for fe in fy_ends)
+    return (f"FY{years[0]}–FY{years[-1]}" if len(years) > 1
+            else f"FY{years[0]}")
+
+
+def _apply_revenue_coherence(annual: AnnualFundamentals, gaap: dict) -> None:
+    """Per fiscal year, prefer the revenue tag satisfying
+    revenue ≈ gross_profit + cost_of_revenue (IS_TIE_TOL).
+
+    The income statement supplies its own referee: filers like MELI tag
+    BOTH a headline total (``Revenues``) and a contract-only subtotal
+    undimensioned, and coverage+recency scoring can pick the subtotal
+    while COGS and GrossProfit sit on the headline basis — every
+    revenue-denominated ratio then computes on the wrong basis.
+
+    Runs only for years where BOTH the gross-profit and cost-of-revenue
+    winners have values. Substitutions are recorded in tags_used
+    (gap-fill note format), year_sources["revenue"], and
+    selection_notes. Years where no candidate is coherent keep the
+    winner and add a warning note — never fabricate.
+    """
+    n = len(annual.fy_ends)
+    gp = annual.series.get("gross_profit") or [None] * n
+    cogs = annual.series.get("cost_of_revenue") or [None] * n
+    rev = annual.series.get("revenue")
+    if rev is None:
+        return
+    tol = config.IS_TIE_TOL
+    obs_by_tag: Dict[str, Dict[dt.date, float]] = {}
+    for tag in DURATION_TAGS["revenue"]:
+        tag_units = gaap.get(tag, {}).get("units")
+        if tag_units:
+            obs = _annual_duration_obs(tag_units, _DEFAULT_UNITS)
+            if obs:
+                obs_by_tag[tag] = obs
+
+    def ok(v: Optional[float], target: float) -> bool:
+        return v is not None and v > 0 and abs(v - target) <= tol * target
+
+    subs: Dict[str, List[dt.date]] = {}
+    unresolved: List[dt.date] = []
+    pass_chosen: List[str] = []  # series stability: reuse this pass's tags
+    for i, fe in enumerate(annual.fy_ends):
+        if gp[i] is None or cogs[i] is None:
+            continue  # identity not checkable this year
+        target = gp[i] + cogs[i]
+        if target <= 0:
+            continue
+        if ok(rev[i], target):
+            continue  # the winner already satisfies the identity
+        order = ([t for t in pass_chosen if t in obs_by_tag]
+                 + [t for t in DURATION_TAGS["revenue"]
+                    if t not in pass_chosen])
+        new_tag = next((t for t in order
+                        if ok(obs_by_tag.get(t, {}).get(fe), target)), None)
+        if new_tag is None:
+            unresolved.append(fe)
+            continue
+        rev[i] = obs_by_tag[new_tag][fe]
+        annual.year_sources.setdefault("revenue", {})[fe] = new_tag
+        subs.setdefault(new_tag, []).append(fe)
+        if new_tag not in pass_chosen:
+            pass_chosen.append(new_tag)
+
+    if subs:
+        suffix = "; ".join(f"{_year_span(fes)} from {t} — basis coherence"
+                           for t, fes in subs.items())
+        cur = annual.tags_used.get("revenue", "")
+        if cur.endswith(")"):
+            annual.tags_used["revenue"] = cur[:-1] + f"; {suffix})"
+        else:
+            annual.tags_used["revenue"] = f"{cur} ({suffix})" if cur else suffix
+        for t, fes in subs.items():
+            annual.selection_notes.append(
+                f"Revenue basis: winner failed Rev ≈ GP + COGS in "
+                f"{_year_span(fes)}; substituted {t}")
+    for fe in unresolved:
+        annual.selection_notes.append(
+            f"Revenue basis UNRESOLVED in FY{fe.year}: no candidate within "
+            f"±{tol:.0%} of GP + COGS — margins for that year are suspect")
 
 
 def fetch_fundamentals(
