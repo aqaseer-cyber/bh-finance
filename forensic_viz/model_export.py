@@ -122,6 +122,11 @@ class ModelRow:
     ltm: Optional[float]
     # same-quarter-a-year-earlier values, aligned to q (drives the YoY cells)
     q_prior: List[Optional[float]] = field(default_factory=list)
+    # FIX-11c provenance: "ltm" (true trailing twelve months), "fy" (fell
+    # back to the completed fiscal year), "mixed" (derived row whose legs
+    # disagree — value suppressed), "none"
+    ltm_basis: str = "none"
+    ltm_date: Optional[dt.date] = None       # balance date (instant rows)
 
 
 # ---------------------------------------------------------------- span math
@@ -251,32 +256,37 @@ def _discrete(entries, qe: dt.date, fy_ends: List[dt.date],
 
 
 def _ltm_flow(fy_val: Optional[float], entries, fy_ends: List[dt.date],
-              q_ends: List[dt.date]) -> Optional[float]:
-    """LTM = last FY + latest filed fiscal YTD − year-ago comparative YTD."""
+              q_ends: List[dt.date]) -> Tuple[Optional[float], str]:
+    """LTM = last FY + latest filed fiscal YTD − year-ago comparative YTD.
+
+    Returns (value, basis): basis "ltm" for a true trailing twelve months,
+    "fy" when the value fell back to the completed fiscal year, "none"
+    when nothing could be computed (FIX-11c provenance).
+    """
     if fy_val is None:
-        return None
+        return None, "none"
     if not q_ends:
-        return fy_val  # trailing twelve months == the completed year
+        return fy_val, "fy"  # trailing twelve months == the completed year
     last_fy_end = fy_ends[-1]
     fy_start = last_fy_end + dt.timedelta(days=1)
     prior_fy_start = (fy_ends[-2] + dt.timedelta(days=1)
                       if len(fy_ends) >= 2 else None)
     for qe in reversed(q_ends):  # latest period end with a usable YTD
         if abs((qe - last_fy_end).days) <= 7:
-            return fy_val  # the latest period IS the fiscal year
+            return fy_val, "fy"  # the latest period IS the fiscal year
         if qe < last_fy_end:
             continue  # stale interim inside an already-reported year
         ytd = _ytd(entries, fy_start, qe)
         if ytd is None:
             continue
         if prior_fy_start is None:
-            return None
+            return None, "none"
         prior = _find_span(entries, prior_fy_start,
                            qe - dt.timedelta(days=365), tol=_YEAR_TOL)
         if prior is None:
-            return None
-        return fy_val + ytd - prior
-    return None
+            return None, "none"
+        return fy_val + ytd - prior, "ltm"
+    return None, "none"
 
 
 def _latest(vals: List[Optional[float]]) -> Optional[float]:
@@ -323,11 +333,14 @@ def _flow_row(entries, ann: List[Optional[float]], fy_ends: List[dt.date],
                for qe in q_ends]
     if shares_like:
         ltm = _latest(qs)  # latest weighted count
+        basis = "ltm" if ltm is not None else "none"
         if ltm is None:
             ltm = _latest(ann)
+            basis = "fy" if ltm is not None else "none"
     else:
-        ltm = _ltm_flow(ann[-1] if ann else None, entries, fy_ends, q_ends)
-    return ModelRow(ann, qs, ltm, q_prior)
+        ltm, basis = _ltm_flow(ann[-1] if ann else None, entries,
+                               fy_ends, q_ends)
+    return ModelRow(ann, qs, ltm, q_prior, ltm_basis=basis)
 
 
 # ----------------------------------------------------------- consolidation
@@ -348,9 +361,17 @@ def build_model_rows(annual: AnnualFundamentals,
             obs = qdata.instant.get(concept, {})
             qs = [_match_instant(obs, qe) for qe in q_ends]
             ltm = _latest(qs)
+            ltm_date = next((qe for qe, v in zip(reversed(q_ends),
+                                                 reversed(qs))
+                             if v is not None), None)
             if ltm is None:
                 ltm = _latest(ann)  # latest period-end balance
-            rows[concept] = ModelRow(ann, qs, ltm, [None] * len(q_ends))
+                ltm_date = next((fe for fe, v in zip(reversed(fy_ends),
+                                                     reversed(ann))
+                                 if v is not None), None)
+            rows[concept] = ModelRow(ann, qs, ltm, [None] * len(q_ends),
+                                     ltm_basis="ltm" if ltm is not None
+                                     else "none", ltm_date=ltm_date)
             continue
         rows[concept] = _flow_row(
             qdata.duration.get(concept, []), ann, fy_ends, q_ends,
@@ -360,12 +381,22 @@ def build_model_rows(annual: AnnualFundamentals,
     def _combine(a: ModelRow, b: ModelRow, op) -> ModelRow:
         def cell(x, y):
             return op(x, y) if x is not None and y is not None else None
+        # FIX-11c: an LTM only combines when both legs share a basis — a
+        # trailing-twelve-month leg minus a fiscal-year leg is a number
+        # that means nothing; suppress it and say so (basis "mixed")
+        if a.ltm is None or b.ltm is None:
+            ltm, basis = None, "none"
+        elif a.ltm_basis == b.ltm_basis:
+            ltm, basis = op(a.ltm, b.ltm), a.ltm_basis
+        else:
+            ltm, basis = None, "mixed"
         # prior-of-a-difference == difference-of-priors, so q_prior combines
         # element-wise exactly like the displayed quarters
         return ModelRow([cell(x, y) for x, y in zip(a.ann, b.ann)],
                         [cell(x, y) for x, y in zip(a.q, b.q)],
-                        cell(a.ltm, b.ltm),
-                        [cell(x, y) for x, y in zip(a.q_prior, b.q_prior)])
+                        ltm,
+                        [cell(x, y) for x, y in zip(a.q_prior, b.q_prior)],
+                        ltm_basis=basis)
 
     def _prefer(tagged: ModelRow, derived: ModelRow) -> ModelRow:
         def cell(t, d):
@@ -374,7 +405,9 @@ def build_model_rows(annual: AnnualFundamentals,
                         [cell(t, d) for t, d in zip(tagged.q, derived.q)],
                         cell(tagged.ltm, derived.ltm),
                         [cell(t, d) for t, d in
-                         zip(tagged.q_prior, derived.q_prior)])
+                         zip(tagged.q_prior, derived.q_prior)],
+                        ltm_basis=(tagged.ltm_basis if tagged.ltm is not None
+                                   else derived.ltm_basis))
 
     sub = lambda x, y: x - y  # noqa: E731
     add = lambda x, y: x + y  # noqa: E731
@@ -470,6 +503,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     fmt_eps = "0.00;(0.00)"
     fmt_pct = "0.0%;(0.0%)"
     is_tie_breached = False  # set by the FIX-11b Rev−COGS-vs-GP tie row
+    rendered_rows: List[Tuple[str, str, str]] = []  # (label, concept, style)
 
     def pct_cells(row: ModelRow) -> List[Optional[float]]:
         """FY cells: YoY vs prior FY · quarter cells: YoY vs the same
@@ -509,7 +543,9 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         cells = list(row.ann) + list(row.q) + [row.ltm]
         if all(v is None for v in cells):
             continue  # the filer never reports this line — drop the row
-        ws.cell(row=r, column=1, value=_label_for(label, concept, f))
+        disp = _label_for(label, concept, f)
+        rendered_rows.append((disp, concept, style))
+        ws.cell(row=r, column=1, value=disp)
         scale = 1.0 if style == "eps" else _MM
         numfmt = fmt_eps if style == "eps" else fmt_mm
         bold = style == "total"
@@ -688,6 +724,33 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             f"±{config.IS_TIE_TOL:.0%} in the flagged columns — the three "
             "lines are not on one accounting basis; see the XBRL tags "
             "footnote."))
+    # FIX-11c: LTM basis provenance on the sheet's face
+    for lbl, c, _st in rendered_rows:
+        if rows[c].ltm_basis == "mixed":
+            notes.insert(-1, (
+                f"LTM suppressed (mixed basis): {lbl} — one leg is "
+                "trailing-twelve-month, the other has no current-year "
+                "interim data."))
+    if q_ends and q_ends[-1] > fy_ends[-1]:
+        fy_rows = [lbl for lbl, c, st in rendered_rows
+                   if c not in INSTANT_TAGS and st != "shares"
+                   and rows[c].ltm_basis == "fy"]
+        if fy_rows:
+            notes.insert(-1, (
+                f"LTM equals {fy_label(fy_ends[-1])} (no current-year "
+                "interim data under any candidate tag): "
+                + ", ".join(fy_rows) + "."))
+        stale = [(lbl, rows[c].ltm_date) for lbl, c, _st in rendered_rows
+                 if c in INSTANT_TAGS and rows[c].ltm_date is not None
+                 and (q_ends[-1] - rows[c].ltm_date).days > _SPAN_TOL]
+        if stale:
+            notes.insert(-1, (
+                "Balance shown is the latest tagged period-end, older than "
+                "the newest quarter column: "
+                + ", ".join(f"{lbl} ({d.isoformat()})" for lbl, d in stale)
+                + "."))
+    for note in qdata.source_notes:
+        notes.insert(-1, "Interim gap-fill: " + note)
     tagged_pt, merged_pt = rows["pretax_income"], rows["=pretax"]
     if any(t is None and m is not None for t, m in zip(
             list(tagged_pt.ann) + list(tagged_pt.q) + [tagged_pt.ltm],

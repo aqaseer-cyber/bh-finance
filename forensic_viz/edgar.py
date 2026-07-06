@@ -254,6 +254,9 @@ class QuarterlyFundamentals:
     duration: Dict[str, List[Tuple[dt.date, dt.date, float]]] = field(
         default_factory=dict)
     instant: Dict[str, Dict[dt.date, float]] = field(default_factory=dict)
+    # FIX-11c: per-span gap-fill provenance — which non-primary tags
+    # supplied interim spans (audit trail for the export footnotes)
+    source_notes: List[str] = field(default_factory=list)
 
 
 class _SecSession:
@@ -450,30 +453,61 @@ def parse_quarterly_facts(
 
     def ordered(concept: str, candidates: List[str]) -> List[str]:
         primary = (annual.tags_used.get(concept) or "").split(" (")[0]
-        rest = [t for t in candidates if t != primary]
-        return ([primary] if primary else []) + rest
+        pri = [primary] if primary else []
+        if concept == "revenue":
+            # FIX-11c: follow the FIX-11a basis decision — tags that
+            # supplied annual years via coherence rank first (most-recent
+            # year first), so quarter cells sit on the basis the annual
+            # row shows
+            ys = getattr(annual, "year_sources", {}).get("revenue", {})
+            recent_first: List[str] = []
+            for fe in sorted(ys, reverse=True):
+                if ys[fe] not in recent_first:
+                    recent_first.append(ys[fe])
+            pri = recent_first + [t for t in pri if t not in recent_first]
+        return pri + [t for t in candidates if t not in pri]
 
+    # FIX-11c: per-span union with priority — the old first-tag-with-data
+    # rule let a winner's stale interim history block fall-through, leaving
+    # whole quarter columns blank while a sibling tag carried them (MELI
+    # capex: annual under …PropertyPlantAndEquipment, 10-Q under
+    # …ProductiveAssets). Lowest priority wins per span.
     for concept, candidates in DURATION_TAGS.items():
         units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
-        for tag in ordered(concept, candidates):
+        merged: Dict[Tuple[dt.date, dt.date], Tuple[int, str, float]] = {}
+        for prio, tag in enumerate(ordered(concept, candidates)):
             tag_units = gaap.get(tag, {}).get("units")
             if not tag_units:
                 continue
-            obs = _duration_obs_all(tag_units, units)
-            if obs:
-                q.duration[concept] = [
-                    (s, e, v) for (s, e), v in sorted(obs.items())]
-                break
+            for span, val in _duration_obs_all(tag_units, units).items():
+                cur = merged.get(span)
+                if cur is None or prio < cur[0]:
+                    merged[span] = (prio, tag, val)
+        if merged:
+            q.duration[concept] = [(s, e, v) for (s, e), (_p, _t, v)
+                                   in sorted(merged.items())]
+            fill_tags = sorted({t for p, t, _ in merged.values() if p > 0})
+            if fill_tags:
+                q.source_notes.append(
+                    f"{concept}: interim spans also from {fill_tags}")
     for concept, candidates in INSTANT_TAGS.items():
         units = _UNITS_BY_CONCEPT.get(concept, _DEFAULT_UNITS)
-        for tag in ordered(concept, candidates):
+        merged_i: Dict[dt.date, Tuple[int, str, float]] = {}
+        for prio, tag in enumerate(ordered(concept, candidates)):
             tag_units = gaap.get(tag, {}).get("units")
             if not tag_units:
                 continue
-            obs = _instant_obs_all(tag_units, units)
-            if obs:
-                q.instant[concept] = obs
-                break
+            for end, val in _instant_obs_all(tag_units, units).items():
+                cur = merged_i.get(end)
+                if cur is None or prio < cur[0]:
+                    merged_i[end] = (prio, tag, val)
+        if merged_i:
+            q.instant[concept] = {end: v for end, (_p, _t, v)
+                                  in sorted(merged_i.items())}
+            fill_tags = sorted({t for p, t, _ in merged_i.values() if p > 0})
+            if fill_tags:
+                q.source_notes.append(
+                    f"{concept}: period-end balances also from {fill_tags}")
     return q
 
 
