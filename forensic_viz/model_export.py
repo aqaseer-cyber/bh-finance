@@ -38,6 +38,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from . import config
 from . import palette as P
 from .edgar import (
     INSTANT_TAGS, AnnualFundamentals, QuarterlyFundamentals,
@@ -391,6 +392,29 @@ def build_model_rows(annual: AnnualFundamentals,
 
 # ------------------------------------------------------------------ writer
 
+def _write_check_row(ws, r: int, label: str, values, ltm_col: int,
+                     pct_fmt: bool = False, tol: float = 0.02) -> int:
+    """Muted checksum row (segment Σ/gap, income-statement tie): values
+    beyond `tol` render in the flag red. Shared by the IS tie row and the
+    segments block."""
+    from openpyxl.styles import Alignment, Font
+    muted = P.INK_MUTED.lstrip("#").upper()
+    bad = P.DELTA_BAD.lstrip("#").upper()
+    ws.cell(row=r, column=1, value=label)
+    ws.cell(row=r, column=1).font = Font(italic=True, color=muted, size=8.5)
+    for j, v in enumerate(values, start=2):
+        c = ws.cell(row=r, column=j)
+        color = muted
+        if v is not None:
+            c.value = v if pct_fmt else v / _MM
+            c.number_format = "0.0%;(0.0%)" if pct_fmt else "#,##0.0;(#,##0.0)"
+            if pct_fmt and abs(v) > tol:
+                color = bad  # the tie is off — make it read as a flag
+        c.font = Font(italic=True, color=color, size=8.5)
+        c.alignment = Alignment(horizontal="right")
+    return r + 1
+
+
 def _label_for(default: str, concept: Optional[str],
                annual: AnnualFundamentals) -> str:
     if not concept or concept.startswith("="):
@@ -445,6 +469,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     fmt_mm = "#,##0.0;(#,##0.0)"
     fmt_eps = "0.00;(0.00)"
     fmt_pct = "0.0%;(0.0%)"
+    is_tie_breached = False  # set by the FIX-11b Rev−COGS-vs-GP tie row
 
     def pct_cells(row: ModelRow) -> List[Optional[float]]:
         """FY cells: YoY vs prior FY · quarter cells: YoY vs the same
@@ -505,6 +530,30 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         r += 1
         if pct_row:
             r = write_pct_row(r, row)
+        if concept == "=gross_profit":
+            # FIX-11b: the income statement referees itself on the sheet's
+            # face — Revenue − Cost of Revenue must equal the TAGGED Gross
+            # Profit; a breach means the three lines mix accounting bases
+            # (MELI: headline vs contract-only revenue).
+            tag_gp, rev_r, cogs_r = (rows["gross_profit"], rows["revenue"],
+                                     rows["cost_of_revenue"])
+
+            def _cells(mr: ModelRow):
+                return list(mr.ann) + list(mr.q) + [mr.ltm]
+
+            if all(any(v is not None for v in _cells(mr))
+                   for mr in (tag_gp, rev_r, cogs_r)):
+                gaps = [((rv - cg - gp_) / rv
+                         if None not in (rv, cg, gp_) and rv else None)
+                        for rv, cg, gp_ in zip(_cells(rev_r), _cells(cogs_r),
+                                               _cells(tag_gp))]
+                if any(g is not None for g in gaps):
+                    r = _write_check_row(ws, r, "   Rev − COGS vs GP (gap)",
+                                         gaps, ltm_col, pct_fmt=True,
+                                         tol=config.IS_TIE_TOL)
+                    is_tie_breached = any(
+                        g is not None and abs(g) > config.IS_TIE_TOL
+                        for g in gaps)
 
     # ------------------------------------------------- SEGMENTS (as filed)
     seg = getattr(d, "segments", None)
@@ -517,24 +566,6 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             c.fill = section_fill
             c.font = Font(bold=True, color=forest, size=10)
         r += 1
-
-        def write_check_row(r, label, values, pct_fmt=False):
-            """Muted checksum row (Σ members / gap-vs-consolidated)."""
-            ws.cell(row=r, column=1, value=label)
-            ws.cell(row=r, column=1).font = Font(italic=True, color=muted,
-                                                 size=8.5)
-            bad = P.DELTA_BAD.lstrip("#").upper()
-            for j, v in enumerate(values, start=2):
-                c = ws.cell(row=r, column=j)
-                color = muted
-                if v is not None:
-                    c.value = v if pct_fmt else v / _MM
-                    c.number_format = fmt_pct if pct_fmt else fmt_mm
-                    if pct_fmt and abs(v) > 0.02:
-                        color = bad  # the tie is off — make it read as a flag
-                c.font = Font(italic=True, color=color, size=8.5)
-                c.alignment = Alignment(horizontal="right")
-            return r + 1
 
         blocks: List[Tuple[Tuple[str, str], List]] = []
         for ln in seg_lines:  # group into (measure, axis) blocks, in order
@@ -591,10 +622,11 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                         for _, rv in rendered]
                 vals = [v for v in vals if v is not None]
                 sums.append(sum(vals) if vals else None)
-            r = write_check_row(r, "   Σ members", sums)
-            r = write_check_row(r, "   vs consolidated (gap %)",
-                                [_pct(sv, cv) for sv, cv
-                                 in zip(sums, cons_cells)], pct_fmt=True)
+            r = _write_check_row(ws, r, "   Σ members", sums, ltm_col)
+            r = _write_check_row(ws, r, "   vs consolidated (gap %)",
+                                 [_pct(sv, cv) for sv, cv
+                                  in zip(sums, cons_cells)], ltm_col,
+                                 pct_fmt=True)
 
     # ---------------------------------------------------------- footnotes
     notes = [
@@ -649,6 +681,13 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             "Segments: no dimensional segment data in this workbook — "
             + (why or "it lives in the 10-K/10-Q XBRL instance (fetched "
                       "live, not in the companyfacts API)") + "."))
+    if is_tie_breached:
+        notes.insert(-1, (
+            "Income-statement basis check: Revenue − Cost of Revenue "
+            "differs from Gross Profit beyond "
+            f"±{config.IS_TIE_TOL:.0%} in the flagged columns — the three "
+            "lines are not on one accounting basis; see the XBRL tags "
+            "footnote."))
     tagged_pt, merged_pt = rows["pretax_income"], rows["=pretax"]
     if any(t is None and m is not None for t, m in zip(
             list(tagged_pt.ann) + list(tagged_pt.q) + [tagged_pt.ltm],
