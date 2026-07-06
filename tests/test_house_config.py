@@ -43,3 +43,18 @@ def test_example_file_matches_code_defaults():
         assert config.GDP_CAP == ex["gdp_cap"]
         assert config.BETA_WINDOW_YEARS == ex["beta_window_years"]
         assert config.STANDARD_FCFF_SHOCK == ex["standard_fcff_shock"]
+
+
+def test_is_tie_tol_house_override(tmp_path, monkeypatch):
+    """FIX-11e: is_tie_tol loads from the house file."""
+    p = tmp_path / "house.toml"
+    p.write_text("is_tie_tol = 0.05\n", encoding="utf-8")
+    monkeypatch.setenv("HOUSE_ASSUMPTIONS_FILE", str(p))
+    import importlib
+    from forensic_viz import config as cfg
+    importlib.reload(cfg)
+    try:
+        assert cfg.IS_TIE_TOL == 0.05
+    finally:
+        monkeypatch.delenv("HOUSE_ASSUMPTIONS_FILE")
+        importlib.reload(cfg)

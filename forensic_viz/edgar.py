@@ -281,6 +281,7 @@ class _SecSession:
         if cached is not None:
             return cached
         last_err: Optional[Exception] = None
+        saw_403 = False
         for attempt in range(config.HTTP_RETRIES):
             with self._lock:
                 wait = config.SEC_MIN_INTERVAL - (time.time() - self._last_call)
@@ -291,6 +292,8 @@ class _SecSession:
                 resp = self.session.get(url, timeout=config.HTTP_TIMEOUT)
                 if resp.status_code == 404:
                     raise EdgarError(f"SEC returned 404 for {url}")
+                if resp.status_code == 403:
+                    saw_403 = True  # SEC blocks anonymous/placeholder UAs
                 if resp.status_code in (403, 429) or resp.status_code >= 500:
                     raise requests.HTTPError(f"HTTP {resp.status_code}", response=resp)
                 resp.raise_for_status()
@@ -302,7 +305,10 @@ class _SecSession:
             except (requests.RequestException, ValueError) as exc:
                 last_err = exc
                 time.sleep(2**attempt)
-        raise EdgarError(f"SEC request failed after retries: {url} ({last_err})")
+        raise EdgarError(
+            f"SEC request failed after retries: {url} ({last_err})"
+            + (" — SEC returned 403: set SEC_EDGAR_USER_AGENT to "
+               "'name email' and retry" if saw_403 else ""))
 
     def get_text(self, url: str, ttl: float) -> str:
         """Cached raw-text GET (XBRL instance documents), same pacing."""
@@ -310,6 +316,7 @@ class _SecSession:
         if cached is not None:
             return cached
         last_err: Optional[Exception] = None
+        saw_403 = False
         for attempt in range(config.HTTP_RETRIES):
             with self._lock:
                 wait = config.SEC_MIN_INTERVAL - (time.time() - self._last_call)
@@ -320,6 +327,8 @@ class _SecSession:
                 resp = self.session.get(url, timeout=config.HTTP_TIMEOUT)
                 if resp.status_code == 404:
                     raise EdgarError(f"SEC returned 404 for {url}")
+                if resp.status_code == 403:
+                    saw_403 = True  # SEC blocks anonymous/placeholder UAs
                 if resp.status_code in (403, 429) or resp.status_code >= 500:
                     raise requests.HTTPError(f"HTTP {resp.status_code}", response=resp)
                 resp.raise_for_status()
@@ -330,7 +339,10 @@ class _SecSession:
             except requests.RequestException as exc:
                 last_err = exc
                 time.sleep(2**attempt)
-        raise EdgarError(f"SEC request failed after retries: {url} ({last_err})")
+        raise EdgarError(
+            f"SEC request failed after retries: {url} ({last_err})"
+            + (" — SEC returned 403: set SEC_EDGAR_USER_AGENT to "
+               "'name email' and retry" if saw_403 else ""))
 
 
 def _norm_ticker(ticker: str) -> str:

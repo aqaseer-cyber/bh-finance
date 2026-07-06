@@ -240,6 +240,33 @@ on the axis (which also **gates the Phase-2 auto-fill**), a negative gap
 means untagged members; values synthesized from a two-axis
 disaggregation render in italics.
 
+## Basis coherence (FIX-11)
+
+Filers can tag **two undimensioned revenue totals** (MELI: headline
+`Revenues` and the contract-only ASC-606 subtotal) while COGS and Gross
+Profit sit on the headline basis — coverage scoring alone can pick the
+wrong one and put every revenue-denominated ratio on a mixed basis. The
+app therefore lets the income statement referee itself:
+
+- **Revenue referee rule:** per fiscal year, the selected revenue tag must
+  satisfy `Revenue ≈ Gross Profit + Cost of Revenue` (±`is_tie_tol`,
+  default 2%). Failing years substitute the coherent candidate (recorded
+  per year in the tags footnote and as a health note); years with no
+  coherent candidate keep the winner and carry an UNRESOLVED warning —
+  never fabricated. Quarter cells follow the same basis decision.
+- **IS tie row:** the model export shows `Rev − COGS vs GP (gap)` under
+  Gross Profit — a basis break is visible on the sheet's face, red beyond
+  tolerance, with an explanatory footnote.
+- **LTM basis provenance:** a derived LTM (e.g. FCF) only combines legs
+  that share a basis; a trailing-twelve-month CFO minus a fiscal-year
+  capex is suppressed and footnoted rather than silently mixed. Interim
+  gap-fill across sibling tags is logged verbatim in the footnotes.
+- **SBC override doctrine:** when the tagged SBC series dies under every
+  candidate (MELI), Track B warns loudly; the analyst sets the override
+  from the comp note (**Analyst inputs…** / `--sbc-override`).
+  Capitalized-cost SBC elements (`…CapitalizedAmount`) are excluded by
+  design — capitalized ≠ expensed.
+
 ## House assumptions file
 
 ERP, the GDP cap, R&D life, and the Phase-5 stress shocks default to labeled

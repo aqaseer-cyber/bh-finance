@@ -16,3 +16,6 @@ standard_fcff_shock = -0.05 # Phase-5 Standard stress (Phase5_Verdict!B22)
 bank_nim_shock = -0.01      # Phase-5 Banks stress: −100 bps NIM
 insurance_cr_shock = 0.05   # Phase-5 Insurance stress: +5 pts combined ratio
 reit_yield_shock = 0.01     # Phase-5 REIT stress: +100 bps target AFFO yield
+
+# ---- FIX-11: income-statement basis coherence --------------------------
+# is_tie_tol = 0.02   # Revenue ≈ GrossProfit + CostOfRevenue tolerance

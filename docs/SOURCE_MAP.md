@@ -6,6 +6,14 @@ cells are judgment or non-XBRL disclosures — the suggested source follows the
 master prompt's tool ladder (§1: Fiscal.ai/IBKR → EDGAR full-text / company
 IR → web; analyst memory never a valuation input).
 
+**Revenue sourcing (FIX-11a):** revenue is selected per fiscal year — the
+coverage/recency winner must satisfy `Rev ≈ GP + COGS` (±`is_tie_tol`);
+failing years substitute the coherent candidate tag, recorded per year in
+`tags_used` / `year_sources` and surfaced as a health note. **Quarterly
+values (FIX-11c)** gap-fill per span across sibling candidate tags
+(lowest-priority wins per span), with the fill tags logged in the model
+export's "Interim gap-fill" footnotes.
+
 ## Control
 
 | Cell | Input | Source |
