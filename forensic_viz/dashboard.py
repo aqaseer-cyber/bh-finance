@@ -32,6 +32,11 @@ from .metrics import DashboardData, fmt_count, fmt_money, fmt_pct
 
 DPI = 150
 FIG_W, FIG_H = 12.8, 16.9
+# FIX-12c: page heights tuned to ISO A4 so no exported page sits half-empty.
+# Portrait fill height at FIG_W, and landscape fill height at FIG_W:
+A4_ASPECT = 841.890 / 595.276
+A4P_H = round(FIG_W * A4_ASPECT, 2)   # ≈ 18.10in — portrait-full
+A4L_H = round(FIG_W / A4_ASPECT, 2)   # ≈ 9.05in — landscape-full
 BAR_MAX_PX = 34.0  # ~24 CSS px at this dpi — bars never fill the band
 BAR_GAP_PX = 2.5   # surface gap between grouped bars
 CORNER_PX = 5.0    # rounded data-end radius (~4 CSS px)
@@ -774,7 +779,7 @@ def render_unit_economics(d: DashboardData, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, 9.9), dpi=dpi)
+    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
         4, 2, height_ratios=[1.12, 0.55, 1.9, 1.9],
@@ -1114,12 +1119,12 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, 11.6), dpi=dpi)
+    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
-        4, 2, height_ratios=[1.45, 1.9, 1.9, 1.9],
-        left=0.055, right=0.965, top=0.97, bottom=0.085,
-        hspace=0.62, wspace=0.16,
+        4, 2, height_ratios=[1.35, 1.9, 1.9, 1.9],
+        left=0.055, right=0.965, top=0.97, bottom=0.10,
+        hspace=0.55, wspace=0.16,
     )
 
     ax_header = fig.add_subplot(gs[0, :])
@@ -1161,14 +1166,21 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
             continue
         fn(ax, fig, d)
 
-    y = 0.052
-    for note in d.health_notes:
-        fig.text(0.055, y, note, fontsize=6.6, color=P.INK_MUTED, va="bottom")
-        y -= 0.012
-    fig.text(0.055, y, "Adjustment Burden (master §3.1) needs non-GAAP figures "
-                       "from the earnings release — not in XBRL; analyst input.  "
-                       "Not investment advice.",
-             fontsize=6.6, color=P.INK_MUTED, va="bottom")
+    # FIX-12c: two-column footnotes so the block fits landscape-A4 height;
+    # long notes are clipped for display — the CSV carries them in full
+    def _clip(s: str, n: int = 112) -> str:
+        return s if len(s) <= n else s[:n - 1] + "…"
+
+    notes = list(d.health_notes) + [
+        "Adjustment Burden (master §3.1) needs non-GAAP figures from the "
+        "earnings release — not in XBRL; analyst input.  "
+        "Not investment advice."]
+    xcols, y = (0.055, 0.515), 0.062
+    for i, note in enumerate(notes):
+        fig.text(xcols[i % 2], y, _clip(note), fontsize=6.6,
+                 color=P.INK_MUTED, va="bottom")
+        if i % 2 == 1:
+            y -= 0.016
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)
@@ -1270,7 +1282,7 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, 8.2), dpi=dpi)
+    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
         3, 1, height_ratios=[1.35, 1.9, 1.15],
@@ -1393,7 +1405,7 @@ def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, 7.9), dpi=dpi)
+    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
         3, 1, height_ratios=[1.35, 2.0, 1.15],
@@ -1484,13 +1496,13 @@ def render_dashboard(d: DashboardData, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, FIG_H), dpi=dpi)
+    fig = Figure(figsize=(FIG_W, A4P_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
         6, 2,
         height_ratios=[1.5, 2.5, 1.1, 1.9, 1.9, 1.9],
-        left=0.055, right=0.965, top=0.98, bottom=0.055,
-        hspace=0.62, wspace=0.16,
+        left=0.055, right=0.965, top=0.98, bottom=0.06,
+        hspace=0.72, wspace=0.16,
     )
 
     ax_header = fig.add_subplot(gs[0, :])

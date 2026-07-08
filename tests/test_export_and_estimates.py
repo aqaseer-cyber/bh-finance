@@ -35,9 +35,13 @@ def test_pdf_pages_are_a4(tmp_path, testco_facts):
     export_pdf([render_dashboard(d), render_health_report(d)], str(out))
     reader = PdfReader(str(out))
     assert len(reader.pages) == 2
-    for page in reader.pages:  # every page exactly A4 portrait
-        assert float(page.mediabox.width) == pytest.approx(A4_PT[0], abs=0.5)
-        assert float(page.mediabox.height) == pytest.approx(A4_PT[1], abs=0.5)
+    # FIX-12c: every page an exact A4 sheet, orientation chosen per page —
+    # the tall dashboard is portrait, the landscape-height health page flips
+    dash_page, health_page = reader.pages
+    assert float(dash_page.mediabox.width) == pytest.approx(A4_PT[0], abs=0.5)
+    assert float(dash_page.mediabox.height) == pytest.approx(A4_PT[1], abs=0.5)
+    assert float(health_page.mediabox.width) == pytest.approx(A4_PT[1], abs=0.5)
+    assert float(health_page.mediabox.height) == pytest.approx(A4_PT[0], abs=0.5)
 
 
 def test_parse_earnings_trend_growths():

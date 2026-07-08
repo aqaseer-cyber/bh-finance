@@ -10,6 +10,13 @@ from .metrics import DashboardData
 A4_PT = (595.276, 841.890)  # ISO A4 portrait, PostScript points
 
 
+def page_size_for(w: float, h: float) -> tuple:
+    """A4 orientation per page (FIX-12c): portrait for tall figures,
+    landscape otherwise — no more half-empty portrait pages."""
+    portrait = (h / w) >= 1.2 if w else True
+    return A4_PT if portrait else (A4_PT[1], A4_PT[0])
+
+
 def export_pdf(figures, path: str) -> None:
     """All report pages into one PDF, every page normalized to A4 portrait.
 
@@ -30,11 +37,11 @@ def export_pdf(figures, path: str) -> None:
     buf.seek(0)
     try:
         from pypdf import PdfReader, PdfWriter, Transformation
-        a4w, a4h = A4_PT
         reader, writer = PdfReader(buf), PdfWriter()
         for src in reader.pages:
             page = writer.add_page(src)  # attach first (pypdf 6+ contract)
             w, h = float(page.mediabox.width), float(page.mediabox.height)
+            a4w, a4h = page_size_for(w, h)  # per-page orientation (FIX-12c)
             s = min(a4w / w, a4h / h)
             tx, ty = (a4w - w * s) / 2, (a4h - h * s) / 2
             page.add_transformation(
