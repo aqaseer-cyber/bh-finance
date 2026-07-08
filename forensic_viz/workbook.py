@@ -20,16 +20,19 @@ from typing import List, Optional
 from . import config
 from .metrics import DashboardData
 
-def _template_path() -> Path:
+def asset_path(name: str) -> Path:
+    """Bundled-asset resolution: source tree or PyInstaller _MEIPASS.
+
+    The single path scheme for everything under assets/ (workbook shell,
+    app icons) — do not invent a second one.
+    """
     import sys
     if getattr(sys, "frozen", False):  # PyInstaller bundle (--add-data assets)
-        return Path(getattr(sys, "_MEIPASS", ".")) / "assets" / \
-            "forensic_valuation_model_v3.xlsx"
-    return Path(__file__).resolve().parent.parent / "assets" / \
-        "forensic_valuation_model_v3.xlsx"
+        return Path(getattr(sys, "_MEIPASS", ".")) / "assets" / name
+    return Path(__file__).resolve().parent.parent / "assets" / name
 
 
-TEMPLATE = _template_path()
+TEMPLATE = asset_path("forensic_valuation_model_v3.xlsx")
 
 TRACK_NAMES = {"standard": "Standard", "bank": "Banks", "insurance": "Insurance",
                "reit": "REIT", "sotp": "SOTP"}

@@ -48,9 +48,62 @@ from .valuation import (
 from .verdict import RATINGS, build_verdict
 from .workbook import fill_workbook
 
-SCREEN_DPI = 100  # on-screen render; exports re-render at 150
+SCREEN_DPI = 100  # fallback dpi cap for on-screen rasters (used only when
+#                   the display DPI is unknown); the PDF export is vector
 YEAR_CHOICES = ("3", "5", "7", "10")
 PAGES = ("Dashboard", "Unit economics", "Health checks", "Valuation", "Verdict")
+
+
+def _enable_windows_dpi_awareness() -> None:
+    """Per-monitor DPI awareness — must run BEFORE tk.Tk() is constructed,
+    or Windows bitmap-stretches the whole app at 125–150% display scaling.
+    No-op off Windows."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def _apply_tk_scaling(root) -> float:
+    """Point-correct Tk scaling from the real display DPI. Returns dpi."""
+    try:
+        dpi = root.winfo_fpixels("1i")
+        root.tk.call("tk", "scaling", dpi / 72.0)
+        return float(dpi)
+    except tk.TclError:
+        return 96.0
+
+
+def _display_dpi_of(widget) -> float:
+    """Physical display DPI for any widget, 96 when unknown."""
+    try:
+        return float(widget.winfo_fpixels("1i"))
+    except Exception:
+        return 96.0
+
+
+def _set_app_icon(root) -> None:
+    """Window/taskbar icon from the bundled assets (best-effort)."""
+    from .workbook import asset_path
+    try:
+        png = asset_path("app_icon.png")
+        if png.is_file():
+            root.iconphoto(True, tk.PhotoImage(file=str(png)))
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            ico = asset_path("app_icon.ico")
+            if ico.is_file():
+                root.iconbitmap(default=str(ico))
+        except Exception:
+            pass
 
 
 def apply_brand_theme(root: tk.Tk) -> None:
@@ -147,6 +200,8 @@ class _ScrollTab(ttk.Frame):
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._display_dpi = _apply_tk_scaling(root)  # before any geometry
+        _set_app_icon(root)
         root.title(f"Forensic Stock Viz {config.APP_VERSION} — five-phase forensic report")
         w = min(1280, root.winfo_screenwidth() - 40)
         h = min(880, root.winfo_screenheight() - 80)
@@ -433,8 +488,11 @@ class App:
             self.root.after(120, self._poll_queue)
 
     def _screen_dpi(self) -> int:
+        # native-resolution rasters: cap at the physical display DPI (bounded
+        # at 180 for memory), not the old fixed 100
         viewport = self.notebook.winfo_width() or 1060
-        return max(70, min(SCREEN_DPI, int((viewport - 30) / FIG_W)))
+        cap = int(min(getattr(self, "_display_dpi", 96) * 1.0, 180))
+        return max(70, min(cap, int((viewport - 30) / FIG_W)))
 
     def _show(self, data: DashboardData):
         self.status_var.set("Rendering…")
@@ -845,7 +903,8 @@ class _ValuationDialog(tk.Toplevel):
                                     rating=self.data.rating,
                                     optionality=self.data.optionality)
             viewport = self.master.winfo_width() or 1160
-            dpi = max(70, min(SCREEN_DPI, int(viewport / FIG_W)))
+            cap = int(min(_display_dpi_of(self), 180))
+            dpi = max(70, min(cap, int(viewport / FIG_W)))
             fig = render_valuation(self.data, res, dpi=dpi)
             verdict_fig = render_verdict(self.data, res, verdict, dpi=dpi)
             self.on_done(fig, res, verdict_fig, verdict)
@@ -978,6 +1037,7 @@ class _AnalystInputsDialog(tk.Toplevel):
 
 
 def run_gui():
+    _enable_windows_dpi_awareness()  # must precede tk.Tk() (FIX-12a)
     root = tk.Tk()
     apply_brand_theme(root)  # house colour scheme on every widget
     App(root)

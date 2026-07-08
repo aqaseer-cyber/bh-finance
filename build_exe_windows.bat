@@ -16,11 +16,11 @@ rem reproducible build: pin the exact resolved dependency tree (FIX-9)
 python -m pip install --quiet -r requirements.lock || (echo pip install -r requirements.lock failed & pause & exit /b 1)
 python -m pip install --quiet pyinstaller || (echo pip install pyinstaller failed & pause & exit /b 1)
 
-pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz ^
+pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz --icon assets\app_icon.ico ^
     --add-data "assets;assets" app.py || (
     echo PyInstaller GUI build failed. & pause & exit /b 1
 )
-pyinstaller --noconfirm --onefile --console --name forensic-viz-cli ^
+pyinstaller --noconfirm --onefile --console --name forensic-viz-cli --icon assets\app_icon.ico ^
     --add-data "assets;assets" app.py || (
     echo PyInstaller CLI build failed. & pause & exit /b 1
 )

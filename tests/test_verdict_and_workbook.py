@@ -100,8 +100,8 @@ def test_shell_has_exactly_133_blue_input_cells():
     docstring, preflight lint). Guard it so a future shell swap fails loudly."""
     import openpyxl
 
-    from forensic_viz.workbook import _template_path
-    wb = openpyxl.load_workbook(str(_template_path()))
+    from forensic_viz.workbook import TEMPLATE
+    wb = openpyxl.load_workbook(str(TEMPLATE))
     blue = 0
     for ws in wb.worksheets:
         for row in ws.iter_rows():
