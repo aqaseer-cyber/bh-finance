@@ -88,6 +88,12 @@ def _display_dpi_of(widget) -> float:
         return 96.0
 
 
+def _should_rerender(old_dpi, new_dpi) -> bool:
+    """Re-render only on a meaningful density change (≥ 6 dpi) — resizing
+    by a few pixels must not burn a full page re-render (FIX-12b)."""
+    return old_dpi is None or abs(new_dpi - old_dpi) >= 6
+
+
 def _set_app_icon(root) -> None:
     """Window/taskbar icon from the bundled assets (best-effort)."""
     from .workbook import asset_path
@@ -179,10 +185,20 @@ class _ScrollTab(ttk.Frame):
         hbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.inner = ttk.Frame(self.canvas)
-        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self._win = self.canvas.create_window((0, 0), window=self.inner,
+                                              anchor="nw")
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", self._recenter)
         self.fig_canvas: Optional[FigureCanvasTkAgg] = None
+
+    def _recenter(self, _e=None):
+        """Center the page horizontally when the viewport is wider."""
+        if self.fig_canvas is None:
+            return
+        fw = self.fig_canvas.get_tk_widget().winfo_reqwidth()
+        x = max(0, (self.canvas.winfo_width() - fw) // 2)
+        self.canvas.coords(self._win, x, 0)
 
     def show(self, fig) -> None:
         if self.fig_canvas is not None:
@@ -195,6 +211,7 @@ class _ScrollTab(ttk.Frame):
         self.fig_canvas.get_tk_widget().pack()
         self.canvas.yview_moveto(0)
         self.canvas.xview_moveto(0)
+        self._recenter()
 
 
 class App:
@@ -299,7 +316,47 @@ class App:
         root.bind_all("<MouseWheel>", self._on_mousewheel)      # Windows/macOS
         root.bind_all("<Button-4>", self._on_mousewheel_linux)  # X11
         root.bind_all("<Button-5>", self._on_mousewheel_linux)
+        # FIX-12b: debounced native re-render when the viewport density
+        # changes (maximize/shrink) — pages stay sharp at every size
+        self._resize_job = None
+        self._last_render_dpi = None
+        self.notebook.bind("<Configure>", self._on_viewport_resize)
         self.root.after(120, self._poll_queue)
+
+    # -------------------------------------------------------- resize hook
+
+    def _on_viewport_resize(self, _e):
+        if self._resize_job:
+            self.root.after_cancel(self._resize_job)
+        self._resize_job = self.root.after(300, self._maybe_rerender)
+
+    def _maybe_rerender(self):
+        self._resize_job = None
+        if self.busy or self.data is None:
+            return
+        dpi = self._screen_dpi()
+        if not _should_rerender(self._last_render_dpi, dpi):
+            return
+        self._rerender_all(dpi)
+
+    def _rerender_all(self, dpi: int):
+        current = self.notebook.select()
+        self.figs["Dashboard"] = render_dashboard(self.data, dpi=dpi)
+        self.figs["Unit economics"] = render_unit_economics(self.data, dpi=dpi)
+        self.figs["Health checks"] = render_health_report(self.data, dpi=dpi)
+        if self.valuation_res is not None:
+            self.figs["Valuation"] = render_valuation(
+                self.data, self.valuation_res, dpi=dpi)
+            if self.verdict is not None:
+                self.figs["Verdict"] = render_verdict(
+                    self.data, self.valuation_res, self.verdict, dpi=dpi)
+        self._refresh_tabs()
+        if current:
+            try:
+                self.notebook.select(current)
+            except tk.TclError:
+                pass
+        self._last_render_dpi = dpi
 
     # ------------------------------------------------------------ watchlist
 
@@ -498,6 +555,7 @@ class App:
         self.status_var.set("Rendering…")
         self.root.update_idletasks()
         dpi = self._screen_dpi()
+        self._last_render_dpi = dpi
         self.data = data
         self.figs["Dashboard"] = render_dashboard(data, dpi=dpi)
         self.figs["Unit economics"] = render_unit_economics(data, dpi=dpi)
@@ -526,6 +584,7 @@ class App:
         apply_track(self.data, self.track_var.get())
         compute_altman(self.data)
         dpi = self._screen_dpi()
+        self._last_render_dpi = dpi
         self.figs["Unit economics"] = render_unit_economics(self.data, dpi=dpi)
         self.figs["Health checks"] = render_health_report(self.data, dpi=dpi)
         self._refresh_tabs()
@@ -548,6 +607,7 @@ class App:
         self.figs["Verdict"] = verdict_fig
         self.valuation_res = res
         self.verdict = verdict
+        self._last_render_dpi = self._screen_dpi()
         try:  # §5.7: no verdict leaves the session unlogged
             self.ledger.upsert_verdict(self.data, res=res, verdict=verdict)
             self.refresh_watchlist()
@@ -564,6 +624,7 @@ class App:
 
     def _on_analyst_inputs(self):
         dpi = self._screen_dpi()
+        self._last_render_dpi = dpi
         self.figs["Unit economics"] = render_unit_economics(self.data, dpi=dpi)
         self.figs["Health checks"] = render_health_report(self.data, dpi=dpi)
         self._refresh_tabs(select="Unit economics")

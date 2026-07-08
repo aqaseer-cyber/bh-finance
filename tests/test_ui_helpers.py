@@ -51,3 +51,13 @@ def test_gui_helpers_headless_safe():
 
     assert gui._apply_tk_scaling(RaisingRoot()) == 96.0
     assert gui._display_dpi_of(RaisingRoot()) == 96.0
+
+
+def test_should_rerender_threshold():
+    tk = pytest.importorskip("tkinter")  # noqa: F841 — gui import needs it
+    from forensic_viz.gui import _should_rerender
+    assert _should_rerender(None, 96) is True     # first render
+    assert _should_rerender(96, 96) is False
+    assert _should_rerender(96, 101) is False     # < 6 dpi: debounced away
+    assert _should_rerender(96, 102) is True
+    assert _should_rerender(150, 96) is True      # shrink re-renders too
