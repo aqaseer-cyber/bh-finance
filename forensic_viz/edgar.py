@@ -816,6 +816,16 @@ def fetch_fundamentals(
     return result
 
 
+def _require_declared_ua() -> None:
+    """www.sec.gov/Archives returns 403 for the placeholder UA (verified);
+    data.sec.gov currently tolerates it — so fundamentals stay usable and
+    only Archives-dependent features are gated, with an actionable error."""
+    if config.UA_IS_PLACEHOLDER:
+        raise EdgarError(
+            "SEC Archives blocks the placeholder User-Agent (HTTP 403). "
+            "Set SEC_EDGAR_USER_AGENT to 'name email' and retry.")
+
+
 def instance_url(cik: int, accession: str, primary_document: str) -> str:
     """URL of a filing's extracted XBRL instance (…_htm.xml on EDGAR)."""
     accn = accession.replace("-", "")
@@ -849,6 +859,7 @@ def _discover_instance_url(sec: _SecSession, cik: int,
 def fetch_segment_instances(annual: AnnualFundamentals,
                             cache: Optional[Cache] = None) -> List[str]:
     """XBRL instance XML of the latest 10-K and 10-Q (best-effort each)."""
+    _require_declared_ua()  # FIX-13a: Archives 403s the placeholder UA
     cache = cache or Cache()
     sec = _SecSession(cache)
     out: List[str] = []
