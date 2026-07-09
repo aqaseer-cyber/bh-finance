@@ -133,6 +133,11 @@ class ParsedInstance:
     # FIX-13b: facts whose context crosses 3+ ACCEPTED axes — real detail
     # beyond the 2-axis model, counted so the status can declare them
     n_multi: int = 0
+    # FIX-13c: (axis, label) -> raw member qnames that mapped onto it (so
+    # duplicate-qname merges can be declared), and same-instance conflicts
+    # where two qnames disagreed on one span (first kept, never averaged)
+    member_qnames: Dict[Tuple[str, str], set] = field(default_factory=dict)
+    conflicts: List[str] = field(default_factory=list)
 
 
 def _local(tag_or_qname: str) -> str:
@@ -145,8 +150,15 @@ def _local(tag_or_qname: str) -> str:
 
 def member_label(qname: str) -> str:
     """'meli:FintechServicesMember' -> 'Fintech Services'; 'country:BR' ->
-    'Brazil'."""
+    'Brazil'; 'meli:BrazilSegmentMember' -> 'Brazil'.
+
+    A trailing 'Segment' is stripped after the 'Member' suffix (FIX-13c).
+    Assumption: within one axis of one filer, a bare ``X`` and an
+    ``XSegment`` member denote the same economic member — verified on MELI,
+    whose business-segments axis carries both OtherCountriesMember and
+    OtherCountriesSegmentMember with identical values."""
     name = re.sub(r"Member$", "", _local(qname))
+    name = re.sub(r"Segment$", "", name)
     if name.upper() in _COUNTRY and len(name) == 2:
         return _COUNTRY[name.upper()]
     name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
@@ -203,10 +215,31 @@ def parse_instance(xml_text: str) -> ParsedInstance:
             # all-accepted 3+-axis contexts: counted (FIX-13b), not modeled
             multi_ctx.add(ctx.get("id", ""))
             continue
-        pairs = sorted((_AXES[a], member_label(m)) for a, m in seg_dims)
+        # normalization happens HERE, at the earliest keying point, so
+        # duplicate member qnames merge naturally (FIX-13c); the raw qname
+        # rides along for merge accounting and the conflict guard
+        pairs = sorted((_AXES[a], member_label(m), m) for a, m in seg_dims)
         contexts[ctx.get("id", "")] = (pairs, start, end)
 
     out = ParsedInstance()
+    span_src: Dict[tuple, Tuple[tuple, float]] = {}  # who wrote each span
+
+    def _store(kind, bucket, key, span, val, qsig, shown):
+        """Keep-first per span across qname aliases: agreeing aliases merge
+        silently; a > 1% disagreement keeps the first and warns — never
+        average (FIX-13c)."""
+        prev = span_src.get((kind, key, span))
+        if prev is not None and prev[0] != qsig:
+            pv = prev[1]
+            if abs(pv - val) > 0.01 * max(abs(pv), abs(val), 1e-9):
+                out.conflicts.append(
+                    f"qname aliases disagree for {shown} on "
+                    f"{span[1].isoformat()} ({pv:,.0f} vs {val:,.0f}) — "
+                    "kept the first")
+            return
+        bucket.setdefault(key, {})[span] = val
+        span_src[(kind, key, span)] = (qsig, val)
+
     for el in root.iter():
         group_concept = _local(el.tag)
         if _concept_group(group_concept) is None:
@@ -223,14 +256,16 @@ def parse_instance(xml_text: str) -> ParsedInstance:
         except ValueError:
             continue
         pairs, start, end = ctx
+        for axis, member, qn in pairs:
+            out.member_qnames.setdefault((axis, member), set()).add(qn)
         if len(pairs) == 1:
-            (axis, member), = pairs
-            out.singles.setdefault((axis, member, group_concept),
-                                   {})[(start, end)] = val
+            (axis, member, qn), = pairs
+            _store("s", out.singles, (axis, member, group_concept),
+                   (start, end), val, (qn,), member)
         else:
-            (ax1, m1), (ax2, m2) = pairs
-            out.crosses.setdefault((ax1, m1, ax2, m2, group_concept),
-                                   {})[(start, end)] = val
+            (ax1, m1, q1), (ax2, m2, q2) = pairs
+            _store("x", out.crosses, (ax1, m1, ax2, m2, group_concept),
+                   (start, end), val, (q1, q2), f"{m1} × {m2}")
     return out
 
 
@@ -246,12 +281,19 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
     singles: Dict[Tuple[str, str, str], Dict[Span, float]] = {}
     crosses: Dict[Tuple[str, str, str, str, str], Dict[Span, float]] = {}
     n_multi = 0
+    member_qnames: Dict[Tuple[str, str], set] = {}
+    conflicts: List[str] = []
     for xml_text in instances:
         try:
             parsed = parse_instance(xml_text)
         except ET.ParseError:
             continue
         n_multi += parsed.n_multi
+        for mkey, qns in parsed.member_qnames.items():
+            member_qnames.setdefault(mkey, set()).update(qns)
+        for warn in parsed.conflicts:
+            if warn not in conflicts:
+                conflicts.append(warn)
         for key, spans in parsed.singles.items():
             singles.setdefault(key, {}).update(spans)
         for key, spans in parsed.crosses.items():
@@ -304,6 +346,11 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
     if synthesized:
         notes.append(f"{synthesized} single-axis spans aggregated from the "
                      "two-axis disaggregation table")
+    for (_axis, label), qns in sorted(member_qnames.items()):
+        if len(qns) >= 2:  # a merge actually collapsed distinct qnames
+            notes.append(f"member aliases merged: {label} "
+                         f"({len(qns)} qnames)")
+    notes.extend(conflicts)
     if n_multi:
         notes.append(f"{n_multi} facts at 3+ segment axes ignored "
                      "(beyond the 2-axis model)")

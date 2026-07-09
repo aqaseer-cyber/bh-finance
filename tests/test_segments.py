@@ -105,6 +105,10 @@ def test_member_label_and_instance_url():
     assert member_label("meli:FintechServicesMember") == "Fintech Services"
     assert member_label("country:MX") == "Mexico"  # ISO code -> country name
     assert member_label("country:BR") == "Brazil"
+    # FIX-13c: trailing 'Segment' strips too, so X and XSegment merge
+    assert member_label("meli:BrazilSegmentMember") == "Brazil"
+    assert member_label("meli:OtherCountriesSegmentMember") == \
+        member_label("meli:OtherCountriesMember") == "Other Countries"
     assert instance_url(1099590, "0001099590-26-000012", "meli-20251231.htm") \
         == ("https://www.sec.gov/Archives/edgar/data/1099590/"
             "000109959026000012/meli-20251231_htm.xml")
@@ -217,6 +221,61 @@ def test_subsegments_axis_accepted_as_revenue_stream():
     assert stream_sum == pytest.approx(total)
     assert geo_sum == pytest.approx(total)
     assert val("geography", "Brazil") == pytest.approx(7_038e6 + 4_368e6)
+
+
+def test_duplicate_member_qnames_merge_to_one_line():
+    """FIX-13c, verified on MELI FY2024: the business-segments axis files
+    OtherCountriesMember AND OtherCountriesSegmentMember (889 each) —
+    pre-fix Σ(countries) inflated to 21,666 (+4.3%) and falsely tripped
+    the tie gate."""
+    span = ("2024-01-01", "2024-12-31")
+    vals = {"meli:BrazilSegmentMember": 11_406e6,
+            "meli:MexicoSegmentMember": 4_664e6,
+            "meli:ArgentinaSegmentMember": 3_818e6}
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    for i, (m, v) in enumerate(vals.items()):
+        parts.append(_ctx(f"b{i}", "us-gaap:StatementBusinessSegmentsAxis",
+                          m, *span))
+        parts.append(_fact(REV, f"b{i}", v))
+    for i, m in enumerate(("meli:OtherCountriesMember",
+                           "meli:OtherCountriesSegmentMember")):
+        parts.append(_ctx(f"o{i}", "us-gaap:StatementBusinessSegmentsAxis",
+                          m, *span))
+        parts.append(_fact(REV, f"o{i}", 889e6))
+    parts.append("</xbrl>")
+    seg = build_segment_data(["".join(parts)], "meli-style")
+
+    members = seg.members("business segments")
+    assert members.count("Other Countries") == 1      # one line, not two
+    assert "Brazil" in members and "Brazil Segment" not in members
+    dspan = (dt.date(2024, 1, 1), dt.date(2024, 12, 31))
+    by = {ln.member: {(s, e): v for s, e, v in ln.entries}
+          for ln in seg.lines if ln.group == "Revenue"}
+    assert by["Other Countries"][dspan] == 889e6      # kept once, not summed
+    # Σ(countries) ties back to the consolidated 20,777 (gap 0.0%)
+    assert sum(v[dspan] for v in by.values()) == pytest.approx(20_777e6)
+    assert "member aliases merged: Other Countries (2 qnames)" in seg.status
+
+
+def test_disagreeing_qname_aliases_keep_first_and_warn():
+    """FIX-13c conflict guard: > 1% disagreement between qname aliases on
+    one span keeps the first value and warns — never averages."""
+    span = ("2024-01-01", "2024-12-31")
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    for i, (m, v) in enumerate((("meli:OtherCountriesMember", 889e6),
+                                ("meli:OtherCountriesSegmentMember", 950e6))):
+        parts.append(_ctx(f"o{i}", "us-gaap:StatementBusinessSegmentsAxis",
+                          m, *span))
+        parts.append(_fact(REV, f"o{i}", v))
+    parts.append("</xbrl>")
+    seg = build_segment_data(["".join(parts)], "x")
+    dspan = (dt.date(2024, 1, 1), dt.date(2024, 12, 31))
+    ln = next(x for x in seg.lines if x.member == "Other Countries")
+    assert {(s, e): v for s, e, v in ln.entries}[dspan] == 889e6  # first kept
+    assert "kept the first" in seg.status
+    assert "member aliases merged" in seg.status  # both notes coexist
 
 
 def test_three_axis_facts_counted_not_modeled():
