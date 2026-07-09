@@ -349,7 +349,8 @@ class App:
                 self.data, self.valuation_res, dpi=dpi)
             if self.verdict is not None:
                 self.figs["Verdict"] = render_verdict(
-                    self.data, self.valuation_res, self.verdict, dpi=dpi)
+                    self.data, self.valuation_res, self.verdict, dpi=dpi,
+                    open_triggers=self._open_trigger_texts())
         self._refresh_tabs()
         if current:
             try:
@@ -600,7 +601,19 @@ class App:
                 "The margin of safety needs a current price, but the price "
                 "sources were unavailable for this ticker.")
             return
-        _ValuationDialog(self.root, self.data, self._on_valuation_done)
+        _ValuationDialog(self.root, self.data, self._on_valuation_done,
+                         open_triggers=self._open_trigger_texts())
+
+    def _open_trigger_texts(self):
+        """Open ledger triggers for the current ticker — the verdict page's
+        trigger box (FIX-12d). The ledger never blocks rendering."""
+        if self.data is None:
+            return None
+        try:
+            return [t["trigger_text"]
+                    for t in self.ledger.open_triggers(self.data.ticker)]
+        except Exception:
+            return None
 
     def _on_valuation_done(self, fig, res, verdict_fig, verdict):
         self.figs["Valuation"] = fig
@@ -772,10 +785,12 @@ def _parse_field(raw: str, is_pct: bool) -> Optional[float]:
 class _ValuationDialog(tk.Toplevel):
     """Modal: pick a method, enter Bear/Base/Bull assumptions, render pages 4–5."""
 
-    def __init__(self, parent, data: DashboardData, on_done):
+    def __init__(self, parent, data: DashboardData, on_done,
+                 open_triggers=None):
         super().__init__(parent)
         self.data = data
         self.on_done = on_done
+        self.open_triggers = open_triggers  # ledger texts for the verdict box
         self.title("Intrinsic value — Bear / Base / Bull")
         self.transient(parent)
         self.resizable(False, False)
@@ -967,7 +982,8 @@ class _ValuationDialog(tk.Toplevel):
             cap = int(min(_display_dpi_of(self), 180))
             dpi = max(70, min(cap, int(viewport / FIG_W)))
             fig = render_valuation(self.data, res, dpi=dpi)
-            verdict_fig = render_verdict(self.data, res, verdict, dpi=dpi)
+            verdict_fig = render_verdict(self.data, res, verdict, dpi=dpi,
+                                         open_triggers=self.open_triggers)
             self.on_done(fig, res, verdict_fig, verdict)
         except Exception:
             messagebox.showerror("Could not render the valuation page",

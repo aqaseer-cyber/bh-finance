@@ -29,6 +29,7 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 from . import config
 from . import palette as P
 from .metrics import DashboardData, fmt_count, fmt_money, fmt_pct
+from .valuation import ValuationError, dcf_fcff, residual_income
 
 DPI = 150
 FIG_W, FIG_H = 12.8, 16.9
@@ -451,19 +452,23 @@ def _header(fig, ax, d: DashboardData):
                 transform=ax.transAxes, va="top", ha="right")
 
 
-def _footer(fig, d: DashboardData):
-    line1 = ("FCF = operating cash flow − capex.  Accruals ratio = (net income − CFO) / "
-             "average total assets; sustained readings above +10% flag earnings running ahead of cash.")
-    line2 = ("Fundamentals are as filed in annual-report XBRL (latest amendment wins).  "
-             "Not investment advice.")
-    fig.text(0.055, 0.034, line1, fontsize=7.2, color=P.INK_MUTED, va="bottom")
-    fig.text(0.055, 0.022, line2, fontsize=7.2, color=P.INK_MUTED, va="bottom")
-    if d.tags_used:
-        shown = ", ".join(f"{k}={v}" for k, v in sorted(d.tags_used.items()))
-        if len(shown) > 210:
-            shown = shown[:207] + "…"
-        fig.text(0.055, 0.010, "XBRL tags: " + shown, fontsize=6.4,
-                 color=P.INK_MUTED, va="bottom")
+def _footer(fig, d: DashboardData, extra=""):
+    """The one page footer (FIX-12d), shared by all five pages: page-specific
+    definitional lines via `extra` (str or sequence of str), then the common
+    provenance line. Line spacing is in inches so every page height reads the
+    same."""
+    lines = [extra] if isinstance(extra, str) else list(extra)
+    lines = [ln for ln in lines if ln]
+    srcs = ["SEC EDGAR XBRL (latest amendment wins)"]
+    if d.price_source:
+        srcs.append(d.price_source)
+    lines.append(f"Generated {d.generated.isoformat()} · Sources: "
+                 + ", ".join(srcs) + " · Not investment advice.")
+    h = fig.get_size_inches()[1]
+    y, step = 0.09 / h, 0.125 / h
+    for ln in reversed(lines):
+        fig.text(0.055, y, ln, fontsize=6.6, color=P.INK_MUTED, va="bottom")
+        y += step
 
 
 # -------------------------------------------------- unit economics (page 2)
@@ -839,11 +844,9 @@ def render_unit_economics(d: DashboardData, out_path: Optional[str] = None,
             continue
         fn(ax, fig, d)
 
-    fig.text(0.055, 0.018,
-             "Working-capital days on average balances (§2.2). LTV/CAC and take "
-             "rates need customer/GMV disclosures — not in XBRL (analyst input).  "
-             "Not investment advice.",
-             fontsize=6.8, color=P.INK_MUTED, va="bottom")
+    _footer(fig, d, "Working-capital days on average balances (§2.2). LTV/CAC "
+                    "and take rates need customer/GMV disclosures — not in "
+                    "XBRL (analyst input).")
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)
@@ -1173,14 +1176,14 @@ def render_health_report(d: DashboardData, out_path: Optional[str] = None,
 
     notes = list(d.health_notes) + [
         "Adjustment Burden (master §3.1) needs non-GAAP figures from the "
-        "earnings release — not in XBRL; analyst input.  "
-        "Not investment advice."]
+        "earnings release — not in XBRL; analyst input."]
     xcols, y = (0.055, 0.515), 0.062
     for i, note in enumerate(notes):
         fig.text(xcols[i % 2], y, _clip(note), fontsize=6.6,
                  color=P.INK_MUTED, va="bottom")
         if i % 2 == 1:
             y -= 0.016
+    _footer(fig, d)
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)
@@ -1272,6 +1275,46 @@ def _valuation_table(ax, res):
                 transform=ax.transAxes, va="top")
 
 
+def _warnings_callout(ax, res):
+    """FIX-12d: bordered 'Warnings & assumptions' box — the valuation page's
+    caveats, capped at 6 entries / 6 wrapped lines; the CSV carries the rest."""
+    import textwrap
+
+    ax.set_axis_off()
+    ax.add_patch(Rectangle((0.0, 0.0), 1.0, 1.0, transform=ax.transAxes,
+                           facecolor=P.PAGE, edgecolor=P.BASELINE,
+                           linewidth=1.0, zorder=1))
+    ax.text(0.012, 0.90, "Warnings & assumptions", fontsize=9.2,
+            fontweight="bold", color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top", zorder=3)
+    warns = list(res.warnings) + [f"{c.name}: {w}" for c in res.cases
+                                  for w in c.warnings]
+    if not warns:
+        ax.text(0.012, 0.62, "none — every input tagged; the CSV export "
+                             "carries the full audit trail",
+                fontsize=7.4, color=P.INK_MUTED, transform=ax.transAxes,
+                va="top", zorder=3)
+        return
+    shown, budget = [], 6
+    for w in warns:
+        wrapped = textwrap.fill("⚠ " + w, width=185)
+        n = wrapped.count("\n") + 1
+        if len(shown) >= 6 or n > budget:
+            break
+        shown.append(wrapped)
+        budget -= n
+    y = 0.68
+    for wrapped in shown:
+        ax.text(0.012, y, wrapped, fontsize=7.2, color=P.DELTA_BAD,
+                transform=ax.transAxes, va="top", linespacing=1.25, zorder=3)
+        y -= 0.095 * (wrapped.count("\n") + 1) + 0.015
+    more = len(warns) - len(shown)
+    if more > 0:
+        ax.text(0.012, y, f"+{more} more — see the CSV audit trail",
+                fontsize=7.2, color=P.INK_SECONDARY, transform=ax.transAxes,
+                va="top", zorder=3)
+
+
 def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
                      dpi: int = DPI) -> Figure:
     """Page 3 — Bear/Base/Bull intrinsic value and margin of safety."""
@@ -1285,8 +1328,8 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
     fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
-        3, 1, height_ratios=[1.35, 1.9, 1.15],
-        left=0.055, right=0.965, top=0.955, bottom=0.15, hspace=0.55,
+        4, 1, height_ratios=[1.35, 1.75, 1.05, 1.0],
+        left=0.055, right=0.965, top=0.955, bottom=0.085, hspace=0.5,
     )
 
     ax_header = fig.add_subplot(gs[0])
@@ -1326,19 +1369,17 @@ def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
     ax_table = fig.add_subplot(gs[2])
     _valuation_table(ax_table, res)
 
-    y = 0.115
+    ax_warn = fig.add_subplot(gs[3])
+    _warnings_callout(ax_warn, res)
+
+    extra = []
     if res.rate_build:
-        fig.text(0.055, y, "Rate build (§4.0): " + res.rate_build,
-                 fontsize=6.8, color=P.INK_SECONDARY, va="bottom")
-        y -= 0.016
-    case_warns = [f"{c.name}: {w}" for c in res.cases for w in c.warnings]
-    for w in res.warnings + case_warns:
-        fig.text(0.055, y, "⚠ " + w, fontsize=6.8, color=P.DELTA_BAD, va="bottom")
-        y -= 0.016
-    notes = ("Equity bridge (FCFF_DCF!B31): net debt + minority interest + preferred "
-             "− non-operating investments; MI/preferred from XBRL (0 when untagged), "
-             "non-op investments analyst input. All outputs code-computed.  Not investment advice.")
-    fig.text(0.055, max(y, 0.012), notes, fontsize=6.6, color=P.INK_MUTED, va="bottom")
+        extra.append("Rate build (§4.0): " + res.rate_build)
+    extra.append(
+        "Equity bridge (FCFF_DCF!B31): net debt + minority interest + preferred "
+        "− non-operating investments; MI/preferred from XBRL (0 when untagged), "
+        "non-op investments analyst input. All outputs code-computed.")
+    _footer(fig, d, extra)
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)
@@ -1393,11 +1434,287 @@ def _panel_stress(ax, fig, res, v):
             ["Base", "Stressed"])
 
 
-def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
-                   dpi: int = DPI) -> Figure:
-    """Page 5 — Phase-5 stress, dual-track FV average, MoS and rating gate."""
+# FIX-12d sensitivity shocks (decision-dashboard grid on the verdict page)
+_RATE_SHOCKS = (-0.01, 0.0, 0.01)    # WACC / ROE rows: ±100bp
+_G_SHOCKS = (-0.005, 0.0, 0.005)     # terminal-g columns: ±50bp
+_YIELD_SHOCKS = (-0.01, 0.0, 0.01)   # AFFO target yield: ±100bp
+
+
+def _mm(val) -> str:
+    # \$ so two of these in one string never pair into a mathtext span
+    return "–" if val is None else f"\\${val / 1e6:,.0f}mm"
+
+
+def _dcf_track_bases(res, v):
+    """Per-track FCFF bases recovered through engine linearity (ev = base·K),
+    so the grid reprices the exact bases behind fv_a / fv_b — Track A
+    as-reported, Track B ex-SBC — without re-deriving them from raw series."""
+    inputs, rate, shares = res._inputs, res.discount_rate, res.shares
+    if inputs is None or rate is None or not shares:
+        return None, None
+    bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
+    bases = []
+    for fv, c in ((v.fv_a, inputs.cases.get("Bear")),
+                  (v.fv_b, inputs.cases.get("Base"))):
+        if fv is None or c is None or c.g0 is None or c.g_term is None:
+            bases.append(None)
+            continue
+        try:
+            k = dcf_fcff(1.0, rate, c.g0, c.g_term)["ev"]
+        except ValuationError:
+            bases.append(None)
+            continue
+        bases.append((fv * shares + bridge) / k)
+    return tuple(bases)
+
+
+def verdict_sensitivity(res, v):
+    """FIX-12d: the verdict page's FV-average sensitivity grid — pure math,
+    no rendering, recomputed with the page's own engines and equity bridge.
+
+    DCF: 3×3 over WACC ±100bp × terminal g ±50bp (per-track g_term, Track A
+    Bear / Track B Base, same bases and bridge as fv_a / fv_b). RI: ROE
+    ±100bp × terminal g ±50bp at the page's r_e. AFFO: one row over target
+    yield ±100bp. Manual/SOTP: None — external model, no sensitivity.
+
+    Cells are FV-average per share, or None where the shocked rates make the
+    terminal value undefined (WACC/r_e ≤ g — printed as "—"). The center cell
+    reproduces the page's FV average exactly."""
+    inputs = res._inputs
+    if inputs is None or res.method == "manual":
+        return None
+    bear, base_c = inputs.cases.get("Bear"), inputs.cases.get("Base")
+    if bear is None or base_c is None:
+        return None
+    rate, shares = res.discount_rate, res.shares
+
+    if res.method == "dcf":
+        base_a, base_b = _dcf_track_bases(res, v)
+        tracks = [(b, c.g0, c.g_term)
+                  for b, c in ((base_a, bear), (base_b, base_c))
+                  if b is not None]
+        if not tracks:
+            return None
+        bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
+        cells = []
+        for dr in _RATE_SHOCKS:
+            row = []
+            for dg in _G_SHOCKS:
+                try:
+                    fvs = [(dcf_fcff(b, rate + dr, g0, gt + dg)["ev"] - bridge)
+                           / shares for b, g0, gt in tracks]
+                except ValuationError:
+                    row.append(None)
+                    continue
+                row.append(sum(fvs) / len(fvs))
+            cells.append(row)
+        return {
+            "kind": "dcf",
+            "title": "WACC ±100bp × terminal g ±50bp · same bases & bridge",
+            "row_hdr": "WACC", "col_hdr": "Δ terminal g",
+            "row_labels": [fmt_pct(rate + dr) for dr in _RATE_SHOCKS],
+            "col_labels": ["g −50bp", "g (case)", "g +50bp"],
+            "cells": cells, "center": (1, 1),
+        }
+
+    if res.method == "ri":
+        bv0 = res.base_value
+        if rate is None or not shares or not bv0 or bv0 <= 0:
+            return None
+        tracks = [(c.roe, c.g0, c.g_term)
+                  for fv, c in ((v.fv_a, bear), (v.fv_b, base_c))
+                  if fv is not None
+                  and None not in (c.roe, c.g0, c.g_term)]
+        if not tracks:
+            return None
+        cells = []
+        for droe in _RATE_SHOCKS:
+            row = []
+            for dg in _G_SHOCKS:
+                try:
+                    fvs = [residual_income(bv0, rate, roe + droe, g0, gt + dg)
+                           ["value"] / shares for roe, g0, gt in tracks]
+                except ValuationError:
+                    row.append(None)
+                    continue
+                row.append(sum(fvs) / len(fvs))
+            cells.append(row)
+        return {
+            "kind": "ri",
+            "title": f"ROE ±100bp × terminal g ±50bp at r_e {fmt_pct(rate)}",
+            "row_hdr": "ROE", "col_hdr": "Δ terminal g",
+            "row_labels": ["ROE −100bp", "ROE (case)", "ROE +100bp"],
+            "col_labels": ["g −50bp", "g (case)", "g +50bp"],
+            "cells": cells, "center": (1, 1),
+        }
+
+    if res.method == "affo":
+        tracks = [(c.affo_ps, c.target_yield)
+                  for fv, c in ((v.fv_a, bear), (v.fv_b, base_c))
+                  if fv is not None and c.affo_ps and c.target_yield]
+        if not tracks:
+            return None
+        row = []
+        for dy in _YIELD_SHOCKS:
+            fvs = [a / (yy + dy) for a, yy in tracks if (yy + dy) > 0]
+            row.append(sum(fvs) / len(fvs) if len(fvs) == len(tracks) else None)
+        return {
+            "kind": "affo",
+            "title": "target AFFO yield ±100bp",
+            "row_hdr": "", "col_hdr": "Δ yield",
+            "row_labels": ["FV avg"],
+            "col_labels": ["yield −100bp", "target", "yield +100bp"],
+            "cells": [row], "center": (0, 1),
+        }
+    return None
+
+
+def _panel_sensitivity(ax, res, v):
+    """FIX-12d row-2 right: the FV-average grid; green cells clear P₀."""
+    ax.set_axis_off()
+    grid = verdict_sensitivity(res, v)
+    if grid is None:
+        _panel_title(ax, "Sensitivity (§5.4)", "")
+        _panel_note(ax, "external model — no sensitivity")
+        return
+    _panel_title(ax, "Sensitivity — FV average per share", grid["title"])
+    rows, cols, cells = grid["row_labels"], grid["col_labels"], grid["cells"]
+    n_r, n_c = len(rows), len(cols)
+    xs = [0.24 + (j + 0.5) * (0.76 / n_c) for j in range(n_c)]
+    ys = [0.52] if n_r == 1 else [0.68 - i * 0.26 for i in range(n_r)]
+    ax.text(0.0, 0.88, grid["row_hdr"], fontsize=7.2, color=P.INK_MUTED,
+            transform=ax.transAxes, va="center")
+    for j, cl in enumerate(cols):
+        ax.text(xs[j], 0.88, cl, fontsize=7.6, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="center", ha="center")
+    ci, cj = grid["center"]
+    cw = 0.76 / n_c
+    ax.add_patch(Rectangle((xs[cj] - cw / 2 + 0.012, ys[ci] - 0.11),
+                           cw - 0.024, 0.22, transform=ax.transAxes,
+                           facecolor=P.AMBER, alpha=0.22,
+                           edgecolor=P.BASELINE, linewidth=0.8, zorder=1))
+    for i, rl in enumerate(rows):
+        ax.text(0.0, ys[i], rl, fontsize=7.8, color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="center")
+        for j in range(n_c):
+            val = cells[i][j]
+            if val is None:
+                txt, color, weight = "—", P.INK_MUTED, "normal"
+            else:
+                txt = f"${val:,.2f}"
+                color = P.DELTA_GOOD if val >= res.price else P.DELTA_BAD
+                weight = "bold" if (i, j) == (ci, cj) else "normal"
+            ax.text(xs[j], ys[i], txt, fontsize=8.6, color=color,
+                    fontweight=weight, transform=ax.transAxes,
+                    va="center", ha="center", zorder=3)
+    ax.text(0.0, 0.02, f"green ≥ P₀ ${res.price:,.2f} · center = page inputs "
+                       "· — = terminal value undefined (rate ≤ g)",
+            fontsize=6.6, color=P.INK_MUTED, transform=ax.transAxes,
+            va="bottom")
+
+
+def _panel_assumptions(ax, d: DashboardData, res, v):
+    """FIX-12d row-3 left: per-case assumptions, discount rate, per-track
+    bases and the equity-bridge legs — the whole model on one panel."""
+    ax.set_axis_off()
+    sub = f"{v.track_a_label}  ·  {v.track_b_label}"
+    if len(sub) > 112:
+        sub = sub[:109] + "…"
+    _panel_title(ax, "Assumptions & bridge (§4.0)", sub)
+    for label, x in (("Case", 0.0), ("Assumptions", 0.15), ("TV share", 0.84)):
+        ax.text(x, 0.90, label, fontsize=7.6, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+    for r, c in enumerate(res.cases):
+        y = 0.76 - r * 0.145
+        ax.text(0.0, y, c.name, fontsize=8.2, fontweight="bold",
+                color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
+        ax.text(0.15, y, c.assumptions, fontsize=8.2, color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="top")
+        ax.text(0.84, y, fmt_pct(c.tv_share) if c.tv_share is not None else "–",
+                fontsize=8.2, color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="top")
+    if res.method == "dcf":
+        base_a, base_b = _dcf_track_bases(res, v)
+        rate_line = (f"WACC {fmt_pct(res.discount_rate)} · base A "
+                     f"(as-reported) {_mm(base_a)} · base B (ex-SBC) "
+                     f"{_mm(base_b)}")
+    elif res.method == "ri":
+        rate_line = f"r_e {fmt_pct(res.discount_rate)} · BV₀ {_mm(res.base_value)}"
+    elif res.method == "affo":
+        rate_line = "AFFO per share and target yields are analyst-supplied (§4.C)"
+    else:
+        rate_line = "external model — values carried from the analyst's SOTP"
+    ax.text(0.0, 0.28, rate_line, fontsize=8.2, color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top")
+    if res.method == "dcf":
+        mi = _latest(d.minority_interest) or 0.0
+        pref = _latest(d.preferred_equity) or 0.0
+        nonop = d.non_op_investments or 0.0
+        bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
+        bridge_line = (f"Bridge (EV→equity): net debt "
+                       f"{fmt_money(res.net_debt or 0.0)} + MI {fmt_money(mi)} "
+                       f"+ preferred {fmt_money(pref)} − non-op "
+                       f"{fmt_money(nonop)} = {fmt_money(bridge)}")
+    else:
+        bridge_line = "No EV→equity bridge — this method values equity directly."
+    ax.text(0.0, 0.12, bridge_line, fontsize=8.2, color=P.INK_SECONDARY,
+            transform=ax.transAxes, va="top")
+
+
+def _panel_triggers(ax, d: DashboardData, v, open_triggers):
+    """FIX-12d row-3 right: rating-gate verdict, stress sentence, and the
+    open ledger triggers (passed in — rendering never touches ledger.py)."""
     import textwrap
 
+    ax.set_axis_off()
+    _panel_title(ax, "Triggers & rating gate (§5.3 · §5.7)", v.shock_label)
+    gate_bad = v.coherence.startswith("CHECK")
+    entries = [(f"Gate: {v.coherence} — {v.coherence_detail}",
+                P.DELTA_BAD if gate_bad else P.INK_PRIMARY,
+                "bold" if gate_bad else "normal")]
+    if v.stressed_mos is not None and v.stressed_fv_avg is not None:
+        entries.append((f"Stressed: FV avg ${v.stressed_fv_avg:,.2f} → MoS "
+                        f"{fmt_pct(v.stressed_mos, signed=True)}",
+                        P.INK_SECONDARY, "normal"))
+    else:
+        entries.append(("Stressed MoS n/a — see the notes below.",
+                        P.INK_MUTED, "normal"))
+    if v.optionality:
+        entries.append((f"Named optionality (§4.D): {v.optionality}",
+                        P.INK_SECONDARY, "normal"))
+    if d.terminal_risk:
+        entries.append((f"Terminal risk (§2.3): {d.terminal_risk}",
+                        P.DELTA_BAD, "normal"))
+    for note in v.notes:
+        entries.append((f"Note: {note}", P.INK_MUTED, "normal"))
+    if open_triggers:
+        entries.append(("Open triggers:", P.INK_PRIMARY, "bold"))
+        entries.extend(("•  " + str(t), P.INK_SECONDARY, "normal")
+                       for t in open_triggers)
+    else:
+        entries.append(("No open triggers — add via --ledger or the watchlist.",
+                        P.INK_MUTED, "normal"))
+    y, skipped = 0.92, 0
+    for idx, (text, color, weight) in enumerate(entries):
+        wrapped = textwrap.fill(text, width=74)
+        n = wrapped.count("\n") + 1
+        if y - 0.075 * n < 0.06:      # keep room for the overflow line
+            skipped = len(entries) - idx
+            break
+        ax.text(0, y, wrapped, fontsize=7.6, color=color, fontweight=weight,
+                transform=ax.transAxes, va="top", linespacing=1.3)
+        y -= 0.075 * n + 0.03
+    if skipped:
+        ax.text(0, y, f"+{skipped} more — see the watchlist / ledger history",
+                fontsize=7.2, color=P.INK_MUTED, transform=ax.transAxes,
+                va="top")
+
+
+def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
+                   dpi: int = DPI,
+                   open_triggers: Optional[Sequence[str]] = None) -> Figure:
+    """Page 5 — Phase-5 decision dashboard (FIX-12d): stress bars, sensitivity
+    grid, assumptions & bridge, triggers & rating gate."""
     matplotlib.rcParams.update({
         "font.family": "sans-serif",
         "font.sans-serif": P.FONT_STACK,
@@ -1408,11 +1725,12 @@ def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
     fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
     fig.patch.set_facecolor(P.SURFACE)
     gs = fig.add_gridspec(
-        3, 1, height_ratios=[1.35, 2.0, 1.15],
-        left=0.055, right=0.965, top=0.95, bottom=0.065, hspace=0.55,
+        3, 2, height_ratios=[1.30, 1.75, 1.45], width_ratios=[1.0, 1.0],
+        left=0.055, right=0.965, top=0.95, bottom=0.10,
+        hspace=0.62, wspace=0.16,
     )
 
-    ax_header = fig.add_subplot(gs[0])
+    ax_header = fig.add_subplot(gs[0, :])
     ax_header.set_axis_off()
     ax_header.text(0, 1.04, f"{d.company} — verdict", fontsize=17.5,
                    fontweight="bold", color=P.INK_PRIMARY,
@@ -1444,40 +1762,23 @@ def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
                   v.coherence if not gate_ok else "coherent with MoS", gate_ok))
     _draw_kpi_row(ax_header, tiles[:6])
 
-    ax_stress = fig.add_subplot(gs[1])
+    ax_stress = fig.add_subplot(gs[1, 0])
     _style_axes(ax_stress)
     _panel_stress(ax_stress, fig, res, v)
 
-    ax_text = fig.add_subplot(gs[2])
-    ax_text.set_axis_off()
-    y = 0.95
-    rows = [
-        ("Tracks", f"{v.track_a_label}  ·  {v.track_b_label}", P.INK_SECONDARY),
-        ("MoS (§5.2)",
-         f"base {fmt_pct(v.mos, signed=True)}"
-         + (f" · stressed {fmt_pct(v.stressed_mos, signed=True)}"
-            if v.stressed_mos is not None else " · stressed n/a"),
-         P.INK_PRIMARY),
-        ("Rating gate (§5.3)", f"{v.coherence} — {v.coherence_detail}",
-         P.DELTA_BAD if v.coherence.startswith("CHECK") else P.INK_SECONDARY),
-    ]
-    if d.terminal_risk:
-        rows.append(("Terminal risk (§2.3)", d.terminal_risk, P.DELTA_BAD))
-    if v.optionality:
-        rows.append(("Named optionality (§4.D)", v.optionality, P.INK_SECONDARY))
-    for note in v.notes:
-        rows.append(("Note", note, P.INK_MUTED))
-    for label, text, color in rows:
-        wrapped = textwrap.fill(f"{label}:  {text}", width=170)
-        ax_text.text(0, y, wrapped, fontsize=8.2, color=color,
-                     transform=ax_text.transAxes, va="top", linespacing=1.4)
-        y -= 0.115 * (wrapped.count("\n") + 1) + 0.035
-    fig.text(0.055, 0.018,
-             "FV_avg = average(Track A, Track B); coherence gate mirrors the "
-             "workbook (Control!B67): MoS < −15% with Hold/Buy → CHECK unless "
-             "the §4.D optionality is named. Sizing (§5.6) and the ledger "
-             "(§5.7) are not yet ported.  Not investment advice.",
-             fontsize=6.6, color=P.INK_MUTED, va="bottom")
+    ax_sens = fig.add_subplot(gs[1, 1])
+    _panel_sensitivity(ax_sens, res, v)
+
+    ax_assume = fig.add_subplot(gs[2, 0])
+    _panel_assumptions(ax_assume, d, res, v)
+
+    ax_trig = fig.add_subplot(gs[2, 1])
+    _panel_triggers(ax_trig, d, v, open_triggers)
+
+    _footer(fig, d, "FV_avg = average(Track A, Track B); coherence gate "
+                    "mirrors the workbook (Control!B67): MoS < −15% with "
+                    "Hold/Buy → CHECK unless the §4.D optionality is named. "
+                    "Sizing (§5.6) stays with the analyst.")
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)
@@ -1537,7 +1838,15 @@ def render_dashboard(d: DashboardData, out_path: Optional[str] = None,
             continue
         fn(ax, fig, d)
 
-    _footer(fig, d)
+    extra = ["FCF = operating cash flow − capex.  Accruals ratio = "
+             "(net income − CFO) / average total assets; sustained readings "
+             "above +10% flag earnings running ahead of cash."]
+    if d.tags_used:
+        shown = ", ".join(f"{k}={v}" for k, v in sorted(d.tags_used.items()))
+        if len(shown) > 210:
+            shown = shown[:207] + "…"
+        extra.append("XBRL tags: " + shown)
+    _footer(fig, d, extra)
 
     if out_path:
         fig.savefig(out_path, dpi=dpi)

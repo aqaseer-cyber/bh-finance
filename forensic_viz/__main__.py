@@ -277,7 +277,14 @@ def main(argv=None) -> int:
                                     rating=data.rating,
                                     optionality=data.optionality)
             fig_val = render_valuation(data, res, dpi=args.dpi)
-            fig_verdict = render_verdict(data, res, verdict, dpi=args.dpi)
+            try:  # verdict trigger box (§5.7) — the ledger never blocks a render
+                from .ledger import Ledger
+                open_trigs = [t["trigger_text"]
+                              for t in Ledger().open_triggers(data.ticker)]
+            except Exception:
+                open_trigs = None
+            fig_verdict = render_verdict(data, res, verdict, dpi=args.dpi,
+                                         open_triggers=open_trigs)
         except ValuationError as exc:
             _report_error(str(exc))
             return 2
