@@ -43,7 +43,7 @@ export's "Interim gap-fill" footnotes.
 
 | Cell | Input | Source |
 |---|---|---|
-| B5–B7 | Segment revenue | ANALYST — 10-K segment footnote (ASC 280). Dimensional XBRL; companyfacts returns consolidated only. (The frames API or Fiscal.ai can automate this later) |
+| B5–B7 | Segment revenue | AUTO when the 10-K/10-Q instance parses (dimensional XBRL, top-2 + remainder, gated on the Σ-members tie) — else ANALYST from the 10-K segment footnote (ASC 280); requires a declared SEC_EDGAR_USER_AGENT (FIX-13a) |
 | B11 | Total revenue growth | AUTO |
 | B12–B15 | Organic/inorganic, price/volume | ANALYST — MD&A + earnings release; deal 8-Ks for acquired revenue (the CELH/ADBE lesson) |
 | B19/B20 | Avg inventory / COGS | AUTO |
@@ -102,3 +102,19 @@ export's "Interim gap-fill" footnotes.
 
 (The **verdict ledger §5.7** shipped — SQLite store with append-only history;
 `--ledger` / `--ledger-import` / the Watchlist tab.)
+
+## Financial-model export sheets (staging layer, FIX-13)
+
+Not shell cells — the sheets the **Financial model…** export writes, which
+downstream extraction reads from. Requires a declared `SEC_EDGAR_USER_AGENT`
+(Archives 403s the placeholder).
+
+| Sheet | Structure source | Value source |
+|---|---|---|
+| Income Statement | Latest 10-K presentation linkbase (`…_pre.xml`), role matched via `FilingSummary.xml`; labels from `…_lab.xml` | SEC companyfacts, annual observations, latest amendment wins; raw as-filed signs |
+| Balance Sheet | same | same (instant tags matched to fiscal year-ends) |
+| Cash Flow | same | same |
+| Segments | 10-K/10-Q XBRL instances, dimensional contexts (business segments / revenue stream / product / geography axes) | as-filed spans; italic = synthesized from the two-axis table; Σ/gap tie rows vs the consolidated statement |
+
+Boundary: MD&A operating KPIs (GMV, TPV, NIMAL, active users/buyers, items
+sold, payment transactions) have no XBRL presence and are outside the export.

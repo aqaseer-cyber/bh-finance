@@ -222,6 +222,22 @@ rows** sit under the key line items — YoY in the fiscal-year columns and
 records the derivation rules and the exact XBRL tag per concept. Raw
 audit-trail CSVs remain available on the CLI via `--csv`.
 
+**As-filed statement sheets (staging layer).** Alongside the curated Model
+sheet, the export carries one sheet per primary statement — **Income
+Statement**, **Balance Sheet**, **Cash Flow** — with every tagged line in
+the filer's own order and labels, plus a per-axis **Segments** sheet;
+downstream extraction reads from this workbook. Mechanism (XBRL-only, no
+HTML scraping): the latest 10-K's `FilingSummary.xml` locates the three
+consolidated-statement roles, the **presentation linkbase** (`…_pre.xml`)
+gives line order/indent/total flags, the **label linkbase** (`…_lab.xml`)
+gives the as-filed labels, and values come from **companyfacts** for all
+displayed fiscal years (latest amendment wins) — so the sheets show the
+current as-filed structure with full multi-year columns. Signs are raw
+as-filed (presentation-negated rows display the raw XBRL value). The
+boundary is honest: "all the data" means all *tagged* data — operating
+KPIs disclosed in MD&A (GMV, TPV, NIMAL, active users/buyers, items sold,
+payment transactions) are not XBRL-tagged and are outside this export.
+
 **Segment line items (§2.1 / SOTP).** Segment splits — reportable
 segments, product/service disaggregation (e.g. Commerce vs Fintech),
 geography (e.g. Brazil/Mexico/Other) — are **dimensional XBRL that the
@@ -293,9 +309,16 @@ file loads, the report labels flip from "ASSUMPTION" to "house".
   long-term debt (current + noncurrent) + short-term borrowings, falling back
   to `LongTermDebt`. Accruals ratio uses average total assets.
 
+### SEC access requirements
+
 The SEC requires an identifying User-Agent; the default is set in
-`forensic_viz/config.py` and can be overridden with the
-`SEC_EDGAR_USER_AGENT` environment variable.
+`forensic_viz/config.py` and overridden with the `SEC_EDGAR_USER_AGENT`
+environment variable (`name email`). **`www.sec.gov/Archives` returns
+HTTP 403 for the placeholder UA** (verified live), so Archives-dependent
+features — segment instances, the as-filed statement sheets — refuse to
+run on the placeholder and say exactly what to set; `data.sec.gov`
+(companyfacts, submissions) currently tolerates it, so fundamentals stay
+usable either way.
 
 Cached responses live in `%LOCALAPPDATA%\ForensicStockViz\cache`
 (fundamentals 24 h, prices 6 h) so re-runs are instant and polite to the APIs.
