@@ -39,11 +39,14 @@ from .edgar import (
 
 _AXES = {  # accepted axis local name -> display label
     "StatementBusinessSegmentsAxis": "business segments",
+    # MELI's Commerce/Fintech split rides srt:SubsegmentsAxis (FIX-13b)
+    "SubsegmentsAxis": "revenue stream",
     "ProductOrServiceAxis": "product / service",
     "ProductsAndServicesAxis": "product / service",  # pre-2020 srt name
     "StatementGeographicalAxis": "geography",
 }
-_AXIS_ORDER = ["business segments", "product / service", "geography"]
+_AXIS_ORDER = ["business segments", "revenue stream", "product / service",
+               "geography"]
 # extra dimensions that may accompany a segment axis without changing it
 _NEUTRAL = {("ConsolidationItemsAxis", "OperatingSegmentsMember")}
 
@@ -127,6 +130,9 @@ class ParsedInstance:
         field(default_factory=dict)   # (axis, member, concept)
     crosses: Dict[Tuple[str, str, str, str, str], Dict[Span, float]] = \
         field(default_factory=dict)   # (ax1, m1, ax2, m2, concept)
+    # FIX-13b: facts whose context crosses 3+ ACCEPTED axes — real detail
+    # beyond the 2-axis model, counted so the status can declare them
+    n_multi: int = 0
 
 
 def _local(tag_or_qname: str) -> str:
@@ -170,6 +176,7 @@ def parse_instance(xml_text: str) -> ParsedInstance:
 
     # context id -> (sorted axis/member pairs, start, end)
     contexts: Dict[str, Tuple[List[Tuple[str, str]], dt.date, dt.date]] = {}
+    multi_ctx: set = set()  # contexts on 3+ accepted axes (FIX-13b)
     for ctx in root.iter():
         if _local(ctx.tag) != "context":
             continue
@@ -190,9 +197,12 @@ def parse_instance(xml_text: str) -> ParsedInstance:
             continue
         seg_dims = [(a, m) for a, m in dims
                     if (a, _local(m)) not in _NEUTRAL]
-        if not seg_dims or len(seg_dims) > 2 \
-                or any(a not in _AXES for a, _ in seg_dims):
-            continue  # no segment axis, >2 axes, or a foreign axis present
+        if not seg_dims or any(a not in _AXES for a, _ in seg_dims):
+            continue  # no segment axis, or a foreign axis present
+        if len(seg_dims) > 2:
+            # all-accepted 3+-axis contexts: counted (FIX-13b), not modeled
+            multi_ctx.add(ctx.get("id", ""))
+            continue
         pairs = sorted((_AXES[a], member_label(m)) for a, m in seg_dims)
         contexts[ctx.get("id", "")] = (pairs, start, end)
 
@@ -200,6 +210,10 @@ def parse_instance(xml_text: str) -> ParsedInstance:
     for el in root.iter():
         group_concept = _local(el.tag)
         if _concept_group(group_concept) is None:
+            continue
+        if el.get("contextRef", "") in multi_ctx \
+                and el.get("unitRef", "") in usd_units:
+            out.n_multi += 1
             continue
         ctx = contexts.get(el.get("contextRef", ""))
         if ctx is None or el.get("unitRef", "") not in usd_units:
@@ -231,11 +245,13 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
     """
     singles: Dict[Tuple[str, str, str], Dict[Span, float]] = {}
     crosses: Dict[Tuple[str, str, str, str, str], Dict[Span, float]] = {}
+    n_multi = 0
     for xml_text in instances:
         try:
             parsed = parse_instance(xml_text)
         except ET.ParseError:
             continue
+        n_multi += parsed.n_multi
         for key, spans in parsed.singles.items():
             singles.setdefault(key, {}).update(spans)
         for key, spans in parsed.crosses.items():
@@ -284,11 +300,14 @@ def build_segment_data(instances: List[str], source: str = "") -> SegmentData:
                                _GROUP_RANK.get(ln.group, 9),
                                rev_size.get((ln.axis, ln.member), 0.0),
                                ln.member))
-    status = ""
+    notes: List[str] = []
     if synthesized:
-        status = (f"{synthesized} single-axis spans aggregated from the "
-                  "two-axis disaggregation table")
-    return SegmentData(lines=lines, source=source, status=status)
+        notes.append(f"{synthesized} single-axis spans aggregated from the "
+                     "two-axis disaggregation table")
+    if n_multi:
+        notes.append(f"{n_multi} facts at 3+ segment axes ignored "
+                     "(beyond the 2-axis model)")
+    return SegmentData(lines=lines, source=source, status="; ".join(notes))
 
 
 def fetch_segment_data(annual: AnnualFundamentals,

@@ -167,6 +167,84 @@ def test_two_axis_only_disaggregation_is_aggregated():
     assert "aggregated" in seg.status
 
 
+def test_subsegments_axis_accepted_as_revenue_stream():
+    """FIX-13b, verified on MELI's FY2024 instance: the Commerce/Fintech
+    split rides srt:SubsegmentsAxis (Commerce 12,159 / Fintech 8,618 $mm,
+    Σ = 20,777), with Country×Stream crosses that tie per country
+    (Brazil 7,038 + 4,368 = 11,406)."""
+    span = ("2024-01-01", "2024-12-31")
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    # stream singles tagged directly, as MELI files them
+    streams = {"meli:CommerceMember": 12_159e6,
+               "meli:FintechMember": 8_618e6}
+    for i, (m, v) in enumerate(streams.items()):
+        parts.append(_ctx(f"ss{i}", "srt:SubsegmentsAxis", m, *span))
+        parts.append(_fact(REV, f"ss{i}", v))
+    # Country×Stream crosses (ordinary 2-dim facts)
+    crosses = {("country:BR", "meli:CommerceMember"): 7_038e6,
+               ("country:BR", "meli:FintechMember"): 4_368e6,
+               ("country:MX", "meli:CommerceMember"): 2_800e6,
+               ("country:MX", "meli:FintechMember"): 1_864e6,
+               ("meli:OtherCountriesMember", "meli:CommerceMember"): 2_321e6,
+               ("meli:OtherCountriesMember", "meli:FintechMember"): 2_386e6}
+    for i, ((geo, st), v) in enumerate(crosses.items()):
+        extra = ('<xbrldi:explicitMember dimension="srt:SubsegmentsAxis">'
+                 f"{st}</xbrldi:explicitMember>")
+        parts.append(_ctx(f"cx{i}", "srt:StatementGeographicalAxis", geo,
+                          *span, extra))
+        parts.append(_fact(REV, f"cx{i}", v))
+    parts.append("</xbrl>")
+    seg = build_segment_data(["".join(parts)], "meli-style")
+
+    assert "revenue stream" in seg.axes()
+    # axis ordering follows _AXIS_ORDER: stream before geography
+    assert seg.axes().index("revenue stream") < seg.axes().index("geography")
+    by = {(ln.axis, ln.member): ln for ln in seg.lines
+          if ln.group == "Revenue"}
+    dspan = (dt.date(2024, 1, 1), dt.date(2024, 12, 31))
+
+    def val(axis, member):
+        return {(s, e): v for s, e, v in by[(axis, member)].entries}[dspan]
+
+    assert val("revenue stream", "Commerce") == 12_159e6   # filed single wins
+    assert val("revenue stream", "Fintech") == 8_618e6
+    total = 12_159e6 + 8_618e6                              # 20,777
+    # per-span ties: Σ(stream) == Σ(country) == consolidated
+    stream_sum = sum(val("revenue stream", m)
+                     for m in seg.members("revenue stream"))
+    geo_sum = sum(val("geography", m) for m in seg.members("geography"))
+    assert stream_sum == pytest.approx(total)
+    assert geo_sum == pytest.approx(total)
+    assert val("geography", "Brazil") == pytest.approx(7_038e6 + 4_368e6)
+
+
+def test_three_axis_facts_counted_not_modeled():
+    """FIX-13b: a Country×Stream×Product fact (all accepted axes) is not a
+    line — it is counted and declared in the status."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>']
+    extra = ('<xbrldi:explicitMember dimension="srt:SubsegmentsAxis">'
+             'meli:CommerceMember</xbrldi:explicitMember>'
+             '<xbrldi:explicitMember dimension="srt:ProductOrServiceAxis">'
+             'meli:MarketplaceMember</xbrldi:explicitMember>')
+    parts.append(_ctx("m3", "srt:StatementGeographicalAxis", "country:BR",
+                      "2024-01-01", "2024-12-31", extra))
+    parts.append(_fact(REV, "m3", 5_000e6))
+    # plus one normal single so the parse has a line to keep
+    parts.append(_ctx("s0", "srt:SubsegmentsAxis", "meli:CommerceMember",
+                      "2024-01-01", "2024-12-31"))
+    parts.append(_fact(REV, "s0", 12_159e6))
+    parts.append("</xbrl>")
+    parsed = parse_instance("".join(parts))
+    assert parsed.n_multi == 1
+    assert all(k[1] != "Brazil" for k in parsed.singles)  # not modeled
+
+    seg = build_segment_data(["".join(parts)], "x")
+    assert "1 facts at 3+ segment axes ignored" in seg.status
+    assert seg.members("revenue stream") == ["Commerce"]
+
+
 def _data_with_segments():
     facts = build_testco_companyfacts()
     d = DashboardData(ticker="TESTCO", company="TESTCO Inc", subtitle="",
