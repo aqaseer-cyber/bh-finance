@@ -71,6 +71,49 @@ def _open_folder(path) -> None:
         pass
 
 
+# Watchlist column → raw ledger-row value (FIX-12f click-to-sort). Sorting
+# reads the raw values, never the formatted display strings.
+_WATCH_SORT_KEYS = {
+    "ticker": lambda r: r.get("ticker") or "",
+    "rating": lambda r: r.get("rating") or "",
+    "fv": lambda r: r.get("fv_avg"),
+    "mos": lambda r: r.get("mos"),
+    "smos": lambda r: r.get("stressed_mos"),
+    "price": lambda r: r.get("price"),
+    "asof": lambda r: r.get("price_date") or "",
+    "age": lambda r: r.get("age_days"),
+    "gate": lambda r: r.get("coherence") or "",
+    "trig": lambda r: r.get("open_triggers") or 0,
+}
+
+
+def watchlist_sort(rows, col, reverse=False):
+    """Sort ledger rows by a column, numeric-aware; rows missing the value
+    sort last in either direction. Pure — unit-tested without Tk."""
+    key = _WATCH_SORT_KEYS.get(col)
+    if key is None:
+        return list(rows)
+
+    def norm(r):
+        v = key(r)
+        return v.upper() if isinstance(v, str) else v
+
+    present = [r for r in rows if key(r) is not None]
+    missing = [r for r in rows if key(r) is None]
+    return sorted(present, key=norm, reverse=reverse) + missing
+
+
+def watchlist_tags(rec) -> tuple:
+    """Row tags for a ledger record: MoS sign colour, then `stale` last so
+    its red keeps precedence. Pure — unit-tested without Tk."""
+    tags = []
+    if rec.get("mos") is not None:
+        tags.append("neg" if rec["mos"] < 0 else "pos")
+    if rec.get("stale"):
+        tags.append("stale")
+    return tuple(tags)
+
+
 def _enable_windows_dpi_awareness() -> None:
     """Per-monitor DPI awareness — must run BEFORE tk.Tk() is constructed,
     or Windows bitmap-stretches the whole app at 125–150% display scaling.
@@ -491,13 +534,18 @@ class App:
                 "age", "gate", "trig")
         heads = ("Ticker", "Rating", "FV avg", "MoS", "Stressed", "P₀",
                  "As of", "Age (d)", "Gate", "Open trig")
-        widths = (70, 80, 80, 70, 70, 70, 90, 60, 150, 70)
+        widths = (70, 80, 80, 70, 70, 70, 90, 60, 230, 70)
+        numeric = {"fv", "mos", "smos", "price", "age"}  # right-aligned
+        self._watch_sort = (None, False)  # (column, reverse)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings",
                                  selectmode="browse")
         for c, h, w in zip(cols, heads, widths):
-            self.tree.heading(c, text=h)
-            self.tree.column(c, width=w, anchor="w")
-        self.tree.tag_configure("stale", foreground=P.NEGATIVE)
+            self.tree.heading(c, text=h,
+                              command=lambda col=c: self._on_watch_sort(col))
+            self.tree.column(c, width=w, anchor="e" if c in numeric else "w")
+        self.tree.tag_configure("neg", foreground=P.NEGATIVE)
+        self.tree.tag_configure("pos", foreground=P.DELTA_GOOD)
+        self.tree.tag_configure("stale", foreground=P.NEGATIVE)  # wins (last)
         vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -509,15 +557,30 @@ class App:
                    command=self._rerun_selected).pack(side=tk.LEFT)
         ttk.Button(btns, text="Remove selected",
                    command=self._remove_selected).pack(side=tk.LEFT, padx=(8, 0))
+        self.history_btn = ttk.Button(btns, text="History…",
+                                      command=self._history_selected)
+        if not hasattr(self.ledger, "history"):  # pre-FIX-6 ledger builds
+            self.history_btn.configure(state=tk.DISABLED)
+        self.history_btn.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(btns, style="Muted.TLabel",
                   text="Verdict ledger (§5.7) — rows log automatically when a "
                        "valuation runs; red = stale (> ~5 trading days, house §8). "
-                       "Double-click to re-run.").pack(side=tk.LEFT, padx=(14, 0))
+                       "Click a heading to sort; double-click to re-run.").pack(
+            side=tk.LEFT, padx=(14, 0))
+
+    def _on_watch_sort(self, col: str):
+        prev_col, prev_rev = self._watch_sort
+        self._watch_sort = (col, not prev_rev if prev_col == col else False)
+        self.refresh_watchlist()
 
     def refresh_watchlist(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
-        for rec in self.ledger.list_verdicts():
+        rows = self.ledger.list_verdicts()
+        col, rev = self._watch_sort
+        if col:
+            rows = watchlist_sort(rows, col, rev)
+        for rec in rows:
             def pct(v):
                 return f"{v * 100:+.1f}%" if v is not None else "–"
             self.tree.insert("", tk.END, values=(
@@ -528,7 +591,41 @@ class App:
                 rec["price_date"] or "–",
                 rec["age_days"] if rec["age_days"] is not None else "–",
                 rec["coherence"] or "–", rec["open_triggers"] or "",
-            ), tags=("stale",) if rec["stale"] else ())
+            ), tags=watchlist_tags(rec))
+
+    def _history_selected(self):
+        """FIX-12f: read-only viewer over the FIX-6 verdict history."""
+        ticker = self._selected_ticker()
+        if not ticker or self.busy or not hasattr(self.ledger, "history"):
+            return
+        try:
+            rows = self.ledger.history(ticker)
+        except Exception:
+            rows = []
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"Verdict history — {ticker}"
+                  + (" (no rows yet)" if not rows else ""))
+        dlg.transient(self.root)
+        dlg.configure(background=P.PAGE)
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        cols = ("recorded", "rating", "fv", "mos", "gate")
+        heads = ("Recorded", "Rating", "FV avg", "MoS", "Gate")
+        widths = (170, 80, 90, 70, 230)
+        tree = ttk.Treeview(dlg, columns=cols, show="headings", height=12)
+        for c, h, w in zip(cols, heads, widths):
+            tree.heading(c, text=h)
+            tree.column(c, width=w, anchor="e" if c in ("fv", "mos") else "w")
+        for r in reversed(rows):  # newest first
+            tree.insert("", tk.END, values=(
+                r.get("recorded_at") or "–", r.get("rating") or "–",
+                f"${r['fv_avg']:,.2f}" if r.get("fv_avg") is not None else "–",
+                f"{r['mos'] * 100:+.1f}%" if r.get("mos") is not None else "–",
+                r.get("coherence") or "–"))
+        vsb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                  padx=(10, 0), pady=10)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y, pady=10, padx=(0, 10))
 
     def _selected_ticker(self) -> Optional[str]:
         sel = self.tree.selection()

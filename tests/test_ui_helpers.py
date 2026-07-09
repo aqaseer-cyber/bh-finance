@@ -61,3 +61,30 @@ def test_should_rerender_threshold():
     assert _should_rerender(96, 101) is False     # < 6 dpi: debounced away
     assert _should_rerender(96, 102) is True
     assert _should_rerender(150, 96) is True      # shrink re-renders too
+
+
+def test_watchlist_sort_numeric_aware_none_last():
+    pytest.importorskip("tkinter")  # gui import needs it
+    from forensic_viz.gui import watchlist_sort
+    rows = [{"ticker": "A", "mos": 0.10}, {"ticker": "B", "mos": None},
+            {"ticker": "C", "mos": -0.30}]
+    asc = watchlist_sort(rows, "mos")
+    assert [r["ticker"] for r in asc] == ["C", "A", "B"]   # None sorts last
+    desc = watchlist_sort(rows, "mos", reverse=True)
+    assert [r["ticker"] for r in desc] == ["A", "C", "B"]  # None still last
+    # string columns compare case-insensitively; unknown column = no-op
+    rows2 = [{"ticker": "b"}, {"ticker": "A"}]
+    assert [r["ticker"] for r in watchlist_sort(rows2, "ticker")] == ["A", "b"]
+    assert watchlist_sort(rows2, "nope") == rows2
+
+
+def test_watchlist_tags_sign_colour_and_stale_precedence():
+    pytest.importorskip("tkinter")
+    from forensic_viz.gui import watchlist_tags
+    assert watchlist_tags({"mos": -0.1, "stale": False}) == ("neg",)
+    assert watchlist_tags({"mos": 0.2, "stale": False}) == ("pos",)
+    assert watchlist_tags({"mos": 0.0, "stale": False}) == ("pos",)
+    # stale is applied LAST so its red wins over the MoS colour
+    assert watchlist_tags({"mos": 0.2, "stale": True}) == ("pos", "stale")
+    assert watchlist_tags({"mos": None, "stale": True}) == ("stale",)
+    assert watchlist_tags({"mos": None, "stale": False}) == ()
