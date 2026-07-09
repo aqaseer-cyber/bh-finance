@@ -15,6 +15,7 @@ untouched, and a to-do list of the analyst cells with suggested sources
 ![Demo unit economics](docs/demo_dashboard_unit.png)
 ![Demo health checks](docs/demo_dashboard_health.png)
 ![Demo intrinsic value](docs/demo_dashboard_valuation.png)
+![Demo verdict](docs/demo_dashboard_verdict.png)
 
 ## Quick start (Windows)
 
@@ -43,6 +44,19 @@ side-by-side interactive page for 2–4 tickers — indexed price and revenue
 (common base, one axis), net margin, ROIC, FCF margin, and a KPI table that
 pulls each name's ledger rating/FV/MoS. Colors are fixed per ticker across
 every chart (color follows the entity).
+
+**Interface.** The app is per-monitor **DPI-aware**: at 125/150% Windows
+scaling the shell stays crisp (no bitmap stretching), report pages render at
+your true display DPI, and resizing or maximizing **re-renders them sharp and
+centered** after a short debounce. It ships a proper window/taskbar icon and
+a menu bar (File / Tools / Help); **Tools → Settings…** persists the SEC
+User-Agent, an optional house-assumptions file and the default years window
+to `settings.json` in `%LOCALAPPDATA%\ForensicStockViz\` (next to the cache
+and `ledger.db`) — environment variables always win over saved settings.
+Long fetches show a progress bar with a **Cancel** button (cooperative: the
+run stops at the next pipeline stage), and Escape closes every dialog. The
+owner-run acceptance pass for all of this lives in
+[docs/UI_VALIDATION.md](docs/UI_VALIDATION.md).
 
 **House look & display charts.** Every surface — the Tk shell, all five
 report pages, the interactive and compare reports — follows the house colour
@@ -237,6 +251,17 @@ as-filed (presentation-negated rows display the raw XBRL value). The
 boundary is honest: "all the data" means all *tagged* data — operating
 KPIs disclosed in MD&A (GMV, TPV, NIMAL, active users/buyers, items sold,
 payment transactions) are not XBRL-tagged and are outside this export.
+
+Units live in the section headers (`INCOME STATEMENT ($mm; EPS in $, shares
+in mm)` · `BALANCE SHEET (period end, $mm)` · `CASH FLOW STATEMENT ($mm)`)
+and every cell carries a number format chosen by row kind:
+
+| Row kind | Excel format | Reads as |
+|---|---|---|
+| Money rows ($mm) | `#,##0.0;(#,##0.0);"–"` | `20,335.0` · `(1,204.5)` · zero → `–` |
+| Per-share (diluted EPS) | `0.00;(0.00);"–"` | `6.13` |
+| Share counts (mm) | `#,##0.0` | `15,744.2` |
+| % change & tie checks | `+0.0%;-0.0%;"–"` | `+12.4%` · `-3.1%` |
 
 **Segment line items (§2.1 / SOTP).** Segment splits — reportable
 segments, product/service disaggregation (e.g. Commerce vs Fintech),
