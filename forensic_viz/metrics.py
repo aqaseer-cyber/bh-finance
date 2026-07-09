@@ -63,6 +63,13 @@ class DashboardData:
     # instances are unreachable (offline) or the filer reports one segment.
     segments: Optional[object] = field(default=None, repr=False)
 
+    # As-filed statement structure (FIX-13d): the latest 10-K's presentation
+    # linkbase, {'income'/'balance'/'cashflow': [edgar.PresRow, ...]} plus a
+    # '_short_names' meta key — drives the per-statement export sheets.
+    # None when unreachable; statements_note keeps the reason.
+    statements: Optional[dict] = field(default=None, repr=False)
+    statements_note: str = ""
+
     # Fundamentals (aligned lists, oldest -> newest, DISPLAY_YEARS long)
     fy_labels: List[str] = field(default_factory=list)
     fy_ends: List[dt.date] = field(default_factory=list)

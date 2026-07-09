@@ -57,3 +57,6 @@ def test_pipeline_turns_gate_into_actionable_segment_status(
     # the preserved failure reason IS the actionable instruction
     assert "SEC_EDGAR_USER_AGENT" in d.segments.status
     assert "403" in d.segments.status
+    # the statement-structure fetch (FIX-13d) is gated the same way
+    assert d.statements is None
+    assert "SEC_EDGAR_USER_AGENT" in d.statements_note

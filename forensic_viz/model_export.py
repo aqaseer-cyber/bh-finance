@@ -51,6 +51,13 @@ _SPAN_TOL = 14    # days tolerance matching a filed span boundary
 _YEAR_TOL = 21    # days tolerance matching the year-ago span
 _SHOW_QUARTERS = 4
 
+# TODO(FIX-12h): duplicated from the FIX-12h spec (identical strings by
+# design) — reuse its constants once fix-12-presentation merges.
+_FMT_MONEY = '#,##0.0;(#,##0.0);"–"'    # $mm rows
+_FMT_PS = '0.00;(0.00);"–"'             # per-share rows
+_FMT_SHARES = "#,##0.0"                 # share-count rows (never negative)
+_FMT_PCT = '+0.0%;-0.0%;"–"'            # % change and tie-check rows
+
 # (label, concept, style, pct_row); concept None = section header;
 # "=name" = derived row; style: item | total | eps | shares
 LAYOUT: List[Tuple[str, Optional[str], str, bool]] = [
@@ -760,6 +767,9 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             "derived as Net Income + Tax Provision; parent-attributable "
             "net income understates pretax income when minority interest "
             "is material."))
+    if not getattr(d, "statements", None):  # FIX-13d degradation path
+        why = getattr(d, "statements_note", "") or "not fetched in this run"
+        notes.insert(-1, f"As-filed statement sheets unavailable: {why}")
     tag_bits = "; ".join(f"{k} = {v}" for k, v in sorted(f.tags_used.items()))
     if tag_bits:
         notes.append(f"XBRL tags: {tag_bits}")
@@ -772,5 +782,227 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     ws.column_dimensions["A"].width = 36
     for j in range(2, ltm_col + 1):
         ws.column_dimensions[get_column_letter(j)].width = 11.5
+
+    # FIX-13d: the workbook becomes the staging layer — every tagged line
+    # of the three primary statements in the filer's own order, plus the
+    # per-axis Segments sheet; downstream extraction reads from here.
+    _write_statement_sheets(wb, d)
+    _write_segments_sheet(wb, d, qdata)
     wb.save(path)
     return path
+
+
+def _unit_format(concept: str, unit: str) -> Tuple[float, str]:
+    """(scale divisor, number format) per row kind — unit-aware."""
+    if unit == "USD/shares" or concept.startswith("EarningsPerShare"):
+        return 1.0, _FMT_PS
+    if unit == "shares":
+        return _MM, _FMT_SHARES
+    if unit == "pure":
+        return 1.0, "0.0000"
+    return _MM, _FMT_MONEY
+
+
+def _span_label(start: dt.date, end: dt.date) -> str:
+    """Column label for an as-reported segment span."""
+    days = (end - start).days
+    if 330 <= days <= 400:
+        return fy_label(end)
+    return f"{round(days / 91) * 3}m to {end.isoformat()}"
+
+
+def _write_statement_sheets(wb, d: DashboardData) -> None:
+    """FIX-13d: 'Income Statement' / 'Balance Sheet' / 'Cash Flow' sheets —
+    one row per presentation-linkbase line in the filer's own order and
+    labels; values from companyfacts (latest amendment wins), raw as-filed
+    signs (no negation games)."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    from .edgar import annual_values_for_concept
+
+    stmts = getattr(d, "statements", None)
+    f = getattr(d, "fundamentals", None)
+    if not stmts or f is None or f.raw_facts is None or not f.fy_ends:
+        return
+    short_names = stmts.get("_short_names", {})
+    fy_ends = f.fy_ends
+    ink = P.INK_PRIMARY.lstrip("#").upper()
+    forest = P.GUI_SIDEBAR_BG.lstrip("#").upper()
+    cream = P.SURFACE.lstrip("#").upper()
+    muted = P.INK_MUTED.lstrip("#").upper()
+    section_fill = PatternFill("solid", fgColor="DFE9E1")
+    header_fill = PatternFill("solid", fgColor=forest)
+    total_border = Border(top=Side(style="thin", color="9AA79B"))
+
+    for key, title in (("income", "Income Statement"),
+                       ("balance", "Balance Sheet"),
+                       ("cashflow", "Cash Flow")):
+        rows = stmts.get(key)
+        if not rows:
+            continue
+        ws = wb.create_sheet(title)
+        ws.freeze_panes = "B2"
+        ws.sheet_view.showGridLines = False
+        ws.cell(row=1, column=1, value="Line Items (as filed)")
+        for j, e in enumerate(fy_ends, start=2):
+            ws.cell(row=1, column=j, value=fy_label(e))
+        for j in range(1, len(fy_ends) + 2):
+            c = ws.cell(row=1, column=j)
+            c.fill = header_fill
+            c.font = Font(bold=True, color=cream, size=10)
+            c.alignment = Alignment(horizontal="left" if j == 1 else "right")
+
+        r = 2
+        for row in rows:
+            c1 = ws.cell(row=r, column=1, value="  " * row.depth + row.label)
+            if row.is_abstract:  # bold section header, no values
+                c1.font = Font(bold=True, color=forest, size=10)
+                if row.depth == 0:
+                    for j in range(1, len(fy_ends) + 2):
+                        ws.cell(row=r, column=j).fill = section_fill
+                r += 1
+                continue
+            vals, unit = annual_values_for_concept(
+                f.raw_facts, row.concept, fy_ends)
+            scale, numfmt = _unit_format(row.concept, unit)
+            c1.font = Font(bold=row.is_total, color=ink, size=10)
+            if row.is_total:
+                c1.border = total_border
+            for j, v in enumerate(vals, start=2):
+                c = ws.cell(row=r, column=j)
+                if v is not None:
+                    c.value = v / scale
+                    c.number_format = numfmt
+                c.font = Font(bold=row.is_total, color=ink, size=10)
+                c.alignment = Alignment(horizontal="right")
+                if row.is_total:
+                    c.border = total_border
+            r += 1
+
+        foot = [
+            f"Source: 10-K {f.latest_10k_accession} · report "
+            f"'{short_names.get(key, title)}'.",
+            "Line order and labels as filed (presentation linkbase); values "
+            "from SEC companyfacts, latest amendment wins; lines not in the "
+            "current presentation are not shown.",
+            "Raw as-filed signs: presentation-negated rows display the raw "
+            "XBRL value (no sign flips applied). USD in millions; EPS in $; "
+            "share counts in mm.",
+        ]
+        if key == "income":
+            foot.append(
+                "Operating KPIs disclosed in MD&A (GMV, TPV, NIMAL, active "
+                "users/buyers, items sold, payment transactions) are not "
+                "XBRL-tagged and are outside this export.")
+        r += 1
+        for note in foot:
+            ws.cell(row=r, column=1, value=note).font = Font(color=muted,
+                                                             size=8)
+            r += 1
+        ws.column_dimensions["A"].width = 52
+        for j in range(2, len(fy_ends) + 2):
+            ws.column_dimensions[get_column_letter(j)].width = 11.5
+
+
+def _write_segments_sheet(wb, d: DashboardData,
+                          qdata: QuarterlyFundamentals) -> None:
+    """FIX-13d: 'Segments' sheet — one block per axis (post-13b order),
+    rows = member × measure, columns = the fiscal spans actually reported,
+    synthesized cells italic, a Σ/tie pair per Revenue block vs the
+    consolidated statement, and the full segment status as the footnote."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    seg = getattr(d, "segments", None)
+    lines = list(getattr(seg, "lines", None) or [])
+    if not lines:
+        return
+    ink = P.INK_PRIMARY.lstrip("#").upper()
+    forest = P.GUI_SIDEBAR_BG.lstrip("#").upper()
+    cream = P.SURFACE.lstrip("#").upper()
+    muted = P.INK_MUTED.lstrip("#").upper()
+    header_fill = PatternFill("solid", fgColor=forest)
+    block_fill = PatternFill("solid", fgColor="DFE9E1")
+
+    spans = sorted({(s, e) for ln in lines for s, e, _ in ln.entries},
+                   key=lambda t: (t[1], t[0]))
+    ws = wb.create_sheet("Segments")
+    ws.freeze_panes = "B2"
+    ws.sheet_view.showGridLines = False
+    ws.cell(row=1, column=1, value="Member (as filed)")
+    for j, (s, e) in enumerate(spans, start=2):
+        ws.cell(row=1, column=j, value=_span_label(s, e))
+    for j in range(1, len(spans) + 2):
+        c = ws.cell(row=1, column=j)
+        c.fill = header_fill
+        c.font = Font(bold=True, color=cream, size=10)
+        c.alignment = Alignment(horizontal="left" if j == 1 else "right")
+
+    cons = qdata.duration.get("revenue", [])
+
+    r = 2
+    blocks: List[Tuple[Tuple[str, str], List]] = []
+    for ln in lines:  # (measure, axis) blocks in post-13b line order
+        key = (ln.group, ln.axis)
+        if not blocks or blocks[-1][0] != key:
+            blocks.append((key, []))
+        blocks[-1][1].append(ln)
+    for (group, axis), lns in blocks:
+        c = ws.cell(row=r, column=1, value=f"{group} by {axis}")
+        c.font = Font(bold=True, color=forest, size=10)
+        for j in range(1, len(spans) + 2):
+            ws.cell(row=r, column=j).fill = block_fill
+        r += 1
+        cells_by_line = []
+        for ln in lns:
+            vals = {(s, e): v for s, e, v in ln.entries}
+            row_vals = [vals.get(sp) for sp in spans]
+            cells_by_line.append(row_vals)
+            ws.cell(row=r, column=1, value=f"  {ln.member}")
+            ws.cell(row=r, column=1).font = Font(color=ink, size=10)
+            for j, (sp, v) in enumerate(zip(spans, row_vals), start=2):
+                cell = ws.cell(row=r, column=j)
+                synth = sp in ln.synth
+                if v is not None:
+                    cell.value = v / _MM
+                    cell.number_format = _FMT_MONEY
+                cell.font = Font(color=ink, size=10, italic=synth)
+                cell.alignment = Alignment(horizontal="right")
+            r += 1
+        if group != "Revenue":
+            continue
+        sums: List[Optional[float]] = []
+        for i in range(len(spans)):
+            vals = [rv[i] for rv in cells_by_line if rv[i] is not None]
+            sums.append(sum(vals) if vals else None)
+        cons_vals = [_find_span(cons, s, e) for s, e in spans]
+        # same check-row helper as the Model sheet (FIX-11b hoist) — one
+        # styling for every Σ/gap tie row in the workbook
+        r = _write_check_row(ws, r, "   Σ members", sums, ltm_col=0)
+        r = _write_check_row(ws, r, "   vs consolidated (gap %)",
+                             [_pct(sv, cv) for sv, cv in zip(sums, cons_vals)],
+                             ltm_col=0, pct_fmt=True)
+
+    foot = [f"Source: {getattr(seg, 'source', '') or 'latest filings'} · "
+            "columns are the fiscal spans as reported; italic cells were "
+            "synthesized from the two-axis disaggregation table (not "
+            "directly filed).",
+            "Σ members / gap rows tie each Revenue axis to the consolidated "
+            "statement — a positive gap beyond +2% signals hierarchical "
+            "members double-counting; a negative gap means untagged members."]
+    status = getattr(seg, "status", "")
+    if status:
+        foot.append(f"Status: {status}.")
+    for attr, label in (("coverage", "Coverage"), ("recast_log", "Recasts"),
+                        ("breaks", "Membership breaks")):
+        extra = getattr(seg, attr, None)  # FIX-10 fields, when merged
+        if extra:
+            foot.append(f"{label}: {extra}")
+    r += 1
+    for note in foot:
+        ws.cell(row=r, column=1, value=note).font = Font(color=muted, size=8)
+        r += 1
+    ws.column_dimensions["A"].width = 36
+    for j in range(2, len(spans) + 2):
+        ws.column_dimensions[get_column_letter(j)].width = 13.5

@@ -96,6 +96,16 @@ def build_dashboard_data(
             f"as filed ({names}): consider the SOTP method (§4); segment "
             "rows are in the Financial model export.")
 
+    progress("Reading the as-filed statement structure (presentation linkbase)…")
+    try:  # enrichment only (FIX-13d) — a failure becomes the sheet's note
+        from .edgar import fetch_statement_presentation
+        stmts, notes = fetch_statement_presentation(fundamentals, cache=cache)
+        data.statements = stmts or None
+        data.statements_note = "; ".join(notes)
+    except Exception as exc:  # incl. the FIX-13a UA gate — keep the reason
+        data.statements = None
+        data.statements_note = f"{type(exc).__name__}: {exc}"
+
     progress("Building discount rate (live 10-Y UST, β vs S&P 500)…")
     try:
         from .rates import build_wacc

@@ -15,6 +15,7 @@ import datetime as dt
 import re
 import threading
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -880,3 +881,267 @@ def fetch_segment_instances(annual: AnnualFundamentals,
         except Exception:
             continue  # segment data is an enrichment, never a hard failure
     return out
+
+
+# --------------------------------- as-filed statement structure (FIX-13d)
+
+_XLINK = "{http://www.w3.org/1999/xlink}"
+_STD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
+# The three primary statements in a FilingSummary's report list; the $
+# anchors exclude 'Parenthetical' and comprehensive-income variants.
+_STATEMENT_SHORTNAME_RX = re.compile(
+    r"CONSOLIDATED (BALANCE SHEETS?$"
+    r"|STATEMENTS? OF (INCOME|OPERATIONS)$"
+    r"|STATEMENTS? OF CASH FLOWS?$)", re.IGNORECASE)
+
+
+@dataclass
+class PresRow:
+    """One line of a statement's presentation tree, in as-filed order."""
+
+    concept: str          # local name
+    label: str            # as-filed label (lab linkbase), fallback humanized
+    depth: int            # presentation tree depth (indent)
+    is_total: bool        # preferredLabel endswith 'totalLabel'
+    is_abstract: bool     # concept local name endswith 'Abstract'
+
+
+def _local(tag: str) -> str:
+    """Local name of an ElementTree '{ns}tag'."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _href_local(href: str) -> str:
+    """'…schema.xsd#us-gaap_Revenues' -> 'Revenues' (namespace dropped)."""
+    frag = (href or "").rsplit("#", 1)[-1]
+    return frag.split("_", 1)[-1] if "_" in frag else frag
+
+
+def _humanize_concept(local: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])",
+                  " ", local).strip() or local
+
+
+def parse_filing_summary(xml_text: str) -> Dict[str, Tuple[str, str]]:
+    """{'income'/'balance'/'cashflow': (Role URI, ShortName)} for the three
+    consolidated primary statements; 'Parenthetical' reports excluded."""
+    root = ET.fromstring(xml_text)
+    out: Dict[str, Tuple[str, str]] = {}
+    for report in root.iter("Report"):
+        short = (report.findtext("ShortName") or "").strip()
+        role = (report.findtext("Role") or "").strip()
+        if not short or not role or "parenthetical" in short.lower():
+            continue
+        if not _STATEMENT_SHORTNAME_RX.search(short):
+            continue
+        upper = short.upper()
+        if "BALANCE" in upper:
+            key = "balance"
+        elif "CASH FLOW" in upper:
+            key = "cashflow"
+        else:
+            key = "income"
+        out.setdefault(key, (role, short))  # first matching report wins
+    return out
+
+
+def parse_presentation(xml_text: str, role: str
+                       ) -> List[Tuple[str, int, str]]:
+    """[(concept local name, depth, preferredLabel role)] for one
+    presentationLink role, children ordered by the arc 'order' attribute.
+    Axis/table scaffolding (Table/Axis/Domain/Member/LineItems) is skipped
+    with its children promoted, matching how EDGAR renders R-files."""
+    root = ET.fromstring(xml_text)
+    out: List[Tuple[str, int, str]] = []
+    skip_suffix = ("Table", "Axis", "Domain", "Member", "LineItems")
+    for link in root.iter():
+        if _local(link.tag) != "presentationLink" \
+                or link.get(_XLINK + "role", "") != role:
+            continue
+        concept_of: Dict[str, str] = {}
+        loc_order: List[str] = []
+        children: Dict[str, List[Tuple[float, str, str]]] = {}
+        tos = set()
+        for el in link:
+            ln = _local(el.tag)
+            if ln == "loc":
+                lb = el.get(_XLINK + "label", "")
+                concept_of[lb] = _href_local(el.get(_XLINK + "href", ""))
+                loc_order.append(lb)
+            elif ln == "presentationArc":
+                frm = el.get(_XLINK + "from", "")
+                to = el.get(_XLINK + "to", "")
+                try:
+                    order = float(el.get("order", "1") or "1")
+                except ValueError:
+                    order = 1.0
+                children.setdefault(frm, []).append(
+                    (order, to, el.get("preferredLabel", "") or ""))
+                tos.add(to)
+
+        def walk(lb: str, depth: int, pref: str) -> None:
+            concept = concept_of.get(lb, "")
+            skipped = concept.endswith(skip_suffix)
+            if concept and not skipped:
+                out.append((concept, depth, pref))
+            next_depth = depth if skipped else depth + 1
+            for _, to, p in sorted(children.get(lb, []),
+                                   key=lambda t: t[0]):
+                walk(to, next_depth, p)
+
+        for lb in loc_order:  # roots in document order
+            if lb not in tos:
+                walk(lb, 0, "")
+    return out
+
+
+def parse_labels(xml_text: str) -> Dict[Tuple[str, str], str]:
+    """(concept local name, label role) -> text, from a label linkbase."""
+    if not xml_text:
+        return {}
+    root = ET.fromstring(xml_text)
+    out: Dict[Tuple[str, str], str] = {}
+    for link in root.iter():
+        if _local(link.tag) != "labelLink":
+            continue
+        concept_of: Dict[str, str] = {}
+        texts: Dict[str, List[Tuple[str, str]]] = {}
+        arcs: List[Tuple[str, str]] = []
+        for el in link:
+            ln = _local(el.tag)
+            if ln == "loc":
+                concept_of[el.get(_XLINK + "label", "")] = \
+                    _href_local(el.get(_XLINK + "href", ""))
+            elif ln == "labelArc":
+                arcs.append((el.get(_XLINK + "from", ""),
+                             el.get(_XLINK + "to", "")))
+            elif ln == "label":
+                texts.setdefault(el.get(_XLINK + "label", ""), []).append(
+                    (el.get(_XLINK + "role", ""), (el.text or "").strip()))
+        for frm, to in arcs:
+            concept = concept_of.get(frm, "")
+            for lrole, text in texts.get(to, []):
+                if concept and text:
+                    out[(concept, lrole)] = text
+    return out
+
+
+def build_statement_rows(pre_xml: str, lab_xml: str,
+                         roles: Dict[str, Tuple[str, str]]
+                         ) -> Dict[str, List[PresRow]]:
+    """Pure assembly: presentation order + as-filed labels -> PresRow lists
+    keyed 'income'/'balance'/'cashflow' (only roles that yielded rows)."""
+    labels = parse_labels(lab_xml)
+    out: Dict[str, List[PresRow]] = {}
+    for key, (role, _short) in roles.items():
+        rows = []
+        for concept, depth, pref in parse_presentation(pre_xml, role):
+            label = (labels.get((concept, pref)) if pref else None) \
+                or labels.get((concept, _STD_LABEL_ROLE)) \
+                or _humanize_concept(concept)
+            rows.append(PresRow(
+                concept=concept, label=label, depth=depth,
+                is_total=pref.endswith("totalLabel"),
+                is_abstract=concept.endswith("Abstract")))
+        if rows:
+            out[key] = rows
+    return out
+
+
+def annual_values_for_concept(raw_facts: dict, concept: str,
+                              fy_ends: List[dt.date]
+                              ) -> Tuple[List[Optional[float]], str]:
+    """Annual values for one presentation concept across ``fy_ends``, from
+    the companyfacts payload (latest amendment wins) — the statement sheets'
+    value source. Scans every namespace for the local name (extension
+    concepts included); unit preference USD > USD/shares > shares > pure.
+    Duration tags use full-year observations, instant tags match the
+    balance-sheet dates. Returns (values, unit key or '')."""
+    blank: List[Optional[float]] = [None] * len(fy_ends)
+    facts = (raw_facts or {}).get("facts") or {}
+    tag = None
+    for ns in sorted(facts, key=lambda n: (n != "us-gaap", n)):
+        if concept in facts[ns]:
+            tag = facts[ns][concept]
+            break
+    if tag is None:
+        return blank, ""
+    units = tag.get("units") or {}
+    unit = next((u for u in ("USD", "USD/shares", "shares", "pure")
+                 if u in units), next(iter(units), ""))
+    if not unit:
+        return blank, ""
+    obs = _annual_duration_obs(units, (unit,))
+    if obs:
+        return [obs.get(e) for e in fy_ends], unit
+    iobs = _annual_instant_obs(units, (unit,))
+    if iobs:
+        return [_match_instant(iobs, e) for e in fy_ends], unit
+    return blank, unit
+
+
+def _fetch_linkbase(sec: "_SecSession", base: str, stem: str,
+                    suffix: str, ttl: float) -> Optional[str]:
+    """{base}/{stem}{suffix}, falling back to an index.json suffix scan
+    (mirrors _discover_instance_url's discovery)."""
+    if stem:
+        try:
+            return sec.get_text(f"{base}/{stem}{suffix}", ttl)
+        except Exception:
+            pass
+    try:
+        idx = sec.get_json(f"{base}/index.json", ttl)
+        names = [str(item.get("name", ""))
+                 for item in idx.get("directory", {}).get("item", [])]
+        cands = [n for n in names if n.lower().endswith(suffix)]
+        if cands:
+            return sec.get_text(f"{base}/{cands[0]}", ttl)
+    except Exception:
+        pass
+    return None
+
+
+def fetch_statement_presentation(annual: AnnualFundamentals,
+                                 cache: Optional[Cache] = None
+                                 ) -> Tuple[Dict[str, list], List[str]]:
+    """{'income'/'balance'/'cashflow': [PresRow, ...], '_short_names': {...}},
+    notes — the latest 10-K's as-filed statement structure.
+
+    Steps (all behind the FIX-13a UA gate, all cached at
+    TTL_FILING_INSTANCE — filed artifacts are immutable — under the latest
+    10-K's Archives folder): FilingSummary.xml locates the three statement
+    Role URIs; {stem}_pre.xml gives line order/depth/preferredLabel;
+    {stem}_lab.xml gives the as-filed labels. Failures after the UA gate
+    return ({}, [reason]) — the caller degrades gracefully."""
+    _require_declared_ua()
+    if not (annual.cik and annual.latest_10k_accession):
+        return {}, ["no 10-K accession on file — statement sheets need a "
+                    "full Analyze first"]
+    cache = cache or Cache()
+    sec = _SecSession(cache)
+    accn = annual.latest_10k_accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{annual.cik}/{accn}"
+    ttl = config.TTL_FILING_INSTANCE
+    try:
+        summary = sec.get_text(f"{base}/FilingSummary.xml", ttl)
+        roles = parse_filing_summary(summary)
+    except Exception as exc:
+        return {}, [f"FilingSummary.xml unusable: {exc}"]
+    if not roles:
+        return {}, ["no consolidated-statement reports found in "
+                    "FilingSummary.xml"]
+    stem = (annual.latest_10k_document or "").rsplit(".", 1)[0]
+    pre = _fetch_linkbase(sec, base, stem, "_pre.xml", ttl)
+    if pre is None:
+        return {}, ["presentation linkbase (_pre.xml) not found in the "
+                    "filing folder"]
+    lab = _fetch_linkbase(sec, base, stem, "_lab.xml", ttl) or ""
+    try:
+        rows = build_statement_rows(pre, lab, roles)
+    except ET.ParseError as exc:
+        return {}, [f"linkbase unparseable: {exc}"]
+    if not rows:
+        return {}, ["the presentation roles matched no rows"]
+    rows["_short_names"] = {k: sn for k, (_r, sn) in roles.items()
+                            if k in rows}
+    return rows, []

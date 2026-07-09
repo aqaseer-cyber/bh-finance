@@ -89,6 +89,9 @@ SEC_MIN_INTERVAL = 0.15  # polite spacing between SEC calls (10 req/s cap)
 
 # Cache TTLs in seconds
 TTL_TICKER_MAP = 7 * 86400
+# Filed artifacts (instances, linkbases, FilingSummary) are immutable —
+# FIX-13d; FIX-10b reuses this key for the instance-history fetch.
+TTL_FILING_INSTANCE = 365 * 86400
 TTL_SUBMISSIONS = 7 * 86400
 TTL_COMPANYFACTS = 86400
 TTL_PRICES = 6 * 3600
