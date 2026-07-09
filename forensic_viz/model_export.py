@@ -51,17 +51,18 @@ _SPAN_TOL = 14    # days tolerance matching a filed span boundary
 _YEAR_TOL = 21    # days tolerance matching the year-ago span
 _SHOW_QUARTERS = 4
 
-# TODO(FIX-12h): duplicated from the FIX-12h spec (identical strings by
-# design) — reuse its constants once fix-12-presentation merges.
+# FIX-12h number formats by row kind (zero prints as a dash, negatives in
+# parens for money/per-share; % rows carry an explicit sign) — defined once
+# here at FIX-13d time, shared by the Model, as-filed and Segments sheets.
 _FMT_MONEY = '#,##0.0;(#,##0.0);"–"'    # $mm rows
-_FMT_PS = '0.00;(0.00);"–"'             # per-share rows
+_FMT_PS = '0.00;(0.00);"–"'             # per-share rows (eps_diluted)
 _FMT_SHARES = "#,##0.0"                 # share-count rows (never negative)
 _FMT_PCT = '+0.0%;-0.0%;"–"'            # % change and tie-check rows
 
 # (label, concept, style, pct_row); concept None = section header;
 # "=name" = derived row; style: item | total | eps | shares
 LAYOUT: List[Tuple[str, Optional[str], str, bool]] = [
-    ("INCOME STATEMENT", None, "section", False),
+    ("INCOME STATEMENT ($mm; EPS in $, shares in mm)", None, "section", False),
     ("Total Revenue", "revenue", "item", True),
     ("Cost of Revenue", "cost_of_revenue", "item", True),
     ("Gross Profit", "=gross_profit", "total", True),
@@ -77,7 +78,7 @@ LAYOUT: List[Tuple[str, Optional[str], str, bool]] = [
     ("Net Income", "net_income", "total", True),
     ("Diluted EPS ($)", "eps_diluted", "eps", True),
     ("Diluted Shares (mm)", "diluted_shares", "shares", False),
-    ("BALANCE SHEET (period end)", None, "section", False),
+    ("BALANCE SHEET (period end, $mm)", None, "section", False),
     ("Cash & Equivalents", "cash", "item", False),
     ("Accounts Receivable", "accounts_receivable", "item", False),
     ("Inventory", "inventory", "item", False),
@@ -95,7 +96,7 @@ LAYOUT: List[Tuple[str, Optional[str], str, bool]] = [
     ("Minority Interest", "minority_interest", "item", False),
     ("Preferred Equity", "preferred_equity", "item", False),
     ("Total Stockholders' Equity", "equity", "total", False),
-    ("CASH FLOW STATEMENT", None, "section", False),
+    ("CASH FLOW STATEMENT ($mm)", None, "section", False),
     ("Net Income", "net_income", "item", False),
     ("Depreciation & Amortization", "dna", "item", False),
     ("Stock-Based Compensation", "sbc", "item", False),
@@ -447,7 +448,7 @@ def _write_check_row(ws, r: int, label: str, values, ltm_col: int,
         color = muted
         if v is not None:
             c.value = v if pct_fmt else v / _MM
-            c.number_format = "0.0%;(0.0%)" if pct_fmt else "#,##0.0;(#,##0.0)"
+            c.number_format = _FMT_PCT if pct_fmt else _FMT_MONEY  # FIX-12h
             if pct_fmt and abs(v) > tol:
                 color = bad  # the tie is off — make it read as a flag
         c.font = Font(italic=True, color=color, size=8.5)
@@ -506,9 +507,9 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         c.font = Font(bold=True, color=cream, size=10)
         c.alignment = Alignment(horizontal="left" if j == 1 else "right")
 
-    fmt_mm = "#,##0.0;(#,##0.0)"
-    fmt_eps = "0.00;(0.00)"
-    fmt_pct = "0.0%;(0.0%)"
+    # FIX-12h: formats chosen per row kind; the segments block below reuses
+    # the same money/percent formats through these locals
+    fmt_mm, fmt_eps, fmt_pct = _FMT_MONEY, _FMT_PS, _FMT_PCT
     is_tie_breached = False  # set by the FIX-11b Rev−COGS-vs-GP tie row
     rendered_rows: List[Tuple[str, str, str]] = []  # (label, concept, style)
 
@@ -554,7 +555,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         rendered_rows.append((disp, concept, style))
         ws.cell(row=r, column=1, value=disp)
         scale = 1.0 if style == "eps" else _MM
-        numfmt = fmt_eps if style == "eps" else fmt_mm
+        numfmt = {"eps": fmt_eps, "shares": _FMT_SHARES}.get(style, fmt_mm)
         bold = style == "total"
         ws.cell(row=r, column=1).font = Font(bold=bold, color=ink, size=10)
         for j, v in enumerate(cells, start=2):

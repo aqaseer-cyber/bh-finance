@@ -65,6 +65,13 @@ def _facts_with_quarters() -> dict:
         _inst("2026-03-31", 4.0e9, "2026-05-05"),
         _inst("2026-06-30", 4.1e9, "2026-08-05"),
     ]
+    # a per-share row so the FIX-12h format map is exercised end to end
+    gaap["EarningsPerShareDiluted"] = {"units": {"USD/shares": [
+        {"start": f"{y}-01-01", "end": f"{y}-12-31", "val": 3.0 + 0.5 * i,
+         "fy": y + 1, "fp": "FY", "form": "10-K",
+         "filed": f"{y + 1}-02-15", "frame": f"CY{y}"}
+        for i, y in enumerate(range(2024, 2026))
+    ]}}
     return facts
 
 
@@ -140,8 +147,10 @@ def test_export_layout_adapts_and_carries_pct_rows(tmp_path):
     assert ws.freeze_panes == "B2"
 
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
-    for section in ("INCOME STATEMENT", "BALANCE SHEET (period end)",
-                    "CASH FLOW STATEMENT"):
+    # FIX-12h: units live in the section headers
+    for section in ("INCOME STATEMENT ($mm; EPS in $, shares in mm)",
+                    "BALANCE SHEET (period end, $mm)",
+                    "CASH FLOW STATEMENT ($mm)"):
         assert section in labels
     # adaptive layout: untagged lines are dropped, tagged ones kept
     assert "Selling, General & Administrative" not in labels
@@ -167,6 +176,18 @@ def test_export_layout_adapts_and_carries_pct_rows(tmp_path):
     # Q3'24 is underivable in the fixture -> the Q3'25 YoY cell stays blank
     assert ws.cell(row=pct_row, column=header.index("Q3'25") + 1).value is None
     assert ws.cell(row=pct_row, column=ltm_col).value is None
+
+    # FIX-12h: number formats by row kind (money / per-share / shares / %)
+    from forensic_viz.model_export import (
+        _FMT_MONEY, _FMT_PCT, _FMT_PS, _FMT_SHARES,
+    )
+    def fmt_of(label):
+        row = labels.index(label) + 1
+        return ws.cell(row=row, column=fy25_col).number_format
+    assert fmt_of("Total Revenue") == _FMT_MONEY
+    assert fmt_of("Diluted EPS ($)") == _FMT_PS
+    assert fmt_of("Diluted Shares (mm)") == _FMT_SHARES
+    assert ws.cell(row=pct_row, column=fy25_col).number_format == _FMT_PCT
 
 
 def test_export_without_fundamentals_raises(tmp_path):
