@@ -357,9 +357,16 @@ class App:
         _start_msg = ("Enter a US-listed ticker (e.g. AAPL) and press Analyze."
                       if not config.UA_IS_PLACEHOLDER else config.UA_WARNING)
         self.status_var = tk.StringVar(value=_start_msg)
-        ttk.Label(side, textvariable=self.status_var, style="Side.TLabel",
-                  wraplength=160, justify="left").pack(
-            side=tk.BOTTOM, anchor="w", pady=(12, 0))
+        ui_scale = self._display_dpi / 96.0  # wraplengths are pixel counts
+        self._status_label = ttk.Label(
+            side, textvariable=self.status_var, style="Side.TLabel",
+            wraplength=int(160 * ui_scale), justify="left")
+        self._status_label.pack(side=tk.BOTTOM, anchor="w", pady=(12, 0))
+        # FIX-12g busy affordance — packed only while a fetch runs
+        self.progress = ttk.Progressbar(side, mode="indeterminate", length=160)
+        self.cancel_btn = ttk.Button(side, text="Cancel", style="Side.TButton",
+                                     command=self._cancel_run)
+        self._cancel_event: Optional[threading.Event] = None
 
         # ---------------- tabbed viewer ----------------
         self.notebook = ttk.Notebook(root)
@@ -652,38 +659,43 @@ class App:
     def compare(self):
         if self.busy:
             return
-        from tkinter import simpledialog
-        raw = simpledialog.askstring(
-            "Compare tickers",
-            f"Enter 2–{MAX_TICKERS} tickers, comma-separated (e.g. AAPL, MSFT):",
-            parent=self.root)
-        if not raw:
-            return
+        _CompareDialog(self.root, self._start_compare)
+
+    def _start_compare(self, raw: str):
         tickers = [t.strip().upper() for t in raw.replace(";", ",").split(",")
                    if t.strip()][:MAX_TICKERS]
         if len(tickers) < 2:
             messagebox.showinfo("Compare", "Enter at least two tickers.")
             return
+        self._cancel_event = threading.Event()
         self._set_busy(True, f"Comparing {', '.join(tickers)}…")
-        threading.Thread(target=self._compare_worker, args=(tickers,),
+        threading.Thread(target=self._compare_worker,
+                         args=(tickers, self._cancel_event),
                          daemon=True).start()
 
-    def _compare_worker(self, tickers):
+    def _compare_worker(self, tickers, cancel: threading.Event):
         try:
             datas = []
             for t in tickers:
+                if cancel.is_set():  # FIX-12g: between-tickers checkpoint
+                    self.queue.put(("cancelled", "comparison"))
+                    return
                 self.queue.put(("status", f"Fetching {t}…"))
                 datas.append(build_dashboard_data(
                     t, cache=Cache(),
                     progress=lambda m: None,
-                    track="auto", years=int(self.years_var.get())))
+                    track="auto", years=int(self.years_var.get()),
+                    cancel=cancel))
             rows = {r["ticker"]: r for r in Ledger().list_verdicts()}  # own conn (thread)
             out = Path(tempfile.gettempdir()) / (
                 "_vs_".join(tickers) + "_compare.html")
             build_compare_html(datas, str(out), ledger_rows=rows)
             self.queue.put(("compare", str(out)))
         except EdgarError as exc:
-            self.queue.put(("error", str(exc)))
+            if "cancelled" in str(exc):
+                self.queue.put(("cancelled", "comparison"))
+            else:
+                self.queue.put(("error", str(exc)))
         except Exception:
             self.queue.put(("error", "Compare failed:\n"
                             + traceback.format_exc(limit=3)))
@@ -724,10 +736,20 @@ class App:
         if not ticker:
             messagebox.showinfo("Ticker required", "Enter a ticker symbol, e.g. AAPL.")
             return
+        self._cancel_event = threading.Event()
         self._set_busy(True, f"Fetching data for {ticker}…")
-        threading.Thread(target=self._worker, args=(ticker,), daemon=True).start()
+        threading.Thread(target=self._worker,
+                         args=(ticker, self._cancel_event),
+                         daemon=True).start()
 
-    def _worker(self, ticker: str):
+    def _cancel_run(self):
+        """FIX-12g: cooperative cancel — the worker stops at the next stage
+        boundary; nothing is torn down mid-request."""
+        if self._cancel_event is not None and not self._cancel_event.is_set():
+            self._cancel_event.set()
+            self.status_var.set("Cancelling — stopping at the next stage…")
+
+    def _worker(self, ticker: str, cancel: threading.Event):
         try:
             data = build_dashboard_data(
                 ticker,
@@ -735,10 +757,14 @@ class App:
                 progress=lambda msg: self.queue.put(("status", msg)),
                 track=self.track_var.get(),
                 years=int(self.years_var.get()),
+                cancel=cancel,
             )
             self.queue.put(("data", data))
         except EdgarError as exc:
-            self.queue.put(("error", str(exc)))
+            if "cancelled" in str(exc):
+                self.queue.put(("cancelled", ticker))
+            else:
+                self.queue.put(("error", str(exc)))
         except Exception:
             self.queue.put(("error", "Unexpected error:\n" + traceback.format_exc(limit=3)))
 
@@ -753,6 +779,8 @@ class App:
                 elif kind == "compare":
                     self._set_busy(False, "Comparison opened in the browser.")
                     webbrowser.open(Path(payload).as_uri())
+                elif kind == "cancelled":
+                    self._set_busy(False, f"Cancelled — {payload} not built.")
                 elif kind == "error":
                     self._set_busy(False, "Failed.")
                     messagebox.showerror("Could not build report", payload)
@@ -844,11 +872,12 @@ class App:
         try:  # §5.7: no verdict leaves the session unlogged
             self.ledger.upsert_verdict(self.data, res=res, verdict=verdict)
             self.refresh_watchlist()
-        except Exception:
-            pass  # the ledger is a convenience store, never a blocker
+            led = " (ledger updated)"
+        except Exception as exc:  # still non-blocking, but visibly so (12g)
+            led = f" (ledger update failed: {type(exc).__name__})"
         self._refresh_tabs(select="Valuation")
         gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
-        self.status_var.set(f"Intrinsic value + verdict ready (ledger updated).{gate}")
+        self.status_var.set(f"Intrinsic value + verdict ready.{led}{gate}")
 
     def analyst_inputs(self):
         if self.data is None or self.busy:
@@ -965,7 +994,57 @@ class App:
             for b in buttons:
                 b.configure(state=tk.NORMAL)
         self._sync_menu_state()  # menu mirrors the sidebar (FIX-12e)
+        # FIX-12g busy affordance: spinner under the status line + Cancel
+        if busy:
+            self.progress.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0),
+                               before=self._status_label)
+            self.progress.start(80)
+            self.cancel_btn.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0),
+                                 before=self.progress)
+        else:
+            self.progress.stop()
+            self.progress.pack_forget()
+            self.cancel_btn.pack_forget()
         self.status_var.set(status)
+
+
+class _CompareDialog(tk.Toplevel):
+    """FIX-12g: branded replacement for simpledialog.askstring — same
+    parsing, same worker; Return submits, Escape closes."""
+
+    def __init__(self, parent, on_submit):
+        super().__init__(parent)
+        self.on_submit = on_submit
+        self.title("Compare tickers")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.configure(background=P.PAGE)
+        top = ttk.Frame(self, padding=(14, 12))
+        top.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(top, text=f"Enter 2–{MAX_TICKERS} tickers, "
+                            "comma-separated").pack(anchor="w")
+        self.var = tk.StringVar()
+        entry = ttk.Entry(top, textvariable=self.var, width=38)
+        entry.pack(anchor="w", pady=(4, 2))
+        entry.focus_set()
+        ttk.Label(top, foreground=P.INK_MUTED,
+                  text="e.g. AAPL, MSFT — side-by-side fundamentals with "
+                       "ledger verdicts").pack(anchor="w")
+        btns = ttk.Frame(top)
+        btns.pack(anchor="e", pady=(10, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(
+            side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btns, text="Compare", style="Accent.TButton",
+                   command=self._submit).pack(side=tk.RIGHT)
+        self.bind("<Return>", lambda _e: self._submit())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+
+    def _submit(self):
+        raw = self.var.get().strip()
+        self.destroy()
+        if raw:
+            self.on_submit(raw)
 
 
 class _SettingsDialog(tk.Toplevel):
@@ -1102,6 +1181,8 @@ class _ValuationDialog(tk.Toplevel):
         self.transient(parent)
         self.resizable(False, False)
         self.configure(background=P.PAGE)
+        self.bind("<Escape>", lambda _e: self.destroy())  # FIX-12g
+        self._wrap = int(560 * _display_dpi_of(self) / 96.0)  # dpi-true px
         self.method_var = tk.StringVar(value=suggest_method(data.track))
         self.wacc_var = tk.StringVar()
         self.base_var = tk.StringVar()
@@ -1131,11 +1212,11 @@ class _ValuationDialog(tk.Toplevel):
                     "candidate; segment values are in the Financial model "
                     "export and the Phase-2 workbook block.")
         ttk.Label(top, style="Secondary.TLabel", text=pre,
-                  wraplength=560, justify="left").grid(
+                  wraplength=self._wrap, justify="left").grid(
             row=1, column=0, columnspan=4, sticky="w", padx=10)
 
-        self.help_lbl = ttk.Label(top, style="Secondary.TLabel", wraplength=560,
-                                  justify="left")
+        self.help_lbl = ttk.Label(top, style="Secondary.TLabel",
+                                  wraplength=self._wrap, justify="left")
         self.help_lbl.grid(row=2, column=0, columnspan=4, sticky="w", **pad)
 
         self.rate_frame = ttk.Frame(top)
@@ -1154,7 +1235,7 @@ class _ValuationDialog(tk.Toplevel):
         self.grid_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
 
         self.estimates_lbl = ttk.Label(top, style="Secondary.TLabel",
-                                       wraplength=560, justify="left")
+                                       wraplength=self._wrap, justify="left")
         self.estimates_lbl.grid(row=5, column=0, columnspan=4, sticky="w", padx=10)
 
         # Phase-5 verdict inputs (§5.3): rating is judgment; the app only
@@ -1312,6 +1393,7 @@ class _AnalystInputsDialog(tk.Toplevel):
         self.transient(parent)
         self.resizable(False, False)
         self.configure(background=P.PAGE)
+        self.bind("<Escape>", lambda _e: self.destroy())  # FIX-12g
         top = ttk.Frame(self, padding=(12, 12))
         top.pack(fill=tk.BOTH, expand=True)
 

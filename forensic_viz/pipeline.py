@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 from typing import Callable, Optional
 
 from . import config
@@ -26,18 +27,28 @@ def build_dashboard_data(
     progress: ProgressFn = _noop,
     track: str = "auto",
     years: int = config.DISPLAY_YEARS,
+    cancel: Optional[threading.Event] = None,
 ) -> DashboardData:
     """Fetch fundamentals (required) and prices (best-effort), derive metrics.
 
     Raises EdgarError when the ticker cannot be resolved or has no usable
     XBRL — there is no dashboard without fundamentals. Price failures are
     recorded on the result instead of raised.
+
+    `cancel` (FIX-12g) is checked cooperatively at stage boundaries; a set
+    event raises EdgarError("cancelled by user"). Default None leaves every
+    existing caller untouched.
     """
+    def _check_cancel():
+        if cancel is not None and cancel.is_set():
+            raise EdgarError("cancelled by user")
+
     cache = cache or Cache()
     ticker = ticker.strip().upper()
 
     progress(f"Fetching SEC EDGAR fundamentals for {ticker}…")
     fundamentals = fetch_fundamentals(ticker, cache=cache)
+    _check_cancel()  # boundary 1: fundamentals fetched
 
     data = DashboardData(
         ticker=ticker,
@@ -70,6 +81,7 @@ def build_dashboard_data(
         data.price_error = str(exc)
     except Exception as exc:  # prices are best-effort; never sink the dashboard
         data.price_error = f"unexpected price-data error: {exc}"
+    _check_cancel()  # boundary 2: prices done (fetched or waived)
     compute_altman(data)
     if data.is_financial_sector:
         data.health_notes.append(
@@ -121,6 +133,7 @@ def build_dashboard_data(
             price_closes=[p[1] for p in beta_pairs] or None)
     except Exception:
         data.wacc_build = None  # rates are best-effort; dialog accepts manual
+    _check_cancel()  # boundary 3: segments + rates block done
 
     progress("Fetching analyst growth estimates…")
     try:
