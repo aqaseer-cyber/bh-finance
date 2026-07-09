@@ -10,7 +10,9 @@ opens it in the default browser.
 from __future__ import annotations
 
 import math
+import os
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -52,6 +54,21 @@ SCREEN_DPI = 100  # fallback dpi cap for on-screen rasters (used only when
 #                   the display DPI is unknown); the PDF export is vector
 YEAR_CHOICES = ("3", "5", "7", "10")
 PAGES = ("Dashboard", "Unit economics", "Health checks", "Valuation", "Verdict")
+REPO_URL = "https://github.com/aqaseer-cyber/bh-finance"
+
+
+def _open_folder(path) -> None:
+    """Open a folder in the OS file browser (best-effort, never raises)."""
+    try:
+        p = str(path)
+        if sys.platform == "win32":
+            os.startfile(p)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", p])
+        else:
+            subprocess.Popen(["xdg-open", p])
+    except Exception:
+        pass
 
 
 def _enable_windows_dpi_awareness() -> None:
@@ -250,7 +267,7 @@ class App:
             row=0, column=0, sticky="w")
         ttk.Label(row, text="Track", style="Side.TLabel").grid(
             row=0, column=1, sticky="w", padx=(10, 0))
-        self.years_var = tk.StringVar(value="10")
+        self.years_var = tk.StringVar(value=str(config.GUI_DEFAULT_YEARS))
         ttk.Combobox(row, state="readonly", width=4, textvariable=self.years_var,
                      values=list(YEAR_CHOICES)).grid(row=1, column=0, sticky="w")
         self.track_var = tk.StringVar(value="auto")
@@ -321,7 +338,113 @@ class App:
         self._resize_job = None
         self._last_render_dpi = None
         self.notebook.bind("<Configure>", self._on_viewport_resize)
+        self._build_menu(root)  # FIX-12e: File / Tools / Help
+        self.root.after(400, self._maybe_prompt_ua)
         self.root.after(120, self._poll_queue)
+
+    # ------------------------------------------------- menu bar (FIX-12e)
+
+    def _build_menu(self, root):
+        menubar = tk.Menu(root)
+        m_file = tk.Menu(menubar, tearoff=0)
+        m_file.add_command(label="Save PDF (A4)…", command=self.save_pdf)
+        m_file.add_command(label="Financial model…", command=self.export_model)
+        m_file.add_command(label="Fill workbook…", command=self.fill_workbook)
+        m_file.add_separator()
+        m_file.add_command(label="Exit", command=root.destroy)
+        m_tools = tk.Menu(menubar, tearoff=0)
+        m_tools.add_command(label="Interactive report",
+                            command=self.open_interactive)
+        m_tools.add_command(label="Compare…", command=self.compare)
+        m_tools.add_separator()
+        m_tools.add_command(label="Settings…", command=self.open_settings)
+        m_help = tk.Menu(menubar, tearoff=0)
+        m_help.add_command(label="About Forensic Stock Viz",
+                           command=self.show_about)
+        m_help.add_separator()
+        m_help.add_command(label="Open cache folder",
+                           command=lambda: _open_folder(config.cache_dir()))
+        m_help.add_command(
+            label="Open settings folder",
+            command=lambda: _open_folder(config.settings_path().parent))
+        menubar.add_cascade(label="File", menu=m_file)
+        menubar.add_cascade(label="Tools", menu=m_tools)
+        menubar.add_cascade(label="Help", menu=m_help)
+        root.config(menu=menubar)
+        self._menu_file, self._menu_tools = m_file, m_tools
+        self._sync_menu_state()
+
+    def _sync_menu_state(self):
+        """Menu items mirror the sidebar buttons' enabled state."""
+        if not hasattr(self, "_menu_file"):
+            return
+        data_state = (tk.NORMAL if (self.data is not None and not self.busy)
+                      else tk.DISABLED)
+        any_state = tk.DISABLED if self.busy else tk.NORMAL
+        for label in ("Save PDF (A4)…", "Financial model…", "Fill workbook…"):
+            self._menu_file.entryconfig(label, state=data_state)
+        self._menu_tools.entryconfig("Interactive report", state=data_state)
+        self._menu_tools.entryconfig("Compare…", state=any_state)
+
+    def _maybe_prompt_ua(self):
+        """One-time offer to open Settings when the SEC UA is a placeholder
+        (persisted flag — the app never nags twice)."""
+        if not config.UA_IS_PLACEHOLDER:
+            return
+        s = config.load_user_settings()
+        if s.get("ua_prompted"):
+            return
+        s["ua_prompted"] = True
+        try:
+            config.save_user_settings(s)
+        except Exception:
+            pass  # a read-only profile must not break startup
+        if messagebox.askyesno(
+                "SEC User-Agent",
+                "The SEC requires an identifying User-Agent (name and email) "
+                "on EDGAR requests.\n\nOpen Settings to configure it now?",
+                parent=self.root):
+            self.open_settings()
+
+    def open_settings(self):
+        _SettingsDialog(self.root, on_saved=self._on_settings_saved)
+
+    def _on_settings_saved(self):
+        msg = "Settings saved."
+        if not config.UA_IS_PLACEHOLDER:
+            msg += "  SEC User-Agent configured."
+        else:
+            msg += f"  {config.UA_WARNING}"
+        self.status_var.set(msg)
+
+    def show_about(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("About")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.configure(background=P.PAGE)
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        frame = ttk.Frame(dlg, padding=(18, 14))
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=f"Forensic Stock Viz {config.APP_VERSION}",
+                  font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, wraplength=380, justify="left", text=(
+            "Five-phase forensic valuation reports from SEC EDGAR XBRL — "
+            "fundamentals, unit economics, health checks, intrinsic value "
+            "and the Phase-5 verdict. Not investment advice.")).pack(
+            anchor="w", pady=(6, 8))
+        link = ttk.Label(frame, text=REPO_URL, foreground=P.INK_PRIMARY,
+                         cursor="hand2")
+        link.pack(anchor="w")
+        link.bind("<Button-1>", lambda _e: webbrowser.open(REPO_URL))
+        strip = tk.Canvas(frame, width=6 * 34, height=18,
+                          background=P.PAGE, highlightthickness=0)
+        strip.pack(anchor="w", pady=(10, 4))
+        for i, c in enumerate(P.SERIES):
+            strip.create_rectangle(i * 34, 0, i * 34 + 28, 18,
+                                   fill=c, outline="")
+        ttk.Button(frame, text="Close", command=dlg.destroy).pack(
+            anchor="e", pady=(10, 0))
 
     # -------------------------------------------------------- resize hook
 
@@ -744,7 +867,94 @@ class App:
         elif self.data is not None:
             for b in buttons:
                 b.configure(state=tk.NORMAL)
+        self._sync_menu_state()  # menu mirrors the sidebar (FIX-12e)
         self.status_var.set(status)
+
+
+class _SettingsDialog(tk.Toplevel):
+    """FIX-12e: persisted user settings — SEC User-Agent, house assumptions
+    file, default years window. Precedence stays env var > settings.json >
+    placeholder; the dialog only fills the gaps env vars leave open."""
+
+    def __init__(self, parent, on_saved=None):
+        super().__init__(parent)
+        self.on_saved = on_saved
+        self.title("Settings")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.configure(background=P.PAGE)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        s = config.load_user_settings()
+        top = ttk.Frame(self, padding=(14, 12))
+        top.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(top, text="SEC EDGAR User-Agent").grid(
+            row=0, column=0, sticky="w")
+        saved_ua = str(s.get("sec_user_agent") or "")
+        self.ua_var = tk.StringVar(value=saved_ua or (
+            "" if config.UA_IS_PLACEHOLDER else config.SEC_USER_AGENT))
+        ttk.Entry(top, textvariable=self.ua_var, width=52).grid(
+            row=1, column=0, columnspan=3, sticky="we", pady=(2, 0))
+        hint = "name email — SEC requires this"
+        if os.environ.get("SEC_EDGAR_USER_AGENT"):
+            hint += "  (env var SEC_EDGAR_USER_AGENT is set and wins)"
+        ttk.Label(top, text=hint, foreground=P.INK_MUTED).grid(
+            row=2, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(top, text="House assumptions file").grid(
+            row=3, column=0, sticky="w")
+        self.house_var = tk.StringVar(value=str(s.get("house_file") or ""))
+        ttk.Entry(top, textvariable=self.house_var, width=42,
+                  state="readonly").grid(row=4, column=0, columnspan=2,
+                                         sticky="we", pady=(2, 0))
+        ttk.Button(top, text="Browse…", command=self._browse_house).grid(
+            row=4, column=2, sticky="e", padx=(6, 0), pady=(2, 0))
+        ttk.Label(top, text="takes effect next launch",
+                  foreground=P.INK_MUTED).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(top, text="Default years window").grid(
+            row=6, column=0, sticky="w")
+        self.years_var = tk.StringVar(value=str(config.GUI_DEFAULT_YEARS))
+        ttk.Combobox(top, state="readonly", width=5,
+                     textvariable=self.years_var,
+                     values=list(YEAR_CHOICES)).grid(
+            row=7, column=0, sticky="w", pady=(2, 12))
+
+        btns = ttk.Frame(top)
+        btns.grid(row=8, column=0, columnspan=3, sticky="e")
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(
+            side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btns, text="Save", style="Accent.TButton",
+                   command=self._save).pack(side=tk.RIGHT)
+        self.grab_set()
+
+    def _browse_house(self):
+        path = filedialog.askopenfilename(
+            parent=self, title="House assumptions file",
+            filetypes=[("TOML", "*.toml"), ("All files", "*.*")])
+        if path:
+            self.house_var.set(path)
+
+    def _save(self):
+        s = config.load_user_settings()
+        s["sec_user_agent"] = self.ua_var.get().strip()
+        s["house_file"] = self.house_var.get().strip()
+        try:
+            s["default_years"] = int(self.years_var.get())
+        except ValueError:
+            pass
+        try:
+            config.save_user_settings(s)
+        except Exception:
+            messagebox.showerror("Settings", "Could not write settings.json — "
+                                             "check the app-data folder.",
+                                 parent=self)
+            return
+        config.apply_user_settings(s)
+        if self.on_saved:
+            self.on_saved()
+        self.destroy()
 
 
 # Per-method case fields: (attribute, label, unit). unit "%" fields are entered
@@ -1115,6 +1325,9 @@ class _AnalystInputsDialog(tk.Toplevel):
 
 def run_gui():
     _enable_windows_dpi_awareness()  # must precede tk.Tk() (FIX-12a)
+    # FIX-12e: persisted settings (UA, default years) before any fetch is
+    # possible; env vars keep precedence inside apply_user_settings
+    config.apply_user_settings(config.load_user_settings())
     root = tk.Tk()
     apply_brand_theme(root)  # house colour scheme on every widget
     App(root)

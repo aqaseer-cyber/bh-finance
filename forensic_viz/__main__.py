@@ -223,6 +223,8 @@ def main(argv=None) -> int:
         run_gui()
         return 0
 
+    # FIX-12e: saved settings fill the UA gap on the CLI too (env still wins)
+    config.apply_user_settings(config.load_user_settings())
     if config.UA_IS_PLACEHOLDER and sys.stderr is not None:
         print(f"warning: {config.UA_WARNING}", file=sys.stderr)
 

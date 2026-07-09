@@ -26,6 +26,67 @@ FETCH_YEARS = DISPLAY_YEARS + 1
 
 PRICE_YEARS = 10
 
+# GUI defaults persisted via the Settings dialog (FIX-12e)
+GUI_DEFAULT_YEARS = DISPLAY_YEARS
+USER_HOUSE_FILE = ""  # display-only echo of settings.json's house_file
+
+
+def _app_data_dir() -> Path:
+    """Per-user app-data root (LOCALAPPDATA on Windows, ~/.cache elsewhere) —
+    the cache, ledger and settings.json all live under here."""
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        root = Path(base)
+    else:
+        root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return root / APP_NAME
+
+
+def settings_path() -> Path:
+    """settings.json next to the cache and ledger (FIX-12e)."""
+    return _app_data_dir() / "settings.json"
+
+
+def load_user_settings() -> dict:
+    """Read settings.json; absence or corruption is never an error → {}."""
+    import json
+
+    try:
+        with open(settings_path(), "r", encoding="utf-8") as fh:
+            out = json.load(fh)
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_user_settings(s: dict) -> None:
+    import json
+
+    p = settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(s, indent=2), encoding="utf-8")
+
+
+def apply_user_settings(s: dict) -> None:
+    """Apply persisted settings. Precedence: env var > settings.json >
+    placeholder — an env var always wins; a saved value only fills the gap.
+    edgar builds its HTTP session per fetch and reads config.SEC_USER_AGENT
+    at that moment, so mutating the module attribute here reaches every
+    later request."""
+    global SEC_USER_AGENT, UA_IS_PLACEHOLDER, GUI_DEFAULT_YEARS, USER_HOUSE_FILE
+    ua = str(s.get("sec_user_agent") or "").strip()
+    if ua and not os.environ.get("SEC_EDGAR_USER_AGENT"):
+        SEC_USER_AGENT = ua
+        UA_IS_PLACEHOLDER = False
+    USER_HOUSE_FILE = str(s.get("house_file") or "")
+    try:
+        yrs = int(s.get("default_years", 0))
+    except (TypeError, ValueError):
+        yrs = 0
+    if yrs in (3, 5, 7, 10):  # mirrors gui.YEAR_CHOICES
+        GUI_DEFAULT_YEARS = yrs
+
+
 def _load_house() -> dict:
     """Load house_assumptions.toml if present (env override, cwd, or repo root).
 
@@ -39,6 +100,9 @@ def _load_house() -> dict:
     env = os.environ.get("HOUSE_ASSUMPTIONS_FILE")
     if env:
         cands.append(pathlib.Path(env))
+    saved = load_user_settings().get("house_file")  # Settings dialog (FIX-12e)
+    if saved:
+        cands.append(pathlib.Path(saved))
     cands += [pathlib.Path.cwd() / "house_assumptions.toml",
               pathlib.Path(__file__).resolve().parent.parent / "house_assumptions.toml"]
     for c in cands:
@@ -110,11 +174,6 @@ SEGMENT_ALIASES = {
 
 def cache_dir() -> Path:
     """Per-user cache directory (LOCALAPPDATA on Windows, ~/.cache elsewhere)."""
-    base = os.environ.get("LOCALAPPDATA")
-    if base:
-        root = Path(base)
-    else:
-        root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    d = root / APP_NAME / "cache"
+    d = _app_data_dir() / "cache"
     d.mkdir(parents=True, exist_ok=True)
     return d
