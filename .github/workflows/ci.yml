@@ -16,4 +16,8 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       - run: pip install -r requirements.txt
       - run: pip install -e ".[test]"
+      # sandbox-parity JS engine: quickjs preferred, best-effort (no wheel
+      # on every platform); dukpy is the fallback the test knows how to use
+      - run: pip install quickjs || pip install dukpy
+        shell: bash
       - run: python -m pytest tests/ -q
