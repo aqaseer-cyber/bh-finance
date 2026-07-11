@@ -32,6 +32,7 @@ _ASSUMED_TAX = 0.21  # metrics.py's labeled fallback when no usable rate filed
 RR_CLAMP = (0.0, 1.5)      # per-year reinvestment-rate clamp
 FUNDAMENTAL_CLAMP = (0.0, 0.40)   # g = ROIC × RR clamp
 SINGLE_ANCHOR_HAIRCUT = 0.75      # Base = consensus × 0.75 when it stands alone
+CAPEX_DEVIATION = 0.30     # |latest/median − 1| beyond this = peak/trough year
 
 
 def _series(d, concept: str) -> List[Optional[float]]:
@@ -152,6 +153,46 @@ def fundamental_growth(d) -> Optional[float]:
         return None
     g = roic * rr
     return min(max(g, FUNDAMENTAL_CLAMP[0]), FUNDAMENTAL_CLAMP[1])
+
+
+def capex_intensity(d, years: int = 5) -> Optional[Tuple[float, float]]:
+    """(median capex/revenue over the trailing `years` fiscal points, latest
+    capex/revenue). A usable pair needs both values with revenue > 0; None
+    if < 3 usable pairs. 'Latest' is the most recent usable pair."""
+    capex_s, rev_s = _series(d, "capex"), _series(d, "revenue")
+    intensities = []
+    for i in range(-years, 0):
+        c, r = _at(capex_s, i), _at(rev_s, i)
+        if c is not None and r is not None and r > 0:
+            intensities.append(c / r)
+    if len(intensities) < 3:
+        return None
+    return statistics.median(intensities), intensities[-1]
+
+
+def capex_peak_flag(d, years: int = 5) -> bool:
+    """The automated house-§2 capex-peak rule: latest capex intensity more
+    than ±30% off its trailing median marks a peak/trough year whose
+    as-reported base needs normalization."""
+    ci = capex_intensity(d, years)
+    if ci is None or ci[0] <= 0:
+        return False
+    median, latest = ci
+    return abs(latest / median - 1.0) > CAPEX_DEVIATION
+
+
+def normalized_base(d) -> Optional[Tuple[float, float]]:
+    """(normalized FCFF base = latest CFO − median_intensity × latest
+    revenue, median_intensity) — the shell's B42−B43 frame with
+    through-cycle capex. None when capex_intensity, CFO or revenue is
+    unavailable for the latest fiscal year."""
+    ci = capex_intensity(d)
+    cfo = _at(_series(d, "cfo"), -1)
+    rev = _at(_series(d, "revenue"), -1)
+    if ci is None or cfo is None or rev is None or rev <= 0:
+        return None
+    median, _latest_i = ci
+    return cfo - median * rev, median
 
 
 @dataclass

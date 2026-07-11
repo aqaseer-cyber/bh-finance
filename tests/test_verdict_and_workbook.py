@@ -149,6 +149,13 @@ def test_workbook_fill_roundtrip(tmp_path, testco_facts):
     assert wb["Phase2_UnitEcon"]["A42"].value == "A terminal risk."
     assert wb["FCFF_DCF"]["B9"].value == pytest.approx(0.02)   # Track A g0 = Bear
     assert wb["FCFF_DCF"]["C9"].value == pytest.approx(0.05)   # Track B g0 = Base
+    # FIX-14b: the through-cycle capex suggestion rides as a comment on the
+    # analyst-blue normalized-capex cells
+    for cell in ("B43", "C43"):
+        note = wb["FCFF_DCF"][cell].comment
+        assert note is not None
+        assert "capex-normalized suggestion" in note.text
+        assert "5y median intensity" in note.text
     assert wb["Phase5_Verdict"]["B33"].value == "Buy"
     # formulas untouched (the 360-formula contract stays intact)
     assert str(wb["Control"]["B19"].value).startswith("=")

@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from . import config
+from .anchors import CAPEX_DEVIATION, capex_intensity
 from .metrics import DashboardData, fmt_money, fmt_pct
 
 HORIZON = 10
@@ -281,6 +282,15 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
             # interest tag does not un-lever fcff[-1]
             levered_proxy = (not d.interest_expense
                              or d.interest_expense[-1] is None)
+            # FIX-14b house-§2 capex-peak rule, AUTO base only — an explicit
+            # base is already the analyst's normalization decision
+            ci = capex_intensity(d)
+            if ci is not None and ci[0] > 0 \
+                    and abs(ci[1] / ci[0] - 1.0) > CAPEX_DEVIATION:
+                warnings.append(
+                    f"latest capex/revenue {ci[1]:.1%} vs 5y median "
+                    f"{ci[0]:.1%} — capex peak/trough year; base "
+                    "normalization required per house §2 (prefill available)")
         if base is None or base <= 0:
             raise ValuationError(
                 "Base FCFF must be positive — normalize a trough/negative base "

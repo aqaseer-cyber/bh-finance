@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import config
+from .anchors import normalized_base
 from .metrics import DashboardData
 
 def asset_path(name: str) -> Path:
@@ -60,7 +61,8 @@ ANALYST_CELLS = [
      "earnings-release non-GAAP reconciliation table"),
     ("FCFF_DCF", "B42:C43", "NORMALIZED OCF / capex",
      "analyst normalization (§4.0: through-cycle capex, never a single quarter) — "
-     "the app pre-fills as-reported values as the starting point"),
+     "the app pre-fills as-reported values as the starting point; the "
+     "capex-normalized suggestion rides as a cell comment"),
     ("Val_Fin_RI", "B12:F16", "Through-cycle ROE paths (Track A/B)",
      "analyst judgment off the credit cycle; app pre-fills the dialog ROEs"),
     ("Val_REIT_NAV", "B5:B10", "Forward NOI, cap rates, other assets/liabilities",
@@ -280,6 +282,15 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
         capex = _latest(d.cfo) - _latest(d.fcf)
     put("FCFF_DCF", "B43", _mm(capex))
     put("FCFF_DCF", "C43", _mm(capex))
+    # FIX-14b: through-cycle capex suggestion rides as a comment; the cells
+    # stay analyst-blue with the as-reported prefill (house §4.0)
+    norm = normalized_base(d)
+    if norm is not None and capex is not None:
+        y, p = norm
+        note = (f"capex-normalized suggestion: {_mm(y):,.1f} $mm base "
+                f"(5y median intensity {p:.1%})")
+        comments[("FCFF_DCF", "B43")] = note
+        comments[("FCFF_DCF", "C43")] = note
     if res is not None and res.method == "dcf":
         # growths as entered come through ValuationInputs on `res._inputs`
         inputs = getattr(res, "_inputs", None)

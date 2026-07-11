@@ -9,8 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from forensic_viz.anchors import (
-    anchor_readout, build_growth_anchors, fundamental_growth, operating_nwc,
-    reinvestment_rate, revenue_cagr,
+    anchor_readout, build_growth_anchors, capex_intensity, capex_peak_flag,
+    fundamental_growth, normalized_base, operating_nwc, reinvestment_rate,
+    revenue_cagr,
 )
 from forensic_viz.metrics import DashboardData
 
@@ -197,3 +198,74 @@ def test_seeding_empty_keeps_silent_no_prefill():
     assert a.seeds == {}
     assert a.binding == ""
     assert anchor_readout(a) == ""
+
+
+# ---------------------------------------------- FIX-14b capex normalization
+
+def test_capex_intensity_median_and_latest():
+    # intensities .10, .1091, .4167, .10, .10 — the FY-3 peak does not drag
+    # the median; latest is the most recent usable pair
+    d = _d(capex=[10, 12, 50, 13, 14], revenue=[100, 110, 120, 130, 140])
+    med, latest = capex_intensity(d)
+    assert med == pytest.approx(0.10)
+    assert latest == pytest.approx(0.10)
+
+
+def test_capex_intensity_needs_three_usable_pairs():
+    assert capex_intensity(
+        _d(capex=[10, None, 12], revenue=[100, 110, 120])) is None
+    assert capex_intensity(
+        _d(capex=[10, 11, 12], revenue=[100, -5, 120])) is None
+    assert capex_intensity(_d()) is None
+
+
+def test_capex_peak_flag_both_sides_of_30pct():
+    rev = [100.0] * 5
+    # 29% off the median stays inside the band (the rule is strict >30%)
+    assert capex_peak_flag(_d(capex=[10, 10, 10, 10, 12.9], revenue=rev)) is False
+    # +40% -> peak; -40% -> trough
+    assert capex_peak_flag(_d(capex=[10, 10, 10, 10, 14], revenue=rev)) is True
+    assert capex_peak_flag(_d(capex=[10, 10, 10, 10, 6], revenue=rev)) is True
+    assert capex_peak_flag(_d()) is False  # no history -> silent
+
+
+def test_normalized_base_arithmetic():
+    d = _d(capex=[10, 12, 50, 13, 14], revenue=[100, 110, 120, 130, 140],
+           cfo=[None, None, None, None, 50])
+    base, med = normalized_base(d)
+    assert med == pytest.approx(0.10)
+    assert base == pytest.approx(50 - 0.10 * 140)
+    # no CFO -> None even with good intensity history
+    assert normalized_base(
+        _d(capex=[10, 12, 13], revenue=[100, 110, 120])) is None
+
+
+def _val_data(capex_latest=150e6):
+    return _d(last_close=100.0, price_dates=[dt.date(2026, 7, 1)],
+              diluted_shares=[100e6], fcf=[500e6], fcf_ex_sbc=[450e6],
+              effective_tax_rate=0.21, interest_expense=[None],
+              fcff=[500e6], sbc=[50e6], total_debt=[1e9], cash=[4e8],
+              book_equity=[2e9], sic_code="3571",
+              revenue=[1e9] * 5, cfo=[600e6] * 5,
+              capex=[100e6, 100e6, 100e6, 100e6, capex_latest])
+
+
+def test_capex_warning_only_on_auto_base_path():
+    from forensic_viz.valuation import (
+        CaseInputs, ValuationInputs, build_valuation,
+    )
+    cases = {"Bear": CaseInputs(g0=0.02, g_term=0.02),
+             "Base": CaseInputs(g0=0.05, g_term=0.025),
+             "Bull": CaseInputs(g0=0.09, g_term=0.03)}
+    # latest intensity 15% vs median 10% -> +50% deviation, auto base
+    res = build_valuation(_val_data(), ValuationInputs(
+        method="dcf", discount_rate=0.09, cases=cases))
+    assert any("capex peak/trough" in w for w in res.warnings)
+    # explicit base: the analyst already normalized -> no warning
+    res2 = build_valuation(_val_data(), ValuationInputs(
+        method="dcf", discount_rate=0.09, cases=cases, base_value=500e6))
+    assert not any("capex peak/trough" in w for w in res2.warnings)
+    # flat intensity on the auto path -> below the line, no warning
+    res3 = build_valuation(_val_data(capex_latest=100e6), ValuationInputs(
+        method="dcf", discount_rate=0.09, cases=cases))
+    assert not any("capex peak/trough" in w for w in res3.warnings)

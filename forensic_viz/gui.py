@@ -28,7 +28,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from . import palette as P
-from .anchors import anchor_readout, build_growth_anchors
+from .anchors import (
+    anchor_readout, build_growth_anchors, capex_peak_flag, normalized_base,
+)
 from .cache import Cache
 from .dashboard import (
     FIG_W, render_dashboard, render_health_report, render_unit_economics,
@@ -41,7 +43,8 @@ from .compare import MAX_TICKERS, build_compare_html
 from .interactive import build_html
 from .ledger import Ledger
 from .metrics import (
-    TRACKS, DashboardData, apply_track, compute_altman, set_adjusted_ni,
+    TRACKS, DashboardData, apply_track, compute_altman, fmt_money,
+    set_adjusted_ni,
 )
 from .pipeline import build_dashboard_data
 from .valuation import (
@@ -1232,17 +1235,32 @@ class _ValuationDialog(tk.Toplevel):
                                          variable=self.exsbc_var)
         self.exsbc_chk.pack(side=tk.LEFT, padx=(14, 0))
 
+        # FIX-14b: capex-normalized base prefill (house §2) — normalization
+        # is the analyst's act, the prefill is the automation. Default stays
+        # as-reported; the button fills the base entry with the suggestion.
+        self._norm = normalized_base(data)
+        self._capex_flag = capex_peak_flag(data)
+        base_frame = ttk.Frame(top)
+        base_frame.grid(row=4, column=0, columnspan=4, sticky="w", padx=6)
+        self.basenorm_lbl = ttk.Label(base_frame, style="Secondary.TLabel",
+                                      wraplength=self._wrap - 130,
+                                      justify="left")
+        self.basenorm_lbl.pack(side=tk.LEFT, padx=(4, 8))
+        self.usenorm_btn = ttk.Button(base_frame, text="use normalized",
+                                      command=self._use_normalized)
+        self.usenorm_btn.pack(side=tk.LEFT)
+
         self.grid_frame = ttk.Frame(top)
-        self.grid_frame.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 4))
+        self.grid_frame.grid(row=5, column=0, columnspan=4, sticky="w", pady=(8, 4))
 
         self.estimates_lbl = ttk.Label(top, style="Secondary.TLabel",
                                        wraplength=self._wrap, justify="left")
-        self.estimates_lbl.grid(row=5, column=0, columnspan=4, sticky="w", padx=10)
+        self.estimates_lbl.grid(row=6, column=0, columnspan=4, sticky="w", padx=10)
 
         # Phase-5 verdict inputs (§5.3): rating is judgment; the app only
         # checks it for coherence against the MoS (Control!B67 mechanics).
         verdict_frame = ttk.Frame(top)
-        verdict_frame.grid(row=6, column=0, columnspan=4, sticky="w", padx=6,
+        verdict_frame.grid(row=7, column=0, columnspan=4, sticky="w", padx=6,
                            pady=(6, 0))
         ttk.Label(verdict_frame, text="Rating (§5.3):").pack(side=tk.LEFT, padx=(4, 4))
         self.rating_var = tk.StringVar(value=data.rating)
@@ -1258,10 +1276,10 @@ class _ValuationDialog(tk.Toplevel):
         ttk.Label(top, style="Muted.TLabel",
                   text="Percent fields (%) are entered in percent: 9 = 9%, 160 = 160%. "
                        "Dollar fields ($) are plain amounts.").grid(
-            row=7, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 0))
+            row=8, column=0, columnspan=4, sticky="w", padx=10, pady=(2, 0))
 
         btns = ttk.Frame(top)
-        btns.grid(row=8, column=0, columnspan=4, sticky="e", pady=(10, 0))
+        btns.grid(row=9, column=0, columnspan=4, sticky="e", pady=(10, 0))
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(btns, text="Compute", command=self._compute).pack(
             side=tk.RIGHT, padx=(0, 8))
@@ -1272,6 +1290,12 @@ class _ValuationDialog(tk.Toplevel):
 
     def _method_key(self) -> str:
         return self.method_var.get()
+
+    def _use_normalized(self):
+        # fills the base entry (plain $) with the through-cycle suggestion;
+        # the value stays editable — the analyst owns the normalization
+        if self._norm is not None:
+            self.base_var.set(f"{self._norm[0]:.0f}")
 
     def _on_method(self, index: int):
         method = self._method_keys[index]
@@ -1288,6 +1312,19 @@ class _ValuationDialog(tk.Toplevel):
         for child in self.rate_frame.winfo_children():
             child.configure(state=tk.NORMAL if needs_rate else tk.DISABLED)
         self.exsbc_chk.configure(state=tk.NORMAL if method == "dcf" else tk.DISABLED)
+        # FIX-14b base readout: dcf only (the RI base is BV₀, not FCFF)
+        if method == "dcf" and self._norm is not None:
+            y, p = self._norm
+            x = self.data.fcff[-1] if self.data.fcff else None
+            line = (f"base — as-reported {fmt_money(x)} · capex-normalized "
+                    f"{fmt_money(y)} (5y median intensity {p:.1%})")
+            if self._capex_flag:
+                line += "  ⚠ capex peak/trough year"
+            self.basenorm_lbl.configure(text=line)
+            self.usenorm_btn.configure(state=tk.NORMAL)
+        else:
+            self.basenorm_lbl.configure(text="")
+            self.usenorm_btn.configure(state=tk.DISABLED)
         self.wacc_lbl.configure(
             text="WACC (%, auto-built):" if method == "dcf" else "r_e (%, auto-built):")
         self.base_lbl.configure(
