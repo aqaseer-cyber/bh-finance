@@ -3,7 +3,6 @@
   python -m forensic_viz                     -> GUI
   python -m forensic_viz AAPL                -> AAPL_10y_report_<date>.pdf (A4)
   python -m forensic_viz AAPL --years 5      -> 5-year window
-  python -m forensic_viz AAPL --html         -> interactive HTML report
   python -m forensic_viz AAPL --model        -> one-sheet financial model XLSX
                                                 (annual + quarterly + LTM)
   python -m forensic_viz AAPL --png --csv    -> per-page PNGs + audit CSVs
@@ -119,8 +118,6 @@ def main(argv=None) -> int:
                         help=f"fiscal years to display, 1–{config.DISPLAY_YEARS} (default 10)")
     parser.add_argument("--png", action="store_true",
                         help="write per-page PNGs instead of the A4 PDF")
-    parser.add_argument("--html", nargs="?", const="", metavar="PATH",
-                        help="also write the interactive HTML report")
     parser.add_argument("--model", nargs="?", const="", metavar="PATH",
                         help="one-sheet three-statement financial model XLSX "
                              "(annual + quarterly + LTM)")
@@ -174,7 +171,7 @@ def main(argv=None) -> int:
                         help="import a verdict_ledger_seed.json-style file")
     parser.add_argument("--compare", metavar="TICKERS",
                         help="comma-separated tickers (2–4): build the "
-                             "side-by-side interactive comparison and exit")
+                             "side-by-side comparison page and exit")
     args = parser.parse_args(argv)
 
     if args.ledger_history:
@@ -318,12 +315,6 @@ def main(argv=None) -> int:
         base = out[:-4]
         export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
         print(f"wrote {out} (A4)")
-
-    if args.html is not None:
-        from .interactive import build_html
-        html_path = args.html or f"{data.ticker}_interactive_{stamp}.html"
-        build_html(data, html_path, res=res, verdict=verdict)
-        print(f"wrote {html_path}")
 
     if data.price_error:
         print(f"note: price sources unavailable ({data.price_error}); "

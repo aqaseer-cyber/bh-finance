@@ -1,4 +1,4 @@
-"""Side-by-side ticker comparison — interactive HTML.
+"""Side-by-side ticker comparison — self-contained HTML page.
 
 Color follows the entity: each ticker takes its palette slot in the order
 entered and keeps it on every chart (the dataviz recolor-on-filter rule).

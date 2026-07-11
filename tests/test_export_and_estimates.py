@@ -1,4 +1,4 @@
-"""A4 PDF normalization, analyst-estimate parsing, interactive HTML build."""
+"""A4 PDF normalization and analyst-estimate parsing."""
 import datetime as dt
 
 import pytest
@@ -7,7 +7,6 @@ from forensic_viz.dashboard import render_dashboard, render_health_report
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.estimates import parse_earnings_trend
 from forensic_viz.export import A4_PT, export_pdf
-from forensic_viz.interactive import build_html
 from forensic_viz.metrics import (
     DashboardData, apply_track, build_fundamental_metrics, build_price_metrics,
 )
@@ -64,27 +63,3 @@ def test_parse_earnings_trend_rejects_bad_payloads():
     assert parse_earnings_trend({}) is None
     assert parse_earnings_trend(
         {"quoteSummary": {"result": [{"earningsTrend": {"trend": []}}]}}) is None
-
-
-def test_interactive_html_selfcontained(tmp_path, testco_facts, aapl_prices):
-    d = _data(testco_facts, aapl_prices)
-    d.thesis = "A thesis."
-    d.terminal_risk = "A risk."
-    out = tmp_path / "report.html"
-    build_html(d, str(out))
-    body = out.read_text(encoding="utf-8")
-    assert len(body) > 1_000_000        # plotly.js embedded (offline-capable)
-    assert body.count("plotly.js") >= 0  # sanity: file exists and is html
-    assert "T Inc" in body and "A thesis." in body and "A risk." in body
-    # Fiscal.ai-style display charts: value bars + toggleable %-change line
-    assert "Revenue Change (%)" in body
-    assert "Operating Profit" in body
-    assert "Total Change" in body and "CAGR" in body
-
-
-def test_shorter_window_flows_to_html(tmp_path, testco_facts):
-    d = _data(testco_facts, years=3)
-    assert len(d.fy_labels) == 3
-    out = tmp_path / "r3.html"
-    build_html(d, str(out))
-    assert "3-year window" in out.read_text(encoding="utf-8")

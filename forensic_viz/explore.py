@@ -1,4 +1,4 @@
-"""Explore tab — interactive, screen-only chart cards (FIX-15b).
+"""Explore tab — live, screen-only chart cards (FIX-15b).
 
 Pure figure builders, one per card: ``(d, mode, dpi, width_in) -> Figure``.
 No Tk imports — everything renders under Agg, which is also how the tests

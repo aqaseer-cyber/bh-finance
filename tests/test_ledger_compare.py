@@ -1,4 +1,4 @@
-"""Verdict ledger (§5.7), comparison HTML, and the live DCF sandbox."""
+"""Verdict ledger (§5.7) and the comparison HTML page."""
 import datetime as dt
 import json
 
@@ -6,7 +6,6 @@ import pytest
 
 from forensic_viz.compare import build_compare_html
 from forensic_viz.edgar import parse_companyfacts
-from forensic_viz.interactive import build_html
 from forensic_viz.ledger import Ledger
 from forensic_viz.metrics import (
     DashboardData, apply_track, build_fundamental_metrics, build_price_metrics,
@@ -168,23 +167,3 @@ def test_compare_html_fixed_entity_colors(tmp_path, testco_facts, aapl_prices):
     assert body.count(P.SERIES[0]) > body.count(P.SERIES[2])  # slot colors used
     assert "indexed to 100" in body
     assert "Ledger rating" in body and "Buy" in body
-
-
-def test_sandbox_embedded_with_constants(tmp_path, testco_facts, aapl_prices):
-    d = _data(testco_facts, aapl_prices=aapl_prices)
-    res, _v = _verdict(d)
-    out = tmp_path / "r.html"
-    build_html(d, str(out), res=res)
-    body = out.read_text(encoding="utf-8")
-    assert "Valuation sandbox" in body and "function dcf" in body
-    assert "sandbox-chart" in body
-    # base-case growths seeded the sliders
-    assert 'id="g0" type="range"' in body and 'value="5.0"' in body
-
-
-def test_sandbox_suppressed_for_banks(tmp_path, testco_facts, aapl_prices):
-    d = _data(testco_facts, aapl_prices=aapl_prices)
-    apply_track(d, "bank")
-    out = tmp_path / "r.html"
-    build_html(d, str(out))
-    assert "Valuation sandbox" not in out.read_text(encoding="utf-8")

@@ -44,7 +44,6 @@ from .explore import (
 from .export import export_pdf
 from .model_export import export_financial_model
 from .compare import MAX_TICKERS, build_compare_html
-from .interactive import build_html
 from .ledger import Ledger
 from .metrics import (
     TRACKS, DashboardData, apply_track, compute_altman, fmt_money,
@@ -465,7 +464,7 @@ class _SandboxCard(ttk.Frame):
 
 
 class _ExploreTab(ttk.Frame):
-    """FIX-15b: a scrollable column of interactive chart cards, screen-only
+    """FIX-15b: a scrollable column of live chart cards, screen-only
     (the report/PDF pipeline never renders these figures). Each card is a
     title + mode combobox over its own small canvas; a mode change redraws
     THAT card only. Figures are plt-free (`Figure()` directly), so
@@ -599,10 +598,6 @@ class App:
         self.inputs_btn.pack(fill=tk.X, pady=2)
 
         ttk.Separator(side, style="Side.TSeparator").pack(fill=tk.X, pady=6)
-        self.html_btn = ttk.Button(side, text="Interactive report ↗",
-                                   command=self.open_interactive, state=tk.DISABLED,
-                                   style="Side.TButton")
-        self.html_btn.pack(fill=tk.X, pady=2)
         self.save_btn = ttk.Button(side, text="Save PDF (A4)…",
                                    command=self.save_pdf, state=tk.DISABLED,
                                    style="Side.TButton")
@@ -640,7 +635,7 @@ class App:
             tab = _ScrollTab(self.notebook)
             self.tabs[name] = tab
             self.notebook.add(tab, text=name, state=tk.DISABLED)
-        # FIX-15b: interactive Explore cards (screen-only, never in the PDF)
+        # FIX-15b: Explore cards (screen-only, never in the PDF)
         self.explore_tab = _ExploreTab(self.notebook, self)
         self.notebook.add(self.explore_tab, text="Explore", state=tk.DISABLED)
         self.refresh_watchlist()
@@ -668,8 +663,6 @@ class App:
         m_file.add_separator()
         m_file.add_command(label="Exit", command=root.destroy)
         m_tools = tk.Menu(menubar, tearoff=0)
-        m_tools.add_command(label="Interactive report",
-                            command=self.open_interactive)
         m_tools.add_command(label="Compare…", command=self.compare)
         m_tools.add_separator()
         m_tools.add_command(label="Settings…", command=self.open_settings)
@@ -698,7 +691,6 @@ class App:
         any_state = tk.DISABLED if self.busy else tk.NORMAL
         for label in ("Save PDF (A4)…", "Financial model…", "Fill workbook…"):
             self._menu_file.entryconfig(label, state=data_state)
-        self._menu_tools.entryconfig("Interactive report", state=data_state)
         self._menu_tools.entryconfig("Compare…", state=any_state)
 
     def _maybe_prompt_ua(self):
@@ -1166,21 +1158,6 @@ class App:
             note = f"  Adjustment burden {burden * 100:.1f}%{flag}."
         self.status_var.set(f"Analyst inputs applied.{note}")
 
-    def open_interactive(self):
-        if self.data is None or self.busy:
-            return
-        out = Path(tempfile.gettempdir()) / (
-            f"{self.data.ticker}_interactive_{self.data.generated.isoformat()}.html")
-        try:
-            build_html(self.data, str(out), res=self.valuation_res,
-                       verdict=self.verdict)
-        except Exception:
-            messagebox.showerror("Interactive report failed",
-                                 traceback.format_exc(limit=3))
-            return
-        webbrowser.open(out.as_uri())
-        self.status_var.set(f"Interactive report opened: {out.name}")
-
     def save_pdf(self):
         figs = [self.figs.get(n) for n in PAGES]
         data = self.data
@@ -1255,7 +1232,7 @@ class App:
         self.analyze_btn.configure(state=state)
         self.compare_btn.configure(state=state)
         buttons = (self.save_btn, self.csv_btn, self.value_btn, self.inputs_btn,
-                   self.xlsx_btn, self.html_btn)
+                   self.xlsx_btn)
         if busy:
             for b in buttons:
                 b.configure(state=tk.DISABLED)

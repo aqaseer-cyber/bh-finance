@@ -40,7 +40,7 @@ open triggers, and re-runs a name on double-click. CLI: `--ledger` prints it,
 rows are marked [Likely] — verify vs the original workbooks).
 
 **Compare.** **Compare…** (or `--compare "AAPL,MSFT,GOOG"`) builds a
-side-by-side interactive page for 2–4 tickers — indexed price and revenue
+side-by-side comparison page for 2–4 tickers — indexed price and revenue
 (common base, one axis), net margin, ROIC, FCF margin, and a KPI table that
 pulls each name's ledger rating/FV/MoS. Colors are fixed per ticker across
 every chart (color follows the entity).
@@ -58,23 +58,20 @@ run stops at the next pipeline stage), and Escape closes every dialog. The
 owner-run acceptance pass for all of this lives in
 [docs/UI_VALIDATION.md](docs/UI_VALIDATION.md).
 
-**House look & display charts.** Every surface — the Tk shell, all five
-report pages, the interactive and compare reports — follows the house colour
-scheme (Colour Palette 07: forest `#0C3B2E`, tan `#BB8A52`, amber `#FFBA00`,
+**House look.** Every surface — the Tk shell, all five report pages, the
+Explore cards and the compare report — follows the house colour scheme
+(Colour Palette 07: forest `#0C3B2E`, tan `#BB8A52`, amber `#FFBA00`,
 sage `#6D9773` on a cream surface; brick red is reserved for negative/stale
 status, never a series colour — see `forensic_viz/palette.py` for the
-validator record). The interactive report opens with Fiscal.ai-style
-**Revenue** and **Operating Profit** display charts: value-labelled bars
-plus a YoY %-change line with point labels, **Total Change and CAGR in the
-legend**, and the %-change line **toggles off with a legend click**.
+validator record).
 
-**Valuation sandbox.** The interactive report embeds a **live DCF** for
+**DCF sandbox (native).** The Explore tab carries a **live DCF card** for
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
 FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g
-recompute instantly in the browser — a JS replica of the §4.A engine,
-numerically parity-tested against the Python model
-(`tests/test_sandbox_parity.py`, 200-point grid, 1e-9), which remains the
-audited record for every export.
+recompute in-app by calling the **production §4.A functions directly** —
+no parallel engine, so nothing to parity-test. The valuation page and the
+exports stay the audited record; **shareable artifacts are the
+financial-model workbook and the A4 PDF**.
 
 Command line (same launcher):
 
@@ -82,14 +79,13 @@ Command line (same launcher):
 run_windows.bat AAPL --model      :: one-sheet financial model XLSX (FY + quarters + LTM)
 run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf (A4) + audit CSVs
 run_windows.bat AAPL --years 5    :: 5-year window
-run_windows.bat AAPL --html       :: interactive HTML report (plotly, offline)
 run_windows.bat AAPL --png        :: per-page PNGs instead of the PDF
 run_windows.bat MSFT --no-cache   :: bypass the local cache
 run_windows.bat WFC --track bank  :: override the Logic Track (auto = from SIC)
 run_windows.bat AAPL --adjusted-ni 105e9  :: fluff filter (non-GAAP NI, from the release)
 
-:: intrinsic value — WACC auto-builds; omitted dcf cases pre-fill from analyst
-:: consensus (Bear <- low, Base <- average, Bull <- high; terminal g 2.0%)
+:: intrinsic value — WACC auto-builds; omitted dcf cases seed from the
+:: growth-anchor ladder (Bull <- consensus, Base <- min anchor, Bear <- half)
 run_windows.bat AAPL --value dcf --rating Buy
 run_windows.bat AAPL --value dcf --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
 ```
@@ -430,13 +426,14 @@ Cached responses live in `%LOCALAPPDATA%\ForensicStockViz\cache`
 ```bash
 pip install -r requirements.txt pytest
 python -m pytest tests/          # full offline suite; must pass 100%
-python -m forensic_viz AAPL --years 5 --html   # cached after the first run
+python -m forensic_viz AAPL --years 5 --model  # cached after the first run
 ```
 
 Layout: `forensic_viz/edgar.py` (XBRL pull + tag selection),
 `prices.py` (Stooq/Yahoo), `metrics.py` (derivations), `dashboard.py`
-(renderer), `gui.py` (Tkinter app), `pipeline.py` (orchestration),
-`export.py` (A4 PDF + CSV), `interactive.py` (plotly HTML report),
-`estimates.py` (analyst consensus prefill), `verdict.py` (Phase 5),
+(renderer), `quarters.py` (shared quarter/TTM machinery), `explore.py`
+(Explore cards + sandbox compute), `gui.py` (Tkinter app), `pipeline.py`
+(orchestration), `export.py` (A4 PDF + CSV), `estimates.py` (analyst
+consensus anchor), `anchors.py` (growth ladder), `verdict.py` (Phase 5),
 `workbook.py` (XLSX shell filler). Images under `docs/` are illustrative
 renders from an earlier synthetic build.
