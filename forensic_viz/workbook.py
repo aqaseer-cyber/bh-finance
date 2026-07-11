@@ -20,6 +20,7 @@ from typing import List, Optional
 from . import config
 from .anchors import normalized_base
 from .metrics import DashboardData
+from .segments import partial_axis_disclosure
 
 def asset_path(name: str) -> Path:
     """Bundled-asset resolution: source tree or PyInstaller _MEIPASS.
@@ -174,10 +175,29 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
         gate_span = max((sp for sp, n in span_count.items() if n >= 2),
                         key=lambda sp: sp[1], default=None)
         if gate_span is None:
-            fill_notes.append(
-                f"Phase-2 segment fill skipped: no fiscal-year span shared "
-                f"by two or more {ax} members — fill "
-                "Phase2_UnitEcon!B5:B7 manually from the segment note.")
+            # FIX-14d: a partial-disclosure axis (one member, sliver of
+            # consolidated) is INELIGIBLE for auto-fill, not failed — the
+            # quiet note replaces the fill-manually alarm
+            latest = max(span_count, key=lambda sp: sp[1], default=None)
+            n_mem, sigma, total = 0, None, None
+            if latest is not None:
+                vals = [v for ln in rev_lines for s, e, v in ln.entries
+                        if (s, e) == latest and v is not None]
+                n_mem, sigma = len(vals), (sum(vals) if vals else None)
+                total, _ = _consolidated_at(d, latest[1])
+            if latest is not None and partial_axis_disclosure(
+                    n_mem, sigma, total):
+                cvg = (f"{sigma / total:.0%}" if sigma is not None and total
+                       else "unknown share")
+                fill_notes.append(
+                    f"Phase-2 segment fill: partial disclosure axis ({ax}) "
+                    f"— ineligible for auto-fill ({n_mem} member(s), {cvg} "
+                    "of consolidated); not a tie failure.")
+            else:
+                fill_notes.append(
+                    f"Phase-2 segment fill skipped: no fiscal-year span shared "
+                    f"by two or more {ax} members — fill "
+                    "Phase2_UnitEcon!B5:B7 manually from the segment note.")
         else:
             def at_span(ln):
                 return next((v for s, e, v in ln.entries
@@ -189,7 +209,13 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
             sigma = sum(v for _, v, _ in revs)
             tol = config.SEGMENT_TIE_TOL
             fy_tag = f"FY{gate_span[1].year}"
-            if len(revs) >= 2 and total and sigma > total * (1 + tol):
+            if partial_axis_disclosure(len(revs), sigma, total):
+                cvg = (f"{sigma / total:.0%}" if total else "unknown share")
+                fill_notes.append(
+                    f"Phase-2 segment fill: partial disclosure axis ({ax}) "
+                    f"— ineligible for auto-fill ({len(revs)} member(s), "
+                    f"{cvg} of consolidated at {fy_tag}); not a tie failure.")
+            elif len(revs) >= 2 and total and sigma > total * (1 + tol):
                 fill_notes.append(
                     f"Phase-2 segment fill SKIPPED: Σ {ax} members at "
                     f"{fy_tag} (${sigma / 1e6:,.0f}mm) exceeds consolidated "

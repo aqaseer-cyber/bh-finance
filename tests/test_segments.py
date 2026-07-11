@@ -461,6 +461,89 @@ def test_tie_rows_show_zero_gap_when_members_are_complete(tmp_path):
     assert ws.cell(row=gap_row, column=fy25).value == pytest.approx(0.0)
 
 
+# ---------------------------------------------------------------- FIX-14d
+
+def _us_only_instance():
+    """Deliberately partial geography note: US-only revenue, a sliver of
+    consolidated (the MELI wolf-cry case)."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>',
+             _ctx("us25", "srt:StatementGeographicalAxis", "country:US",
+                  "2025-01-01", "2025-12-31"),
+             _fact(REV, "us25", REVENUE[2025] * 0.002),
+             "</xbrl>"]
+    return "".join(parts)
+
+
+def test_partial_axis_suppresses_tie_rows_on_both_sheets(tmp_path):
+    d = _data_with_segments()
+    d.segments = build_segment_data(
+        [("10-K a25 (FY2025)", _us_only_instance())], "t")
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    wb = load_workbook(str(out))
+    for sheet in ("Financial Model", "Segments"):
+        labels = [wb[sheet].cell(row=r, column=1).value
+                  for r in range(1, wb[sheet].max_row + 1)]
+        assert "   Σ members" not in labels, sheet          # no red gap row
+        assert "   vs consolidated (gap %)" not in labels, sheet
+        note = next((l for l in labels
+                     if l and "tie suppressed" in l), None)
+        assert note is not None, sheet
+        assert "partial disclosure axis" in note
+        assert "1 member(s)" in note and "0% of consolidated" in note
+
+
+def test_two_member_axis_keeps_tie_rows_even_at_low_coverage(tmp_path):
+    # two members at 40% of consolidated: ≥2 members -> the tie renders
+    # (and its −60% gap is a REAL finding, not a wolf-cry)
+    total = REVENUE[2025]
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>',
+             _ctx("us25", "srt:StatementGeographicalAxis", "country:US",
+                  "2025-01-01", "2025-12-31"),
+             _fact(REV, "us25", total * 0.30),
+             _ctx("ca25", "srt:StatementGeographicalAxis", "country:CA",
+                  "2025-01-01", "2025-12-31"),
+             _fact(REV, "ca25", total * 0.10),
+             "</xbrl>"]
+    d = _data_with_segments()
+    d.segments = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "t")
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    ws = load_workbook(str(out))["Financial Model"]
+    header = [c.value for c in ws[1]]
+    labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    fy25 = header.index("FY2025") + 1
+    gap_row = labels.index("   vs consolidated (gap %)") + 1
+    assert ws.cell(row=gap_row, column=fy25).value == pytest.approx(-0.60)
+    assert not any(l and "tie suppressed" in l for l in labels)
+
+
+def test_partial_axis_ineligible_for_phase2_fill(tmp_path):
+    """Members never share a FY span and the latest year is a US-only
+    sliver: the Phase-2 gate reports ineligible-partial (quiet), not the
+    fill-manually alarm."""
+    parts = [f"<xbrl {_NS}>",
+             '<unit id="usd"><measure>iso4217:USD</measure></unit>',
+             _ctx("br24", "srt:StatementGeographicalAxis",
+                  "meli:BrazilMember", "2024-01-01", "2024-12-31"),
+             _fact(REV, "br24", 500e6),
+             _ctx("us25", "srt:StatementGeographicalAxis", "country:US",
+                  "2025-01-01", "2025-12-31"),
+             _fact(REV, "us25", REVENUE[2025] * 0.002),
+             "</xbrl>"]
+    d = _data_with_segments()
+    d.segments = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "t")
+    report = fill_workbook(d, str(tmp_path / "wb.xlsx"))
+    notes = report.notes or []
+    assert any("ineligible for auto-fill" in n and "partial disclosure" in n
+               for n in notes)
+    assert not any("no fiscal-year span shared" in n for n in notes)
+    wb = load_workbook(str(tmp_path / "wb.xlsx"))
+    assert wb["Phase2_UnitEcon"]["B5"].value == 6000  # shell placeholder kept
+
+
 # ---------------------------------------------------------------- FIX-10c
 
 def _annual_instance(member_years, axis="srt:ProductOrServiceAxis", tag=REV):

@@ -290,6 +290,28 @@ def _is_fy_span(span: Span) -> bool:
     return 330 <= (span[1] - span[0]).days <= 400
 
 
+# FIX-14d: a tie row (and the Phase-2 gate) needs a real disclosure to
+# referee — a deliberately partial axis (one member covering a sliver of
+# revenue, e.g. a US-only geography note) only wolf-cries a huge red gap
+# and trains the eye to ignore the rows that matter.
+MIN_TIE_MEMBERS = 2
+MIN_TIE_COVERAGE = 0.50
+
+
+def partial_axis_disclosure(n_members: int, sigma: Optional[float],
+                            total: Optional[float]) -> bool:
+    """True when an axis' disclosure is too partial to tie out: fewer than
+    MIN_TIE_MEMBERS members carry values at the gate span AND Σ covers less
+    than MIN_TIE_COVERAGE of consolidated there (an unknown consolidated
+    total counts as uncovered)."""
+    if n_members >= MIN_TIE_MEMBERS:
+        return False
+    if (sigma is not None and total is not None and total > 0
+            and sigma >= MIN_TIE_COVERAGE * total):
+        return False
+    return True
+
+
 def _alias_parsed(parsed: ParsedInstance,
                   aliases: Dict[str, str]) -> ParsedInstance:
     """Rewrite member labels through the analyst alias map, pre-merge.

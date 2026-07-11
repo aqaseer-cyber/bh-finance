@@ -45,6 +45,7 @@ from .edgar import (
     parse_quarterly_facts,
 )
 from .metrics import DashboardData, fy_label
+from .segments import partial_axis_disclosure
 
 _MM = 1e6
 _SPAN_TOL = 14    # days tolerance matching a filed span boundary
@@ -433,6 +434,22 @@ def build_model_rows(annual: AnnualFundamentals,
 
 # ------------------------------------------------------------------ writer
 
+def _write_note_row(ws, r: int, text: str) -> int:
+    """Single muted note row (FIX-14d: stands in for a suppressed tie)."""
+    from openpyxl.styles import Font
+    muted = P.INK_MUTED.lstrip("#").upper()
+    ws.cell(row=r, column=1, value=text)
+    ws.cell(row=r, column=1).font = Font(italic=True, color=muted, size=8.5)
+    return r + 1
+
+
+def _tie_note(n_members: int, sigma, total) -> str:
+    cvg = (f"{sigma / total:.0%}" if sigma is not None and total
+           else "unknown share")
+    return (f"   partial disclosure axis — tie suppressed "
+            f"({n_members} member(s), {cvg} of consolidated)")
+
+
 def _write_check_row(ws, r: int, label: str, values, ltm_col: int,
                      pct_fmt: bool = False, tol: float = 0.02) -> int:
     """Muted checksum row (segment Σ/gap, income-statement tie): values
@@ -666,6 +683,21 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                         for _, rv in rendered]
                 vals = [v for v in vals if v is not None]
                 sums.append(sum(vals) if vals else None)
+            # FIX-14d: gate the tie on the latest column where members have
+            # values (annual preferred) — a deliberately partial axis (one
+            # member, sliver of revenue) would only wolf-cry a huge red gap
+            with_data = [i for i, sv in enumerate(sums) if sv is not None]
+            annual = [i for i in with_data if i < len(cons.ann)]
+            gate_i = max(annual) if annual else (
+                max(with_data) if with_data else None)
+            n_mem = 0 if gate_i is None else sum(
+                1 for _, rv in rendered
+                if (list(rv.ann) + list(rv.q) + [rv.ltm])[gate_i] is not None)
+            g_sigma = sums[gate_i] if gate_i is not None else None
+            g_total = cons_cells[gate_i] if gate_i is not None else None
+            if partial_axis_disclosure(n_mem, g_sigma, g_total):
+                r = _write_note_row(ws, r, _tie_note(n_mem, g_sigma, g_total))
+                continue
             r = _write_check_row(ws, r, "   Σ members", sums, ltm_col)
             r = _write_check_row(ws, r, "   vs consolidated (gap %)",
                                  [_pct(sv, cv) for sv, cv
@@ -1001,6 +1033,21 @@ def _write_segments_sheet(wb, d: DashboardData,
             vals = [rv[i] for rv in cells_by_line if rv[i] is not None]
             sums.append(sum(vals) if vals else None)
         cons_vals = [_find_span(cons, s, e) for s, e in spans]
+        # FIX-14d: gate on the latest span where members have values
+        # (annual preferred) — same partial-disclosure rule as the Model
+        # sheet and the Phase-2 gate
+        with_data = [i for i, sv in enumerate(sums) if sv is not None]
+        annual = [i for i in with_data
+                  if 330 <= (spans[i][1] - spans[i][0]).days <= 400]
+        gate_i = max(annual) if annual else (
+            max(with_data) if with_data else None)
+        n_mem = 0 if gate_i is None else sum(
+            1 for rv in cells_by_line if rv[gate_i] is not None)
+        g_sigma = sums[gate_i] if gate_i is not None else None
+        g_total = cons_vals[gate_i] if gate_i is not None else None
+        if partial_axis_disclosure(n_mem, g_sigma, g_total):
+            r = _write_note_row(ws, r, _tie_note(n_mem, g_sigma, g_total))
+            continue
         # same check-row helper as the Model sheet (FIX-11b hoist) — one
         # styling for every Σ/gap tie row in the workbook
         r = _write_check_row(ws, r, "   Σ members", sums, ltm_col=0)
