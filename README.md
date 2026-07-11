@@ -182,11 +182,13 @@ economic engine differs from the vendor code:
 | **AFFO yield** (§4.C, REITs) | FV/sh = AFFO per share ÷ target yield | AFFO per share, target yield (analyst-supplied) |
 | **Manual / SOTP** | analyst-supplied FV per share | FV per share (segment economics aren't in XBRL) |
 
-For the DCF, the growth cases **pre-fill from analyst consensus revenue
-estimates** (Yahoo `earningsTrend`, +1y vs 0y): Bear ← the low estimate,
-Base ← the average, Bull ← the high, with terminal g at the 2.0% house
-default — every value editable in the dialog, and the source + analyst count
-shown. The app returns FV per share and **margin of safety vs the last
+For the DCF, the growth cases **seed from the growth-anchor ladder** (see
+[Growth anchors](#growth-anchors-fix-14)): the Yahoo consensus mean is the
+**Bull** decade case, Base is the most conservative of consensus / trailing
+5y revenue CAGR / fundamental ROIC×RR (binding anchor named), Bear is half
+of Base, terminal g at the 2.0% house default — every value editable in
+the dialog, and the one-line anchor readout shows each leg with provenance.
+The app returns FV per share and **margin of safety vs the last
 close** for all three cases, drawn as a football field against the price
 line, with the **reverse-DCF sanity frame (§4.D)** printed under the case
 table. The implied g is computed on the **Track-B ex-SBC base over market EV
@@ -288,7 +290,11 @@ Every revenue block carries a visible **tie-out** — `Σ members` and
 positive gap flags hierarchical (parent + child) members double-counting
 on the axis (which also **gates the Phase-2 auto-fill**), a negative gap
 means untagged members; values synthesized from a two-axis
-disaggregation render in italics.
+disaggregation render in italics. A **deliberately partial axis** (fewer
+than 2 members with values AND Σ < 50% of consolidated at the gate span —
+e.g. a US-only geography note) renders a muted `tie suppressed` note
+instead of a screaming red gap, and the Phase-2 gate treats it as
+ineligible for auto-fill rather than failed (FIX-14d).
 
 ## Basis coherence (FIX-11)
 
@@ -316,6 +322,55 @@ app therefore lets the income statement referee itself:
   from the comp note (**Analyst inputs…** / `--sbc-override`).
   Capitalized-cost SBC elements (`…CapitalizedAmount`) are excluded by
   design — capitalized ≠ expensed.
+
+## Growth anchors (FIX-14)
+
+Yahoo-seeded growth used to map analyst *dispersion* to *scenarios*
+(Bear ← lowest analyst, Bull ← highest) and feed a **one-year** forward
+estimate into a **ten-year** linear fade — a structural inflater of
+intrinsic value. FIX-14 replaces that mapping with a three-anchor ladder
+(`forensic_viz/anchors.py`), on the design principle that growth and
+reinvestment are one economic decision (g = ROIC × reinvestment rate) and
+that capex enters intrinsic value as base normalization and growth
+discipline — **never** as a fourth projection input (the FCFF tab stays a
+two-stage fade on FCFF; the shell is the spec):
+
+- **Consensus is the Bull case.** The sell-side mean (+1y revenue growth)
+  IS the optimistic decade case once it drives a ten-year fade, so it
+  seeds Bull, not Base. What was removed: **analyst low/high no longer
+  seed Bear/Bull** — the dispersion appears display-only in the readout.
+- **Base = min(consensus, trailing 5y revenue CAGR, median ROIC(3y) ×
+  median reinvestment rate(3y))** with the binding anchor named;
+  reinvestment rate = (capex + ΔNWC − D&A) / NOPAT, clamped per year to
+  [0, 1.5], the fundamental product clamped to [0, 40%]. A consensus with
+  no other anchor takes a 25% haircut. **Bear = max(0, ½ Base).**
+  Terminal-g seeding is untouched (house GDP-cap logic). Every seed stays
+  editable — the automation referees Yahoo, it does not replace the
+  analyst.
+- **Capex-normalized base prefill (house §2, automated).** The dialog
+  shows `base — as-reported {x} · capex-normalized {y} (5y median
+  intensity {p}%)` with a `[use normalized]` button; when the latest
+  capex/revenue sits more than ±30% off its 5y median, the line flags
+  `⚠ capex peak/trough year` and the auto-base valuation carries the same
+  warning. FCFF_DCF!B43/C43 keep the as-reported prefill (analyst-blue);
+  the suggestion rides as a cell comment.
+- **Growth–reinvestment coherence (verdict).** Where the Base g₀ implies
+  reinvesting more than 1.25× the historical median share of NOPAT
+  (implied RR = g₀ / median ROIC), the verdict notes flag franchise
+  capacity as unsupported — warning only; no verdict numeric and no
+  Control!B67 coherence field moves.
+
+Anchor readout as it appears in the dialog (one line, every leg labeled):
+
+```
+anchors — consensus +22.4% (Yahoo, n=31, Rung 4) · 5y rev CAGR +19.8% ·
+ROIC×RR +11.2% → Base = fundamental (binding) · analyst range +15.1%…+29.8%
+```
+
+Standing analytical caveat for the MELI example: standard-track FCFF on an
+embedded-finance name carries the credit book in CFO; anchors discipline
+the seed, they do not fix a track choice — SOTP with credit de-consolidated
+remains the analyst's call.
 
 ## House assumptions file
 

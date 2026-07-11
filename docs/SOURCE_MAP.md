@@ -80,8 +80,8 @@ export's "Interim gap-fill" footnotes.
 | Cell | Input | Source |
 |---|---|---|
 | FCFF B5/C5 | Base FCFF Track A/B | AUTO — as-reported FCFF / ex-SBC (house §2b) |
-| FCFF B6–C9 | g0 / terminal g per track | AUTO from the valuation dialog (A=Bear, B=Base) — **your growth assumptions** |
-| FCFF B42–C43 | *Normalized* OCF/capex | ANALYST — §4.0 normalization (through-cycle capex, never one quarter); app pre-fills as-reported as the starting point |
+| FCFF B6–C9 | g0 / terminal g per track | AUTO from the valuation dialog (A=Bear, B=Base) — **your growth assumptions**, seeded by the FIX-14 anchor ladder (Bull ← consensus, Base ← min anchor, Bear ← ½ Base; analyst low/high no longer seed cases) |
+| FCFF B42–C43 | *Normalized* OCF/capex | ANALYST — §4.0 normalization (through-cycle capex, never one quarter); app pre-fills as-reported as the starting point and rides the capex-normalized suggestion (5y median intensity) as a cell comment (FIX-14b) |
 | RI B7/B8/B28 | Payout, BV/sh, D1 | AUTO — dividends/NI, equity/shares, dividends/share |
 | RI B12–F16 | Track A/B ROE paths | ANALYST — through-cycle judgment off the credit cycle; app pre-fills the dialog ROEs |
 | REIT B5–B10, B16–C17 | NOI, cap rates, AFFO, yields | ANALYST — supplemental + broker cap-rate surveys (Track B +50–100 bps, §4.C); app fills debt/shares |

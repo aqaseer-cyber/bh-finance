@@ -1,4 +1,4 @@
-# MELI live validation — FIX-11f and FIX-13f acceptance gates
+# MELI live validation — FIX-11f, FIX-13f and FIX-14 acceptance gates
 
 **Status: PENDING — live runs required.** The implementation environment
 has no route to sec.gov, so these gates must be executed by the owner on a
@@ -67,6 +67,48 @@ the Model sheet (and `statements_note`) must read
 "SEC Archives blocks the placeholder User-Agent (HTTP 403). Set
 SEC_EDGAR_USER_AGENT to 'name email' and retry." — not "unreachable".
 
+## FIX-14 anchors — growth discipline (live run)
+
+**Status: PENDING — live run required** (UA already set from the gates
+above). One growth name with a live consensus (MELI) and one
+low-capex-intensity control (PYPL):
+
+```bat
+run_windows.bat MELI --value dcf --rating Hold --no-cache
+run_windows.bat PYPL --value dcf --rating Hold --no-cache
+```
+
+Record the anchor readout line (printed by the CLI before the case seeds;
+identical to the dialog's readout) **verbatim**:
+
+| Name | Anchor readout (verbatim) |
+|---|---|
+| MELI | _pending_ |
+| PYPL | _pending_ |
+
+Pass criteria:
+
+- [ ] MELI **Base seed ≤ consensus** — and strictly below the old `g_avg`
+      prefill (the whole point of the ladder).
+- [ ] The **binding anchor is named** in the readout (consensus / 5y CAGR /
+      fundamental, or the single-anchor 25% haircut).
+- [ ] MELI **capex deviation flag state recorded either way**: the dialog
+      base line's two intensities and whether `⚠ capex peak/trough year`
+      shows — copy the line here: _pending_
+- [ ] Verdict shows the **growth–reinvestment note only if the threshold
+      genuinely trips** (implied RR > 1.25 × historical median RR) — record
+      fired/silent and the two RR numbers: _pending_
+- [ ] MELI geography axis (US-only partial disclosure): the Segments tie
+      renders `partial disclosure axis — tie suppressed (…)` — **no
+      −99.8% red row** (FIX-14d).
+- [ ] PYPL control: low capex intensity ⇒ capex-normalized base ≈
+      as-reported base and no peak/trough flag unless genuinely deviant.
+
+Standing analytical caveat (also in the README): standard-track FCFF on an
+embedded-finance name carries the credit book in CFO; anchors discipline
+the seed, they do not fix a track choice — SOTP with credit de-consolidated
+remains the analyst's call.
+
 ## Record
 
 Fill after each live run (append rows; keep failures with their diagnosis):
@@ -75,3 +117,4 @@ Fill after each live run (append rows; keep failures with their diagnosis):
 |---|---|---|---|---|
 | | | | FIX-11f | |
 | | | | FIX-13f | |
+| | | | FIX-14 | |
