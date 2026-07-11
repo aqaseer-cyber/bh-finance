@@ -37,6 +37,10 @@ from .dashboard import (
     render_valuation, render_verdict,
 )
 from .edgar import EdgarError
+from .explore import (
+    PRICE_MODES, RATIO_MODES, REVENUE_MODES, price_card, ratio_card,
+    revenue_card,
+)
 from .export import export_pdf
 from .model_export import export_financial_model
 from .compare import MAX_TICKERS, build_compare_html
@@ -278,6 +282,74 @@ class _ScrollTab(ttk.Frame):
         self._recenter()
 
 
+class _ExploreTab(ttk.Frame):
+    """FIX-15b: a scrollable column of interactive chart cards, screen-only
+    (the report/PDF pipeline never renders these figures). Each card is a
+    title + mode combobox over its own small canvas; a mode change redraws
+    THAT card only. Figures are plt-free (`Figure()` directly), so
+    destroying the old Tk canvas releases them — no figure leaks."""
+
+    _CARDS = (("Share price & drawdown", PRICE_MODES, price_card),
+              ("Valuation ratios (TTM)", RATIO_MODES, ratio_card),
+              ("Revenue & margins", REVENUE_MODES, revenue_card))
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.canvas = tk.Canvas(self, background=P.PAGE, highlightthickness=0)
+        vbar = ttk.Scrollbar(self, orient=tk.VERTICAL,
+                             command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.inner = ttk.Frame(self.canvas)
+        self._win = self.canvas.create_window((0, 0), window=self.inner,
+                                              anchor="nw")
+        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self._cards = []
+        for title, modes, builder in self._CARDS:
+            head = ttk.Frame(self.inner)
+            head.pack(fill=tk.X, padx=10, pady=(12, 2), anchor="w")
+            ttk.Label(head, text=title,
+                      font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+            var = tk.StringVar(value=modes[0])
+            box = ttk.Combobox(head, state="readonly", width=18,
+                               textvariable=var, values=list(modes))
+            box.pack(side=tk.LEFT, padx=(12, 0))
+            holder = ttk.Frame(self.inner)
+            holder.pack(fill=tk.X, padx=10, anchor="w")
+            card = {"var": var, "builder": builder, "holder": holder,
+                    "canvas": None}
+            box.bind("<<ComboboxSelected>>",
+                     lambda _e, c=card: self._redraw(c))
+            self._cards.append(card)
+
+    def _card_geometry(self):
+        dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
+        width_px = (self.canvas.winfo_width()
+                    or self.app.notebook.winfo_width() or 1000)
+        return dpi, max(560, width_px - 44) / dpi
+
+    def _redraw(self, card):
+        d = self.app.data
+        if d is None:
+            return
+        dpi, width_in = self._card_geometry()
+        fig = card["builder"](d, card["var"].get(), dpi=dpi,
+                              width_in=width_in)
+        if card["canvas"] is not None:
+            card["canvas"].get_tk_widget().destroy()
+        card["canvas"] = FigureCanvasTkAgg(fig, master=card["holder"])
+        card["canvas"].draw()
+        card["canvas"].get_tk_widget().pack(anchor="w")
+
+    def refresh(self):
+        """Re-render every card (fresh data or a DPI/viewport change)."""
+        for card in self._cards:
+            self._redraw(card)
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -382,6 +454,9 @@ class App:
             tab = _ScrollTab(self.notebook)
             self.tabs[name] = tab
             self.notebook.add(tab, text=name, state=tk.DISABLED)
+        # FIX-15b: interactive Explore cards (screen-only, never in the PDF)
+        self.explore_tab = _ExploreTab(self.notebook, self)
+        self.notebook.add(self.explore_tab, text="Explore", state=tk.DISABLED)
         self.refresh_watchlist()
 
         root.bind_all("<MouseWheel>", self._on_mousewheel)      # Windows/macOS
@@ -529,6 +604,7 @@ class App:
                     self.data, self.valuation_res, self.verdict, dpi=dpi,
                     open_triggers=self._open_trigger_texts())
         self._refresh_tabs()
+        self.explore_tab.refresh()  # FIX-15b: cards re-render at the new DPI
         if current:
             try:
                 self.notebook.select(current)
@@ -818,6 +894,8 @@ class App:
         self.valuation_res = None
         self.verdict = None
         self._refresh_tabs(select="Dashboard")
+        self.explore_tab.refresh()
+        self.notebook.tab(self.explore_tab, state=tk.NORMAL)
         note = ("  (price sources unavailable — fundamentals only)"
                 if data.price_error else "")
         self._set_busy(False, f"{data.company} — done.{note}")
