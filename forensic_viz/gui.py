@@ -282,6 +282,188 @@ class _ScrollTab(ttk.Frame):
         self._recenter()
 
 
+class _SandboxCard(ttk.Frame):
+    """FIX-15c: native DCF sandbox — a thin Tk skin over the PRODUCTION
+    functions (`dcf_fcff` via `sandbox_compute`, the last valuation's
+    bridge, `reverse_dcf_implied_g`). Deliberately no new math. Visible
+    once a DCF valuation exists; other methods get a muted note (banks /
+    REITs mirror the old HTML behavior). The app's valuation page and
+    exports stay the audited record."""
+
+    _SLIDERS = (  # (attr, label, lo %, hi %)
+        ("wacc", "WACC", 5.0, 15.0),
+        ("g0", "Stage-1 g₀", -5.0, 25.0),
+        ("gt", "Terminal g", 0.0, config.GDP_CAP * 100),
+    )
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self._job = None
+        head = ttk.Frame(self)
+        head.pack(fill=tk.X, padx=10, pady=(16, 2), anchor="w")
+        ttk.Label(head, text="DCF sandbox (§4.A)",
+                  font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        self.note = ttk.Label(self, style="Secondary.TLabel", justify="left",
+                              text="Run Intrinsic value… (DCF) to enable "
+                                   "the sandbox.")
+        self.note.pack(fill=tk.X, padx=12, anchor="w")
+        self.body = ttk.Frame(self)
+
+        row = ttk.Frame(self.body)
+        row.pack(fill=tk.X, padx=12, pady=(4, 2), anchor="w")
+        ttk.Label(row, text="Base FCFF ($mm, as-reported):").pack(side=tk.LEFT)
+        self.base_var = tk.StringVar()
+        base_entry = ttk.Entry(row, textvariable=self.base_var, width=12)
+        base_entry.pack(side=tk.LEFT, padx=(6, 14))
+        base_entry.bind("<KeyRelease>", lambda _e: self._debounced())
+        self.exsbc_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="ex-SBC base (house §2b)",
+                        variable=self.exsbc_var,
+                        command=self._debounced).pack(side=tk.LEFT)
+        ttk.Label(row, text="Reset to case:").pack(side=tk.LEFT, padx=(16, 4))
+        self.case_var = tk.StringVar(value="Base")
+        case_box = ttk.Combobox(row, state="readonly", width=6,
+                                textvariable=self.case_var,
+                                values=list(CASE_NAMES))
+        case_box.pack(side=tk.LEFT)
+        case_box.bind("<<ComboboxSelected>>", lambda _e: self._reset_case())
+
+        self._scale_vars, self._scale_labels = {}, {}
+        for attr, label, lo, hi in self._SLIDERS:
+            srow = ttk.Frame(self.body)
+            srow.pack(fill=tk.X, padx=12, pady=1, anchor="w")
+            ttk.Label(srow, text=label, width=11).pack(side=tk.LEFT)
+            var = tk.DoubleVar(value=lo)
+            self._scale_vars[attr] = var
+            ttk.Scale(srow, from_=lo, to=hi, variable=var, length=280,
+                      command=lambda _v, a=attr: self._on_slide(a)).pack(
+                side=tk.LEFT, padx=(4, 8))
+            live = ttk.Label(srow, width=8)
+            live.pack(side=tk.LEFT)
+            self._scale_labels[attr] = live
+
+        out = ttk.Frame(self.body)
+        out.pack(fill=tk.X, padx=12, pady=(6, 10), anchor="w")
+        self._outputs = {}
+        for col, (key, label) in enumerate((
+                ("fv_ps", "FV / share"), ("mos", "MoS vs P₀"),
+                ("tv_share", "TV % of EV"), ("implied_g", "implied g (Track B)"))):
+            ttk.Label(out, text=label, style="Muted.TLabel").grid(
+                row=0, column=col, sticky="w", padx=(0, 22))
+            val = ttk.Label(out, text="–", font=("Segoe UI", 11, "bold"))
+            val.grid(row=1, column=col, sticky="w", padx=(0, 22))
+            self._outputs[key] = val
+
+    # sliders update their live label instantly; the compute is debounced
+    # 100 ms so drags stay smooth (FIX-15c)
+    def _on_slide(self, attr):
+        v = self._scale_vars[attr].get()
+        self._scale_labels[attr].configure(text=f"{v:.1f}%")
+        self._debounced()
+
+    def _debounced(self):
+        if self._job:
+            self.after_cancel(self._job)
+        self._job = self.after(100, self._recompute)
+
+    def _reset_case(self):
+        res = self.app.valuation_res
+        inputs = getattr(res, "_inputs", None)
+        if res is None or inputs is None:
+            return
+        case = inputs.cases.get(self.case_var.get())
+        if case is None or case.g0 is None:
+            return
+        self._scale_vars["g0"].set(case.g0 * 100)
+        self._scale_vars["gt"].set(case.g_term * 100)
+        if res.discount_rate:
+            self._scale_vars["wacc"].set(res.discount_rate * 100)
+        self._seed_base(res)
+        for attr in self._scale_vars:
+            self._scale_labels[attr].configure(
+                text=f"{self._scale_vars[attr].get():.1f}%")
+        self._recompute()
+
+    def _seed_base(self, res):
+        """Entry always holds the AS-REPORTED base: un-subtract SBC when
+        the last valuation ran ex-SBC, and mirror its checkbox — the
+        sandbox then reproduces that valuation exactly."""
+        base = res.base_value
+        if base is None:
+            return
+        inputs = getattr(res, "_inputs", None)
+        ex = bool(inputs is not None and inputs.ex_sbc)
+        if ex:
+            from .valuation import effective_sbc
+            base += effective_sbc(self.app.data) or 0.0
+        self.exsbc_var.set(ex)
+        self.base_var.set(f"{base / 1e6:.0f}")
+
+    def refresh(self):
+        res = self.app.valuation_res
+        if res is None:
+            self.body.pack_forget()
+            self.note.configure(text="Run Intrinsic value… (DCF) to enable "
+                                     "the sandbox.")
+            self.note.pack(fill=tk.X, padx=12, anchor="w")
+            return
+        if res.method != "dcf":
+            self.body.pack_forget()
+            self.note.configure(
+                text=f"Sandbox applies to the DCF method — the last "
+                     f"valuation used '{res.method}' (banks/REITs value "
+                     "through ROE/AFFO, not an FCFF fade).")
+            self.note.pack(fill=tk.X, padx=12, anchor="w")
+            return
+        self.note.pack_forget()
+        self.body.pack(fill=tk.X, anchor="w")
+        self.case_var.set("Base")
+        self._reset_case()
+
+    def _recompute(self):
+        self._job = None
+        d, res = self.app.data, self.app.valuation_res
+        if d is None or res is None:
+            return
+        from .valuation import effective_sbc
+        from .explore import sandbox_compute
+        try:
+            base = float(self.base_var.get().replace(",", "")) * 1e6
+        except ValueError:
+            self._show_error("n/a — base must be a number ($mm)")
+            return
+        bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
+        out = sandbox_compute(
+            base, self._scale_vars["wacc"].get() / 100,
+            self._scale_vars["g0"].get() / 100,
+            self._scale_vars["gt"].get() / 100,
+            bridge, res.shares, effective_sbc(d) or 0.0,
+            self.exsbc_var.get(), price=d.last_close)
+        if out["error"]:
+            self._show_error(out["error"])
+            return
+        neg = P.NEGATIVE
+        ink = P.INK_PRIMARY
+        self._outputs["fv_ps"].configure(
+            text=f"${out['fv_ps']:,.2f}", foreground=ink)
+        mos = out["mos"]
+        self._outputs["mos"].configure(
+            text=f"{mos * 100:+.1f}%" if mos is not None else "–",
+            foreground=neg if mos is not None and mos < 0 else ink)
+        self._outputs["tv_share"].configure(
+            text=f"{out['tv_share'] * 100:.0f}%", foreground=ink)
+        ig = out["implied_g"]
+        self._outputs["implied_g"].configure(
+            text=f"{ig * 100:.1f}%" if ig is not None else "–",
+            foreground=ink)
+
+    def _show_error(self, msg):
+        self._outputs["fv_ps"].configure(text=msg, foreground=P.NEGATIVE)
+        for key in ("mos", "tv_share", "implied_g"):
+            self._outputs[key].configure(text="–", foreground=P.INK_PRIMARY)
+
+
 class _ExploreTab(ttk.Frame):
     """FIX-15b: a scrollable column of interactive chart cards, screen-only
     (the report/PDF pipeline never renders these figures). Each card is a
@@ -324,6 +506,9 @@ class _ExploreTab(ttk.Frame):
             box.bind("<<ComboboxSelected>>",
                      lambda _e, c=card: self._redraw(c))
             self._cards.append(card)
+        # FIX-15c: the fourth card is controls, not a figure
+        self.sandbox = _SandboxCard(self.inner, app)
+        self.sandbox.pack(fill=tk.X, anchor="w")
 
     def _card_geometry(self):
         dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
@@ -348,6 +533,7 @@ class _ExploreTab(ttk.Frame):
         """Re-render every card (fresh data or a DPI/viewport change)."""
         for card in self._cards:
             self._redraw(card)
+        self.sandbox.refresh()
 
 
 class App:
@@ -958,6 +1144,7 @@ class App:
         except Exception as exc:  # still non-blocking, but visibly so (12g)
             led = f" (ledger update failed: {type(exc).__name__})"
         self._refresh_tabs(select="Valuation")
+        self.explore_tab.sandbox.refresh()  # FIX-15c: seed from this valuation
         gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
         self.status_var.set(f"Intrinsic value + verdict ready.{led}{gate}")
 

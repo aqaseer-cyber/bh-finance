@@ -13,8 +13,8 @@ import pytest
 from matplotlib.figure import Figure
 
 from forensic_viz.explore import (
-    INSUFFICIENT, PRICE_MODES, RATIO_MODES, REVENUE_MODES, price_card,
-    ratio_card, ratio_series, revenue_card,
+    INSUFFICIENT, PRICE_MODES, RATIO_MODES, REVENUE_MODES, WACC_EXCEEDS_G,
+    price_card, ratio_card, ratio_series, revenue_card, sandbox_compute,
 )
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import DashboardData, apply_track, build_fundamental_metrics
@@ -137,3 +137,49 @@ def test_ratio_masks_negative_ttm_eps_stretch():
     # the figure renders the masked series without raising
     fig = ratio_card(d, "P/E (TTM)", dpi=80, width_in=8.0)
     assert not any(INSUFFICIENT in t for t in _texts(fig))
+
+
+# ------------------------------------------------- FIX-15c sandbox compute
+
+def test_sandbox_compute_equals_production_pipeline_across_grid():
+    """The card is a thin UI over the production functions — assert the
+    dict against a hand-composed dcf_fcff + bridge + implied-g pipeline."""
+    from forensic_viz.valuation import dcf_fcff, reverse_dcf_implied_g
+    bridge, shares, sbc, price = 6e8, 100e6, 5e7, 80.0
+    for base in (4e8, 9e8):
+        for wacc in (0.07, 0.11):
+            for g0 in (-0.02, 0.06, 0.18):
+                for ex_sbc in (False, True):
+                    got = sandbox_compute(base, wacc, g0, 0.02, bridge,
+                                          shares, sbc, ex_sbc, price=price)
+                    eff = base - sbc if ex_sbc else base
+                    ref = dcf_fcff(eff, wacc, g0, 0.02)
+                    fv = (ref["ev"] - bridge) / shares
+                    assert got["error"] is None
+                    assert got["fv_ps"] == pytest.approx(fv)
+                    assert got["mos"] == pytest.approx((fv - price) / price)
+                    assert got["tv_share"] == pytest.approx(ref["tv_share"])
+                    assert got["implied_g"] == pytest.approx(
+                        reverse_dcf_implied_g(base - sbc, wacc,
+                                              price * shares + bridge))
+
+
+def test_sandbox_compute_guards():
+    # wacc ≤ terminal g renders a message, never raises
+    out = sandbox_compute(5e8, 0.02, 0.05, 0.03, 0.0, 100e6, 0.0, False,
+                          price=50.0)
+    assert out["error"] == WACC_EXCEEDS_G
+    assert out["fv_ps"] is None and out["mos"] is None
+    # equality is still undefined (TV division by zero)
+    assert sandbox_compute(5e8, 0.03, 0.05, 0.03, 0.0, 100e6, 0.0,
+                           False)["error"] == WACC_EXCEEDS_G
+    # ex-SBC base clamped to zero -> honest refusal, no crash
+    out2 = sandbox_compute(4e7, 0.09, 0.05, 0.02, 0.0, 100e6, 5e7, True)
+    assert out2["error"] and "positive" in out2["error"]
+    # missing shares
+    assert sandbox_compute(5e8, 0.09, 0.05, 0.02, 0.0, 0.0, 0.0,
+                           False)["error"]
+    # no price -> FV computed, market-dependent outputs stay None
+    out3 = sandbox_compute(5e8, 0.09, 0.05, 0.02, 1e8, 100e6, 0.0, False)
+    assert out3["error"] is None and out3["fv_ps"] is not None
+    assert out3["mos"] is None and out3["implied_g"] is None
