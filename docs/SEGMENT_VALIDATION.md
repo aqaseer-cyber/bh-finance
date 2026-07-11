@@ -41,7 +41,7 @@ Then open the exported model and record below:
 | FY columns per axis / coverage line | 10y history; "Segment coverage: dimensional facts found in 11/11 instances (10-K 0001562762-17-000024 (FY2016) … 10-Q 0001099590-26-000017)" |
 | Tie-row gaps per FY (±2%?) | business segments 0.0% (FY2024); revenue stream 0.0%; product/service +100% — EXPLAINED: generational overlap (Service/Services, Product/Product Sales across the FY2020→FY2022 recasts, all footnoted); geography — tie suppressed per FIX-14d (US-only partial disclosure, 1 member, 0% of consolidated) |
 | Breaks + judgment | Venezuela discontinuous-series flag (real: deconsolidation-era reporting); product/service recasts at FY2019/FY2020/FY2021 boundaries (real reorgs: Marketplace/Nonmarketplace → Commerce/Fintech → Credit/Product/Services); ≥1 expected — satisfied |
-| Wall time / cache growth | _pending — owner to record on next cold pull_ |
+| Wall time / cache growth | cache total 254 MB across MELI+PYPL+AXON+GSL, ≤4–5 MB per instance file — comfortably under the 150 MB/name target (owner, 2026-07-11) |
 | Skipped / unmatched | none skipped; "340 facts at 3+ segment axes ignored (beyond the 2-axis model)" |
 
 ### PYPL — verified 2026-07-11 (export `PYPL_financial_model_20260711.xlsx`)
@@ -51,7 +51,7 @@ Then open the exported model and record below:
 | FY columns per axis / coverage line | business segments 6 FY columns (recent two-segment disclosure, FY2022+), product/service 11–13, geography 10; "dimensional facts in 11/11 instances" |
 | Tie-row gaps per FY (±2%?) | business segments 0.0% all years; product/service 0.0% except FY2016 +9.2% / FY2017 +9.9% / FY2018 −3.5% / FY2019 −9.4% — EXPLAINED: pre-ASC-606-era member generations at the footnoted recast boundaries; geography 0.0% except FY2021 +46.0% / FY2022 +42.6% — EXPLAINED: two overlapping partitions filed on one axis (US/Non-US AND US/UK/Other; Non-US 11,659 = UK 2,340 + Other 9,319 exactly — parent + children share the axis, the positive gap is the designed double-count flag) |
 | Breaks + judgment | "8 membership break(s)" — product/service recasts (×6, tag-generation churn: tagging noise) and geography recasts at FY2021/FY2022 (real disclosure change: UK split out) |
-| Wall time / cache growth | _pending — owner to record on next cold pull_ |
+| Wall time / cache growth | cache total 254 MB across MELI+PYPL+AXON+GSL, ≤4–5 MB per instance file — comfortably under the 150 MB/name target (owner, 2026-07-11) |
 | Skipped / unmatched | none skipped (11/11) |
 
 ### AXON — verified 2026-07-11 (export `AXON_financial_model_20260711.xlsx`)
@@ -61,7 +61,7 @@ Then open the exported model and record below:
 | FY columns per axis / coverage line | business segments 13, product/service 12, geography 13 columns; "dimensional facts in 11/11 instances" |
 | Tie-row gaps per FY (±2%?) | geography 0.0% every year; business segments −93.6%…+116.8% — EXPLAINED: segment-name generations coexist per span (FY2023 carries Connected Devices 964.0 + Software And Sensors 596.7 + Software And Services 596.7 + TASER 613.5 + Taser 612.6; Connected Devices + Software And Services = 1,560.7 ≈ consolidated — the rest are prior-generation names and case variants; renames are never auto-spliced per FIX-10c doctrine); product/service +100%…+250% — EXPLAINED: the full disaggregation tree shares one axis (Product/Service parents + TASER Devices/Axon Evidence/Cartridges/… children + label variants) |
 | Breaks + judgment | many recasts footnoted across business/product/geography — TASER→Connected Devices era renames (real reorg) + label/case churn (tagging noise). **Analyst action available:** `[segment_aliases.AXON]` merging the case/label variants (`Taser`→`TASER`, `Software And Sensors`→`Software And Services`, `Axon Body And Camera Accessories`→`Axon Body Cameras And Accessories`, `Taser Devices Professional`→`TASER Devices Professional`) collapses the noise; splicing TASER→Connected Devices across the rename stays a judgment call |
-| Wall time / cache growth | _pending — owner to record on next cold pull_ |
+| Wall time / cache growth | cache total 254 MB across MELI+PYPL+AXON+GSL, ≤4–5 MB per instance file — comfortably under the 150 MB/name target (owner, 2026-07-11) |
 | Skipped / unmatched | none skipped (11/11); status line already auto-merged Evidence Com And Video / Software And Sensors / Softwareand Sensors / Taser Weapons qname pairs (2 qnames each) |
 
 ### GSL — verified 2026-07-11 (export `GSL_financial_model_20260711.xlsx`)

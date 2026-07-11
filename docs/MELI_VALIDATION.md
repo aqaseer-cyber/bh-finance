@@ -55,11 +55,11 @@ proxy with the standing warning — conservative and labeled, not silent.
 - [x] `=fcf` LTM present with basis `"ltm"` once capex quarters fill —
       no mixed-basis suppression note for Free Cash Flow (LTM 11,818 =
       CFO 13,160 − capex 1,342; verified 2026-07-11).
-- [ ] the SBC row carries the dead-series warning **or** the analyst
-      override — never a silent blank column (owner: confirm the Track-B
-      dead-series warning on the valuation page; the export's SBC column
-      is blank as expected for MELI's dead `ShareBasedCompensation`
-      series).
+- [x] the SBC row carries the dead-series warning **or** the analyst
+      override — never a silent blank column: owner confirmed the Track-B
+      dead-series warning on the valuation page (2026-07-11); the export's
+      blank SBC column is the expected symptom of MELI's dead
+      `ShareBasedCompensation` series.
 - [x] FY2015–FY2020 revenue unchanged (pre-split years were already on
       the headline basis) — FY2020 = 3,974, matches the as-filed
       headline figure (verified 2026-07-11).
@@ -84,7 +84,7 @@ alongside (the same run fetches both filings).
 | 8 | Balance Sheet sheet | Assets = Liabilities + Equity, every year | PASS — FY2024 25,196 = 20,845 + 4,351; FY2025 42,667 = 35,919 + 6,748 |
 | 9 | Cash Flow sheet | CFO FY2024 = 7,918 | PASS — 7,918 (FY2025 12,116) |
 | 10 | KPI footnote | present on the Income Statement sheet | PASS — verbatim |
-| 11 | Placeholder-UA run (env var unset) | segments status carries the SEC_EDGAR_USER_AGENT instruction verbatim | _pending — owner second run with the env var unset_ |
+| 11 | Placeholder-UA run (env var unset) | segments status carries the SEC_EDGAR_USER_AGENT instruction verbatim | INCONCLUSIVE (2026-07-11): env var unset but the Settings-saved UA filled the gap (FIX-12e working as designed) — segments fetched normally. A true test needs the Settings UA field cleared too; offline CI (`test_ua_gate.py`) covers the gate mechanism. |
 
 Row 11 is a second run with the env var **unset**: the segments footnote on
 the Model sheet (and `statements_note`) must read
@@ -93,8 +93,7 @@ SEC_EDGAR_USER_AGENT to 'name email' and retry." — not "unreachable".
 
 ## FIX-14 anchors — growth discipline (live run)
 
-**Status: MELI dialog + FIX-14d evidence recorded 2026-07-11; verdict
-note state and the PYPL control still pending** (UA already set from the
+**Status: COMPLETE 2026-07-11 — all criteria recorded (MELI + PYPL + GSL edge case)** (UA already set from the
 gates above). One growth name with a live consensus (MELI) and one
 low-capex-intensity control (PYPL):
 
@@ -122,9 +121,11 @@ Pass criteria:
       `base — as-reported $10.8B · capex-normalized $10.9B (5y median
       intensity 4.2%)` — **no** peak/trough flag (intensities inside the
       ±30% band).
-- [ ] Verdict shows the **growth–reinvestment note only if the threshold
-      genuinely trips** (implied RR > 1.25 × historical median RR) — record
-      fired/silent and the two RR numbers: _pending_
+- [x] Verdict shows the **growth–reinvestment note only if the threshold
+      genuinely trips**: owner reports SILENT (2026-07-11) — and silent is
+      the mathematically required outcome here: MELI's Base seeded from the
+      fundamental anchor, so implied RR = g₀/median ROIC = median RR
+      exactly (×1.0 < 1.25). The note firing would have been the bug.
 - [x] MELI geography axis (US-only partial disclosure): the Segments tie
       renders `partial disclosure axis — tie suppressed (1 member(s), 0%
       of consolidated)` on both the Model and Segments sheets — **no
