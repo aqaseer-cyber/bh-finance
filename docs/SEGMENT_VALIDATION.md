@@ -74,8 +74,11 @@ section and no as-filed statement sheets, with the honest footnote
 instances unreachable (offline, or an unexpected EDGAR layout for this
 filer)." — blanks stated, never faked. Annual fundamentals populate fully
 (FY2015–FY2025 from the US-GAAP 20-F facts); the interim spine is
-semi-annual (6-K half-years, rendered as Q2/Q4 columns). 20-F instance
-support would be its own FIX if ever wanted.
+semi-annual (6-K half-years, rendered as Q2/Q4 columns).
+**20-F/40-F support shipped 2026-07-11 (owner-ratified):** the annual
+enumerator now collects the 20-F family, so segment instances and the
+as-filed statement sheets light up for FPIs — a GSL re-run is available
+to verify live (GSL may still genuinely report one segment).
 
 | Item | Result |
 |---|---|

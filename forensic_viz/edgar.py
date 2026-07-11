@@ -223,8 +223,13 @@ class AnnualFiling:
     document: str        # primaryDocument
 
 
+_ANNUAL_FILING_FORMS = tuple(ANNUAL_FORMS) + tuple(
+    f + "/A" for f in ANNUAL_FORMS)  # 20-F/40-F: FPIs (owner-ratified)
+
+
 def _collect_annual_filings(recent: dict) -> List[AnnualFiling]:
-    """Every 10-K / 10-K/A row in the submissions 'recent' arrays (pure).
+    """Every annual-report row (10-K/20-F/40-F + amendments) in the
+    submissions 'recent' arrays (pure).
 
     Rows with unparseable dates are dropped — a filing we cannot place on
     the fiscal timeline cannot participate in per-year selection.
@@ -234,7 +239,7 @@ def _collect_annual_filings(recent: dict) -> List[AnnualFiling]:
             recent.get("form", []), recent.get("filingDate", []),
             recent.get("reportDate", []), recent.get("accessionNumber", []),
             recent.get("primaryDocument", [])):
-        if form not in ("10-K", "10-K/A"):
+        if form not in _ANNUAL_FILING_FORMS:
             continue
         filed_d, report_d = _parse_date(str(filed)), _parse_date(str(report))
         if filed_d is None or report_d is None:
@@ -262,7 +267,7 @@ def select_annual_filings(filings: List[AnnualFiling],
             groups.append([f])
     chosen: List[AnnualFiling] = []
     for group in groups:
-        amendments = [f for f in group if f.form == "10-K/A"]
+        amendments = [f for f in group if f.form.endswith("/A")]
         pool = amendments or group
         chosen.append(max(pool, key=lambda f: f.filed))
     return chosen[-years:]
@@ -270,9 +275,9 @@ def select_annual_filings(filings: List[AnnualFiling],
 
 def sibling_annual_filing(filings: List[AnnualFiling],
                           preferred: AnnualFiling) -> Optional[AnnualFiling]:
-    """The same fiscal year's plain 10-K, for a 10-K/A that ships without
-    XBRL (amendments sometimes carry none)."""
-    pool = [f for f in filings if f.form == "10-K"
+    """The same fiscal year's plain annual filing, for an amendment that
+    ships without XBRL (amendments sometimes carry none)."""
+    pool = [f for f in filings if not f.form.endswith("/A")
             and f.accession != preferred.accession
             and abs((f.report_date - preferred.report_date).days) <= 14]
     return max(pool, key=lambda f: f.filed) if pool else None
@@ -874,7 +879,9 @@ def fetch_fundamentals(
                 recent.get("form", []), recent.get("filingDate", []),
                 recent.get("accessionNumber", []),
                 recent.get("primaryDocument", [])):
-            if form == "10-K" and not result.latest_10k_date:
+            if form in ANNUAL_FORMS and not result.latest_10k_date:
+                # the marker keeps its 10-K name but holds the latest
+                # ANNUAL filing — 20-F/40-F for foreign private issuers
                 result.latest_10k_date = str(filed)
                 result.latest_10k_accession = str(accn)
                 result.latest_10k_document = str(doc)
@@ -980,7 +987,7 @@ def fetch_segment_instances(
             label = (f"{filing.form} {filing.accession} "
                      f"(FY{filing.report_date.year})")
             xml = fetch_one(filing.accession, filing.document)
-            if xml is None and filing.form == "10-K/A":
+            if xml is None and filing.form.endswith("/A"):
                 sib = sibling_annual_filing(annual.annual_filings, filing)
                 if sib is not None:  # amendments sometimes ship without XBRL
                     xml = fetch_one(sib.accession, sib.document)

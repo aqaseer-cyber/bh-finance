@@ -67,3 +67,32 @@ def test_sibling_lookup_finds_same_year_plain_10k():
     sib = sibling_annual_filing(filings, amd)
     assert sib is not None and sib.accession == "k23"
     assert sibling_annual_filing([filings[1]], amd) is None
+
+
+# ------------------------------------------- 20-F/40-F FPIs (owner-ratified)
+
+def test_collect_accepts_20f_family():
+    recent = {
+        "form": ["20-F", "6-K", "20-F/A", "40-F", "10-K"],
+        "filingDate": ["2026-03-20", "2025-08-05", "2026-06-01",
+                       "2026-03-25", "2026-02-15"],
+        "reportDate": ["2025-12-31", "2025-06-30", "2025-12-31",
+                       "2025-12-31", "2025-12-31"],
+        "accessionNumber": ["f25", "h1", "fa25", "forty", "k25"],
+        "primaryDocument": ["f.htm", "h.htm", "fa.htm", "fo.htm", "k.htm"],
+    }
+    got = _collect_annual_filings(recent)
+    # 6-K (interim) excluded; every annual family form collected
+    assert [f.accession for f in got] == ["f25", "fa25", "forty", "k25"]
+
+
+def test_20f_amendment_wins_and_sibling_finds_plain_20f():
+    filings = [
+        _f("20-F", "2025-03-20", "2024-12-31", accn="f24"),
+        _f("20-F/A", "2025-07-01", "2024-12-31", accn="fa24"),  # later /A wins
+        _f("20-F", "2026-03-20", "2025-12-31", accn="f25"),
+    ]
+    sel = select_annual_filings(filings, years=10)
+    assert [f.accession for f in sel] == ["fa24", "f25"]
+    # an amendment without XBRL falls back to the same year's plain 20-F
+    assert sibling_annual_filing(filings, sel[0]).accession == "f24"

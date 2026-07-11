@@ -26,10 +26,9 @@ untouched, and a to-do list of the analyst cells with suggested sources
    instantly.
 3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10) and
    **Track**, press **Analyze**. The report opens as tabs (Watchlist /
-   Dashboard / Unit economics / Health / Valuation / Verdict);
-   **Interactive report ↗** opens the zoomable, hover-tooltip HTML rendition
-   in your browser, and **Save PDF (A4)…** / **Financial model…** /
-   **Fill workbook…** produce the deliverables.
+   Dashboard / Unit economics / Health / Valuation / Verdict / Explore);
+   **Save PDF (A4)…** / **Financial model…** / **Fill workbook…** produce
+   the deliverables.
 
 **Watchlist & verdict ledger (§5.7).** Every computed verdict logs
 automatically to a local SQLite ledger (`ledger.db` next to the cache); the
@@ -279,7 +278,8 @@ segments, product/service disaggregation (e.g. Commerce vs Fintech),
 geography (e.g. Brazil/Mexico/Other) — are **dimensional XBRL that the
 companyfacts API never returns**, so the app reads them from the
 **extracted XBRL instances of up to `segment_history_years` fiscal years
-of 10-Ks (default 10) plus the latest 10-Q** (fetched live, cached for a
+of annual reports (10-K, or 20-F/40-F for foreign private issuers;
+default 10) plus the latest 10-Q** (fetched live, cached for a
 year — filed instances are immutable). Values merge **as-latest-restated
 per span** (later-filed wins); **recasts, membership breaks, and
 per-instance coverage are footnoted in the model export** — a segment

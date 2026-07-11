@@ -89,7 +89,7 @@ def build_dashboard_data(
             "scorecard is indicative only; Altman Z replaced by the solvency panel."
         )
 
-    progress("Fetching segment disclosures (10-K/10-Q XBRL instances)…")
+    progress("Fetching segment disclosures (10-K/20-F XBRL instances)…")
     try:
         from .segments import SegmentData, fetch_segment_data
         try:
