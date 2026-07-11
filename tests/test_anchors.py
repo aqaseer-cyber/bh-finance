@@ -186,11 +186,17 @@ def test_seeding_history_only_no_consensus():
     assert a.consensus_range is None
 
 
-def test_seeding_bear_floors_at_zero():
+def test_seeding_bear_never_above_base():
+    # shrinking name: the zero floor must not seed a Bear MORE optimistic
+    # than Base — Bear collapses onto Base (owner amendment, GSL case)
     d = _d(revenue=[100, 95, 90, 85, 80, 75])  # negative 5y CAGR
     a = build_growth_anchors(d)
     assert a.seeds["Base"] < 0
-    assert a.seeds["Bear"] == 0.0
+    assert a.seeds["Bear"] == pytest.approx(a.seeds["Base"])
+    # growth name: unchanged — Bear is half of Base
+    g = build_growth_anchors(_d(revenue=[100, 110, 121, 133.1, 146.41,
+                                         161.051]))
+    assert g.seeds["Bear"] == pytest.approx(0.5 * g.seeds["Base"])
 
 
 def test_seeding_empty_keeps_silent_no_prefill():

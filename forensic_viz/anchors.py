@@ -11,7 +11,8 @@ linear fade. This module replaces that mapping with three anchors:
     fundamental  median ROIC(3y) × median reinvestment rate(3y) — growth
                  and reinvestment are one economic decision (g = ROIC × RR)
 
-Base = min(available anchors); Bear = ½ Base; a consensus-only ladder takes
+Base = min(available anchors); Bear = ½ Base (floored at 0, never above
+Base); a consensus-only ladder takes
 a 25% haircut. Every seed carries provenance (source, window, formula) and
 every prefill stays editable — the automation referees Yahoo, it does not
 replace the analyst. Capex enters as base normalization and growth
@@ -213,7 +214,8 @@ def build_growth_anchors(d) -> GrowthAnchors:
     Seeding: Bull = consensus (else hist_cagr, else no Bull seed) — the
     sell-side mean is the optimistic decade case once it feeds a ten-year
     fade. Base = min(available anchors); consensus standing alone takes a
-    25% haircut. Bear = max(0, ½ Base). Terminal-g seeding is untouched
+    25% haircut. Bear = ½ Base floored at 0 but never above Base (a
+    shrinking name seeds Bear = Base). Terminal-g seeding is untouched
     (house GDP-cap default lives with the callers). No anchors → seeds = {}
     (the old silent no-prefill behavior)."""
     est = getattr(d, "analyst_estimates", None) or {}
@@ -257,7 +259,11 @@ def build_growth_anchors(d) -> GrowthAnchors:
         else:
             binding, base = min(avail.items(), key=lambda kv: kv[1])
         bull = consensus if consensus is not None else hist
-        seeds["Bear"] = max(0.0, 0.5 * base)
+        # ½ × Base floored at 0 — but never ABOVE Base: for a negative-
+        # consensus (shrinking) name the zero floor would otherwise seed a
+        # Bear more optimistic than Base (owner-ratified amendment,
+        # 2026-07-11 GSL observation)
+        seeds["Bear"] = min(base, max(0.0, 0.5 * base))
         seeds["Base"] = base
         if bull is not None:
             seeds["Bull"] = bull
@@ -265,7 +271,7 @@ def build_growth_anchors(d) -> GrowthAnchors:
                                     if consensus is not None
                                     else "5y CAGR (no consensus)")
         details["seed:Base"] = f"min anchor = {binding}"
-        details["seed:Bear"] = "½ × Base, floored at 0"
+        details["seed:Bear"] = "½ × Base, floored at 0, never above Base"
 
     return GrowthAnchors(consensus=consensus, consensus_range=rng,
                          n_analysts=n, hist_cagr=hist, fundamental=fund,

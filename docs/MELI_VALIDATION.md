@@ -153,9 +153,10 @@ at **0.0% — above Base**, and Bull = consensus = −6.0% ties Base. The
 per-spec rules were designed for growth names; for shrinking names the
 seed ordering inverts and `build_valuation`'s existing "Bear FV exceeds
 Bull FV" warning fires if computed as-is. Every seed stays editable — the
-analyst sets the real cases. If the owner wants the floor changed
-(e.g. Bear = min(Base, max(0, ½ × Base))), that is a one-line spec
-amendment for a future FIX.
+analyst sets the real cases. **Amended 2026-07-11 (owner-ratified):**
+Bear = min(Base, max(0, ½ × Base)) — the zero floor no longer lifts Bear
+above a negative Base; shrinking names now seed Bear = Base. Growth names
+are unchanged.
 
 ## Record
 

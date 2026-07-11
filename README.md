@@ -352,7 +352,9 @@ two-stage fade on FCFF; the shell is the spec):
   median reinvestment rate(3y))** with the binding anchor named;
   reinvestment rate = (capex + ΔNWC − D&A) / NOPAT, clamped per year to
   [0, 1.5], the fundamental product clamped to [0, 40%]. A consensus with
-  no other anchor takes a 25% haircut. **Bear = max(0, ½ Base).**
+  no other anchor takes a 25% haircut. **Bear = ½ Base, floored at 0 but
+  never above Base** (a shrinking name seeds Bear = Base rather than an
+  inverted, more-optimistic Bear).
   Terminal-g seeding is untouched (house GDP-cap logic). Every seed stays
   editable — the automation referees Yahoo, it does not replace the
   analyst.
