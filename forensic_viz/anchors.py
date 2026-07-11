@@ -139,7 +139,7 @@ def reinvestment_rate(d, notes: Optional[List[str]] = None) -> Optional[float]:
     return statistics.median(rates)
 
 
-def _median_roic(d) -> Optional[float]:
+def median_roic(d) -> Optional[float]:
     """Median of the last 3 available (non-None) ROIC years."""
     have = [v for v in getattr(d, "roic", None) or [] if v is not None]
     return statistics.median(have[-3:]) if have else None
@@ -148,7 +148,7 @@ def _median_roic(d) -> Optional[float]:
 def fundamental_growth(d) -> Optional[float]:
     """g = median ROIC (last 3 available) × reinvestment_rate, clamped to
     [0.0, 0.40]. None when either leg is None."""
-    roic, rr = _median_roic(d), reinvestment_rate(d)
+    roic, rr = median_roic(d), reinvestment_rate(d)
     if roic is None or rr is None:
         return None
     g = roic * rr
@@ -237,7 +237,7 @@ def build_growth_anchors(d) -> GrowthAnchors:
 
     rr_notes: List[str] = []
     rr = reinvestment_rate(d, rr_notes)
-    roic = _median_roic(d)
+    roic = median_roic(d)
     fund = fundamental_growth(d)
     if fund is not None:
         details["fundamental"] = (

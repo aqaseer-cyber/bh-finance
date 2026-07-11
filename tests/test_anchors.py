@@ -250,6 +250,51 @@ def _val_data(capex_latest=150e6):
               capex=[100e6, 100e6, 100e6, 100e6, capex_latest])
 
 
+# ------------------------------- FIX-14c growth–reinvestment coherence note
+
+def _verdict_for(base_g0=0.05, with_legs=True):
+    from forensic_viz.valuation import (
+        CaseInputs, ValuationInputs, build_valuation,
+    )
+    from forensic_viz.verdict import build_verdict
+    cases = {"Bear": CaseInputs(g0=min(0.01, base_g0), g_term=0.01),
+             "Base": CaseInputs(g0=base_g0, g_term=0.02),
+             "Bull": CaseInputs(g0=0.09, g_term=0.03)}
+    inputs = ValuationInputs(method="dcf", discount_rate=0.09, cases=cases)
+    d = _val_data(capex_latest=100e6)  # flat capex — no 14b warning noise
+    if with_legs:
+        # NOPAT = 400 × 0.79 = 316; RR years (100−50)/316, ditto, ditto
+        # -> median RR ≈ 15.8%; median ROIC 10%
+        d.operating_income = [400e6] * 5
+        d.dna = [50e6] * 5
+        d.roic = [0.10, 0.10, 0.10]
+    res = build_valuation(d, inputs)
+    return build_verdict(d, inputs, res)
+
+
+def test_growth_reinvestment_note_fires_above_threshold():
+    # implied RR = 5% / 10% = 50% of NOPAT vs 15.8% history -> x3.2, fires
+    v = _verdict_for(base_g0=0.05)
+    assert any("franchise capacity" in n for n in v.notes)
+
+
+def test_growth_reinvestment_note_silent_below_and_without_legs():
+    # implied RR = 1.5% / 10% = 15% < 1.25 x 15.8% -> silent
+    v = _verdict_for(base_g0=0.015)
+    assert not any("franchise capacity" in n for n in v.notes)
+    # legs missing (no ROIC / EBIT history) -> silent
+    v2 = _verdict_for(base_g0=0.05, with_legs=False)
+    assert not any("franchise capacity" in n for n in v2.notes)
+
+
+def test_growth_reinvestment_note_never_moves_verdict_numerics():
+    v_note, v_bare = _verdict_for(0.05, True), _verdict_for(0.05, False)
+    assert v_note.fv_avg == pytest.approx(v_bare.fv_avg)
+    assert v_note.mos == pytest.approx(v_bare.mos)
+    assert v_note.stressed_mos == pytest.approx(v_bare.stressed_mos)
+    assert v_note.coherence == v_bare.coherence  # Control!B67 field untouched
+
+
 def test_capex_warning_only_on_auto_base_path():
     from forensic_viz.valuation import (
         CaseInputs, ValuationInputs, build_valuation,

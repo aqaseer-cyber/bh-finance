@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from . import config
+from .anchors import median_roic, reinvestment_rate  # one-way: verdict → anchors
 from .metrics import DashboardData, fmt_pct
 from .valuation import (
     CASE_NAMES, ValuationInputs, ValuationResult, dcf_fcff, effective_sbc,
@@ -42,6 +43,9 @@ from .valuation import (
 
 RATINGS = ("", "Strong Buy", "Buy", "Hold", "Sell")
 COHERENCE_MOS = -0.15  # Control!B67 threshold
+# FIX-14c: the Base g₀'s implied reinvestment (g/ROIC) may exceed the
+# historical median RR by 25% before the franchise-capacity note fires
+GROWTH_RR_TOLERANCE = 1.25
 # House-overridable stress shocks (FIX-7); names kept for back-compat.
 STANDARD_FCFF_SHOCK = config.STANDARD_FCFF_SHOCK  # Phase5_Verdict!B22
 BANK_NIM_SHOCK = config.BANK_NIM_SHOCK            # master §5.1
@@ -131,6 +135,20 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
         else:
             notes.append("Track B ex-SBC base non-positive — SBC exceeds FCFF; "
                          "normalize manually (house §2b)")
+        # FIX-14c growth–reinvestment coherence: what the Base growth assumes
+        # (implied RR = g₀ / ROIC) vs what history actually reinvested.
+        # Warning note only — the Control!B67 coherence field is untouched.
+        med_roic, med_rr = median_roic(d), reinvestment_rate(d)
+        if (base.g0 is not None and med_roic is not None and med_roic > 0
+                and med_rr is not None and med_rr > 0):
+            implied_rr = base.g0 / med_roic
+            if implied_rr > GROWTH_RR_TOLERANCE * med_rr:
+                notes.append(
+                    f"growth–reinvestment: Base g₀ {base.g0:.1%} implies "
+                    f"reinvestment ≈ {implied_rr:.0%} of NOPAT vs historical "
+                    f"median {med_rr:.0%} (×{implied_rr / med_rr:.1f}) — "
+                    "franchise capacity unsupported; justify or cut g₀ "
+                    "(master §4 discipline)")
 
     elif method == "ri" and rate is not None and shares:
         bv0 = res.base_value
