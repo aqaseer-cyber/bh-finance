@@ -518,6 +518,28 @@ def test_rename_at_boundary_never_splices_without_an_alias():
     assert aliased.breaks == []                     # identity was declared
 
 
+def test_alias_collapse_within_one_instance_keeps_first_and_warns():
+    """Bundle hardening: an alias folding two members that BOTH appear in
+    one instance on the same span must not silently overwrite — keep the
+    first, warn beyond 1% (the qname guard's semantics), so the alias map
+    can be corrected instead of quietly rewriting history."""
+    xml = _annual_instance({"meli:CommerceMember": {2024: 100e6},
+                            "meli:CommerceServicesMember": {2024: 35e6}})
+    seg = build_segment_data([("10-K k24 (FY2024)", xml)],
+                             aliases={"Commerce Services": "Commerce"})
+    ln = next(l for l in seg.lines
+              if l.member == "Commerce" and l.group == "Revenue")
+    assert {e.year: v for s, e, v in ln.entries} == {2024: 100e6}  # first kept
+    assert "alias collapse disagreement for Commerce" in seg.status
+    assert "check the [segment_aliases] map" in seg.status
+    # an agreeing collapse (≤1%) merges without the warning
+    xml2 = _annual_instance({"meli:CommerceMember": {2024: 100e6},
+                             "meli:MarketplaceMember": {2024: 100e6}})
+    seg2 = build_segment_data([("10-K k24 (FY2024)", xml2)],
+                              aliases={"Marketplace": "Commerce"})
+    assert "alias collapse disagreement" not in seg2.status
+
+
 def test_coverage_counts_and_malformed_instance_skipped():
     good1 = _annual_instance({"meli:CommerceMember": {2024: 100e6}})
     good2 = _annual_instance({"meli:CommerceMember": {2025: 120e6}})

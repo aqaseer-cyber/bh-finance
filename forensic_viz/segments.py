@@ -309,12 +309,30 @@ def _alias_parsed(parsed: ParsedInstance,
     for (axis, member), qns in parsed.member_qnames.items():
         mkey = (axis, aliases.get(member, member))
         out.member_qnames.setdefault(mkey, set()).update(qns)
+
+    def _collapse(bucket, key, spans, shown):
+        """An alias collapsing two SAME-instance members must not become a
+        silent third override path: keep the first value per span; a > 1%
+        disagreement warns (mirrors the FIX-13c qname guard) — the alias
+        map probably folds members that are not actually one entity."""
+        tgt = bucket.setdefault(key, {})
+        for span, val in spans.items():
+            old = tgt.get(span)
+            if old is None:
+                tgt[span] = val
+            elif abs(old - val) > 0.01 * max(abs(old), abs(val), 1e-9):
+                out.conflicts.append(
+                    f"alias collapse disagreement for {shown} on "
+                    f"{span[1].isoformat()} ({old:,.0f} vs {val:,.0f}) — "
+                    "kept the first; check the [segment_aliases] map")
+
     for (axis, member, concept), spans in parsed.singles.items():
-        key = (axis, aliases.get(member, member), concept)
-        out.singles.setdefault(key, {}).update(spans)
+        canon = aliases.get(member, member)
+        _collapse(out.singles, (axis, canon, concept), spans, canon)
     for (ax1, m1, ax2, m2, concept), spans in parsed.crosses.items():
-        key = (ax1, aliases.get(m1, m1), ax2, aliases.get(m2, m2), concept)
-        out.crosses.setdefault(key, {}).update(spans)
+        c1, c2 = aliases.get(m1, m1), aliases.get(m2, m2)
+        _collapse(out.crosses, (ax1, c1, ax2, c2, concept), spans,
+                  f"{c1} × {c2}")
     return out
 
 
