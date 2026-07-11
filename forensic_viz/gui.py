@@ -28,6 +28,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from . import palette as P
+from .anchors import anchor_readout, build_growth_anchors
 from .cache import Cache
 from .dashboard import (
     FIG_W, render_dashboard, render_health_report, render_unit_economics,
@@ -1309,25 +1310,22 @@ class _ValuationDialog(tk.Toplevel):
                 ttk.Entry(self.grid_frame, textvariable=var, width=12).grid(
                     row=r, column=col, padx=4, pady=3)
 
-        # Analyst-consensus prefill (dcf): Bear <- low, Base <- avg, Bull <- high
-        est = self.data.analyst_estimates
-        if method == "dcf" and est:
-            fills = (("Bear", est.get("g_low")), ("Base", est.get("g_avg")),
-                     ("Bull", est.get("g_high")))
-            for case, g in fills:
+        # FIX-14a growth-anchor prefill (dcf): consensus is the Bull decade
+        # case, Base = min(consensus, 5y CAGR, ROIC×RR), Bear = ½ Base —
+        # analyst dispersion no longer maps to scenarios. Every seed stays
+        # editable; terminal g keeps the 2.0% house default.
+        anchors = build_growth_anchors(self.data) if method == "dcf" else None
+        if anchors is not None and anchors.seeds:
+            for case in CASE_NAMES:
+                g = anchors.seeds.get(case)
                 if g is not None:
                     self.cell_vars[(case, "g0")].set(f"{g * 100:.1f}")
                 self.cell_vars[(case, "g_term")].set("2.0")
-            n = est.get("n_analysts")
-            self.estimates_lbl.configure(
-                text=f"g₀ pre-filled from analyst consensus revenue growth "
-                     f"({est['source']}, {est['period']}"
-                     + (f", {n} analysts" if n else "") +
-                     "); terminal g pre-filled at the 2.0% house default. Edit freely.")
+            self.estimates_lbl.configure(text=anchor_readout(anchors))
         elif method == "dcf":
             self.estimates_lbl.configure(
-                text="No analyst estimates available for this ticker — enter "
-                     "your own growth cases.")
+                text="No growth anchors available (no analyst estimates and "
+                     "too little history) — enter your own growth cases.")
         else:
             self.estimates_lbl.configure(text="")
 

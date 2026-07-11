@@ -48,8 +48,9 @@ class DashboardData:
     demo: bool = False
     display_years: int = config.DISPLAY_YEARS
 
-    # Analyst consensus growth estimates (Yahoo), prefill for the valuation
-    # dialog: Base <- avg, Bear <- low, Bull <- high. Always editable.
+    # Analyst consensus growth estimates (Yahoo) — one anchor on the
+    # FIX-14a growth ladder (anchors.py): the mean seeds Bull, the low/high
+    # dispersion is display-only. Always editable.
     analyst_estimates: Optional[dict] = None
 
     # Untrimmed as-filed fundamentals (incl. the raw companyfacts payload),

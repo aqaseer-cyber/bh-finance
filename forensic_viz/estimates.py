@@ -4,15 +4,18 @@ Source: Yahoo Finance `earningsTrend` (quoteSummary), which carries the
 sell-side revenue estimates for the current ("0y") and next ("+1y") fiscal
 years with avg / low / high and the analyst count. Forward growth rates:
 
-    g_avg  = +1y avg  / 0y avg − 1      (Base-case prefill)
-    g_low  = +1y low  / 0y avg − 1      (Bear-case prefill)
-    g_high = +1y high / 0y avg − 1      (Bull-case prefill)
+    g_avg  = +1y avg  / 0y avg − 1      (consensus anchor — Bull seed)
+    g_low  = +1y low  / 0y avg − 1      (display-only analyst range)
+    g_high = +1y high / 0y avg − 1      (display-only analyst range)
 
-These are *revenue* growth estimates — a labeled proxy for the FCFF stage-1
-g0. They only pre-fill the dialog; every value stays editable, and the CLI
-uses them solely when a case flag is omitted. Yahoo's quoteSummary needs a
-session cookie + crumb; both are fetched keylessly. Failure is silent (the
-dialog just has no prefill) — estimates are convenience, never a dependency.
+These are *revenue* growth estimates. Since FIX-14a they feed the growth
+anchor ladder (`anchors.py`): the consensus mean seeds Bull — the
+optimistic decade case once a one-year estimate drives a ten-year fade —
+and the low/high dispersion is display-only, never mapped to scenarios.
+Every prefill stays editable, and the CLI consumes seeds solely when a
+case flag is omitted. Yahoo's quoteSummary needs a session cookie + crumb;
+both are fetched keylessly. Failure is silent (the dialog just loses one
+anchor) — estimates are convenience, never a dependency.
 """
 from __future__ import annotations
 

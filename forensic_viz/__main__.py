@@ -9,8 +9,8 @@
   python -m forensic_viz AAPL --png --csv    -> per-page PNGs + audit CSVs
 
   Intrinsic value (Bear/Base/Bull). WACC auto-builds; for DCF, omitted cases
-  pre-fill from analyst consensus (Bear <- low, Base <- avg, Bull <- high,
-  terminal g 2.0%):
+  seed from the growth-anchor ladder (Bull <- consensus, Base <- min of
+  consensus / 5y CAGR / ROIC x RR, Bear <- half Base; terminal g 2.0%):
   python -m forensic_viz AAPL --value dcf --rating Buy
   python -m forensic_viz AAPL --value dcf --bear 0.02,0.02 --base 0.05,0.025 --bull 0.09,0.03
     case syntax per method:
@@ -78,20 +78,26 @@ def _build_valuation_result(data, args):
     method = args.value.lower()
     raws = {"Bear": args.bear, "Base": args.base, "Bull": args.bull}
     cases = {}
-    est = data.analyst_estimates or {}
-    est_map = {"Bear": est.get("g_low"), "Base": est.get("g_avg"),
-               "Bull": est.get("g_high")}
+    # FIX-14a: omitted dcf cases seed from the growth-anchor ladder, not
+    # from analyst dispersion (Bull ← consensus, Base ← min anchor,
+    # Bear ← ½ Base); terminal g keeps the 2.0% house default.
+    from .anchors import anchor_readout, build_growth_anchors
+    anchors = build_growth_anchors(data)
+    if method == "dcf" and anchors.seeds and not all(raws.values()):
+        print(f"  {anchor_readout(anchors)}")
     for name in CASE_NAMES:
         if raws[name]:
             cases[name] = _parse_case(method, raws[name])
-        elif method == "dcf" and est_map[name] is not None:
+        elif method == "dcf" and anchors.seeds.get(name) is not None:
             from .valuation import CaseInputs
-            cases[name] = CaseInputs(g0=est_map[name], g_term=0.02)
-            print(f"  {name}: g0 {est_map[name] * 100:.1f}% from analyst consensus "
-                  f"({est.get('source', '')}), terminal g 2.0% house default")
+            g = anchors.seeds[name]
+            cases[name] = CaseInputs(g0=g, g_term=0.02)
+            print(f"  {name}: g0 {g * 100:.1f}% "
+                  f"({anchors.details.get(f'seed:{name}', 'growth anchor')}), "
+                  "terminal g 2.0% house default")
         else:
             raise ValuationError(
-                f"provide --{name.lower()} (no analyst estimate available "
+                f"provide --{name.lower()} (no growth anchor available "
                 "to pre-fill it)")
     inputs = ValuationInputs(
         method=method, cases=cases,
@@ -149,9 +155,11 @@ def main(argv=None) -> int:
                      help="override base: FCFF $ (dcf) or BV0 $ (ri)")
     val.add_argument("--ex-sbc", action="store_true",
                      help="dcf base on ex-SBC FCF (house §2b, Track B)")
-    val.add_argument("--bear", help="Bear case (dcf: pre-fills from analyst LOW estimate)")
-    val.add_argument("--base", help="Base case (dcf: pre-fills from analyst AVERAGE estimate)")
-    val.add_argument("--bull", help="Bull case (dcf: pre-fills from analyst HIGH estimate)")
+    val.add_argument("--bear", help="Bear case (dcf: seeds at half the Base anchor)")
+    val.add_argument("--base", help="Base case (dcf: seeds from the most "
+                                    "conservative growth anchor)")
+    val.add_argument("--bull", help="Bull case (dcf: seeds from the consensus "
+                                    "mean — the optimistic decade case)")
     val.add_argument("--rating", choices=["Strong Buy", "Buy", "Hold", "Sell"],
                      help="institutional rating (§5.3, judgment) — coherence-checked only")
     val.add_argument("--optionality",
