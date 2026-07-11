@@ -64,7 +64,18 @@ Then open the exported model and record below:
 | Wall time / cache growth | _pending — owner to record on next cold pull_ |
 | Skipped / unmatched | none skipped (11/11); status line already auto-merged Evidence Com And Video / Software And Sensors / Softwareand Sensors / Taser Weapons qname pairs (2 qnames each) |
 
-### GSL — PENDING
+### GSL — verified 2026-07-11 (export `GSL_financial_model_20260711.xlsx`)
+
+**Coverage-check outcome: the honesty clause, working.** GSL is a foreign
+private issuer filing **20-F / 6-K**, not 10-K/10-Q: the 10-K-family
+instance enumerator finds nothing, so the export carries NO segments
+section and no as-filed statement sheets, with the honest footnote
+"Segments: no dimensional segment data in this workbook — filing XBRL
+instances unreachable (offline, or an unexpected EDGAR layout for this
+filer)." — blanks stated, never faked. Annual fundamentals populate fully
+(FY2015–FY2025 from the US-GAAP 20-F facts); the interim spine is
+semi-annual (6-K half-years, rendered as Q2/Q4 columns). 20-F instance
+support would be its own FIX if ever wanted.
 
 | Item | Result |
 |---|---|

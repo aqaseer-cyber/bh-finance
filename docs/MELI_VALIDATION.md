@@ -144,6 +144,18 @@ embedded-finance name carries the credit book in CFO; anchors discipline
 the seed, they do not fix a track choice — SOTP with credit de-consolidated
 remains the analyst's call.
 
+### Observed FIX-14 edge case (GSL, 2026-07-11 — design note, not a bug)
+
+With a **negative consensus** (GSL: −6.0%, n=3), the ladder seeds
+Base = consensus (binding) = −6.0% while Bear = max(0, ½ × Base) floors
+at **0.0% — above Base**, and Bull = consensus = −6.0% ties Base. The
+per-spec rules were designed for growth names; for shrinking names the
+seed ordering inverts and `build_valuation`'s existing "Bear FV exceeds
+Bull FV" warning fires if computed as-is. Every seed stays editable — the
+analyst sets the real cases. If the owner wants the floor changed
+(e.g. Bear = min(Base, max(0, ½ × Base))), that is a one-line spec
+amendment for a future FIX.
+
 ## Record
 
 Fill after each live run (append rows; keep failures with their diagnosis):
