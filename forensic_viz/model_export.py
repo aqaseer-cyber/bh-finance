@@ -45,12 +45,16 @@ from .edgar import (
     parse_quarterly_facts,
 )
 from .metrics import DashboardData, fy_label
+# FIX-15a: the quarter spine and discrete/YTD/LTM derivations moved verbatim
+# to quarters.py (shared with the Explore TTM series); this suite is their
+# behavior-freeze regression
+from .quarters import (
+    _SPAN_TOL, _discrete, _find_span, _ltm_flow, _match_instant,
+    quarter_label, quarter_spine,
+)
 from .segments import partial_axis_disclosure
 
 _MM = 1e6
-_SPAN_TOL = 14    # days tolerance matching a filed span boundary
-_YEAR_TOL = 21    # days tolerance matching the year-ago span
-_SHOW_QUARTERS = 4
 
 # FIX-12h number formats by row kind (zero prints as a dash, negatives in
 # parens for money/per-share; % rows carry an explicit sign) — defined once
@@ -136,166 +140,6 @@ class ModelRow:
     # disagree — value suppressed), "none"
     ltm_basis: str = "none"
     ltm_date: Optional[dt.date] = None       # balance date (instant rows)
-
-
-# ---------------------------------------------------------------- span math
-
-def _find_span(entries, start: dt.date, end: dt.date,
-               tol: int = _SPAN_TOL) -> Optional[float]:
-    for s, e, v in entries:
-        if abs((e - end).days) <= tol and abs((s - start).days) <= tol:
-            return v
-    return None
-
-
-def _find_3m(entries, qe: dt.date) -> Optional[float]:
-    for s, e, v in entries:
-        if abs((e - qe).days) <= _SPAN_TOL and 80 <= (e - s).days <= 100:
-            return v
-    return None
-
-
-def _match_instant(obs: Dict[dt.date, float], target: dt.date,
-                   tol: int = 7) -> Optional[float]:
-    if target in obs:
-        return obs[target]
-    for d, v in obs.items():
-        if abs((d - target).days) <= tol:
-            return v
-    return None
-
-
-def _fy_bounds(qe: dt.date, fy_ends: List[dt.date]
-               ) -> Tuple[Optional[dt.date], Optional[dt.date]]:
-    """(fiscal-year start, containing FY end) for the quarter ending qe."""
-    prev = None
-    containing = None
-    for fe in fy_ends:  # ascending
-        if fe < qe:
-            prev = fe
-        elif containing is None and (fe - qe).days < 400:
-            containing = fe
-    start = prev + dt.timedelta(days=1) if prev else None
-    return start, containing
-
-
-def quarter_spine(qdata: QuarterlyFundamentals,
-                  fy_ends: List[dt.date]) -> List[dt.date]:
-    """Trailing fiscal-quarter ends (newest last), FY boundaries included.
-
-    Returns up to _SHOW_QUARTERS ends; empty when the filer has no
-    interim data at all.
-    """
-    interim = set()
-    for entries in qdata.duration.values():
-        for s, e, _ in entries:
-            if 60 <= (e - s).days <= 300:  # sub-annual spans only
-                interim.add(e)
-    if not interim:
-        return []
-    latest = max(max(interim), fy_ends[-1]) if fy_ends else max(interim)
-    candidates = sorted(interim | set(fy_ends))
-    ends: List[dt.date] = []
-    for e in candidates:  # fold ends a few days apart into one quarter
-        if e > latest:
-            continue
-        if ends and (e - ends[-1]).days <= 10:
-            ends[-1] = max(ends[-1], e)
-        else:
-            ends.append(e)
-    # quarters need a known fiscal-year start for labeling/derivation
-    ends = [e for e in ends if _fy_bounds(e, fy_ends)[0] is not None]
-    return ends[-_SHOW_QUARTERS:]
-
-
-def quarter_label(qe: dt.date, fy_ends: List[dt.date]) -> str:
-    fy_start, containing = _fy_bounds(qe, fy_ends)
-    idx = max(1, min(4, round((qe - fy_start).days / 91.3)))
-    # year suffix from the dashboard's fiscal-year convention (fy_label),
-    # so off-calendar filers label consistently across the app
-    ref = containing if containing is not None \
-        else fy_ends[-1] + dt.timedelta(days=365)
-    return f"Q{idx}'{fy_label(ref)[-2:]}"
-
-
-def _ytd(entries, fy_start: dt.date, end: dt.date) -> Optional[float]:
-    return _find_span(entries, fy_start, end)
-
-
-def _ytd9m(entries, fy_start: dt.date, target: dt.date) -> Optional[float]:
-    """9-month YTD for Q4 derivation: filed span, else ΣQ1..Q3 discretes."""
-    v = _ytd(entries, fy_start, target)
-    if v is not None:
-        return v
-    total = 0.0
-    for back in range(3):
-        q = _find_3m(entries, target - dt.timedelta(days=round(back * 91.3)))
-        if q is None:
-            return None
-        total += q
-    return total
-
-
-def _discrete(entries, qe: dt.date, fy_ends: List[dt.date],
-              annual_map: Dict[dt.date, Optional[float]],
-              allow_fy_diff: bool = True) -> Optional[float]:
-    """One fiscal quarter's flow, by whatever the filings support."""
-    v = _find_3m(entries, qe)
-    if v is not None:
-        return v
-    fy_start, containing = _fy_bounds(qe, fy_ends)
-    if fy_start is None:
-        return None
-    if (qe - fy_start).days <= 100:  # fiscal Q1: YTD is the quarter
-        return _ytd(entries, fy_start, qe)
-    prev_target = qe - dt.timedelta(days=91)
-    if containing is not None and abs((containing - qe).days) <= 7:
-        if not allow_fy_diff:  # fiscal Q4 = FY − 9M YTD
-            return None
-        fy_val = annual_map.get(containing)
-        ytd9 = _ytd9m(entries, fy_start, prev_target)
-        if fy_val is not None and ytd9 is not None:
-            return fy_val - ytd9
-        return None
-    y2 = _ytd(entries, fy_start, qe)
-    y1 = _ytd(entries, fy_start, prev_target)
-    if y2 is not None and y1 is not None:
-        return y2 - y1
-    return None
-
-
-def _ltm_flow(fy_val: Optional[float], entries, fy_ends: List[dt.date],
-              q_ends: List[dt.date]) -> Tuple[Optional[float], str]:
-    """LTM = last FY + latest filed fiscal YTD − year-ago comparative YTD.
-
-    Returns (value, basis): basis "ltm" for a true trailing twelve months,
-    "fy" when the value fell back to the completed fiscal year, "none"
-    when nothing could be computed (FIX-11c provenance).
-    """
-    if fy_val is None:
-        return None, "none"
-    if not q_ends:
-        return fy_val, "fy"  # trailing twelve months == the completed year
-    last_fy_end = fy_ends[-1]
-    fy_start = last_fy_end + dt.timedelta(days=1)
-    prior_fy_start = (fy_ends[-2] + dt.timedelta(days=1)
-                      if len(fy_ends) >= 2 else None)
-    for qe in reversed(q_ends):  # latest period end with a usable YTD
-        if abs((qe - last_fy_end).days) <= 7:
-            return fy_val, "fy"  # the latest period IS the fiscal year
-        if qe < last_fy_end:
-            continue  # stale interim inside an already-reported year
-        ytd = _ytd(entries, fy_start, qe)
-        if ytd is None:
-            continue
-        if prior_fy_start is None:
-            return None, "none"
-        prior = _find_span(entries, prior_fy_start,
-                           qe - dt.timedelta(days=365), tol=_YEAR_TOL)
-        if prior is None:
-            return None, "none"
-        return fy_val + ytd - prior, "ltm"
-    return None, "none"
 
 
 def _latest(vals: List[Optional[float]]) -> Optional[float]:
