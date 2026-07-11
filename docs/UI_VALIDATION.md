@@ -1,4 +1,4 @@
-# UI validation checklist (FIX-12) — owner-run, Windows
+# UI validation checklist (FIX-12 / FIX-15) — owner-run, Windows
 
 CI has no display and the development container has no Windows, so the
 presentation layer's final acceptance is this owner-run pass. Run it on a
@@ -43,9 +43,9 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 ## Menu, Settings & persistence (FIX-12e)
 
 - [ ] Menu bar: File (Save PDF / Financial model / Fill workbook / Exit),
-      Tools (Interactive report / Compare… / Settings…), Help (About /
-      Open cache folder / Open settings folder). Data items are greyed out
-      until an Analyze completes and while busy.
+      Tools (Compare… / Settings…), Help (About / Open cache folder /
+      Open settings folder). Data items are greyed out until an Analyze
+      completes and while busy.
 - [ ] Fresh profile (delete `%LOCALAPPDATA%\ForensicStockViz\settings.json`):
       startup shows the SEC warning and a **one-time** yes/no offer to open
       Settings; it never asks again on later launches.
@@ -90,6 +90,20 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 - [ ] Section headers read `INCOME STATEMENT ($mm; EPS in $, shares in mm)`,
       `BALANCE SHEET (period end, $mm)`, `CASH FLOW STATEMENT ($mm)`.
 
+## Explore (FIX-15)
+
+- [ ] Every card's mode dropdown redraws **that card only**, instantly,
+      and the redrawn chart is correct (spot-check P/S (TTM) against a
+      hand ratio: price × diluted shares / TTM revenue at one date).
+- [ ] Sandbox sliders track smoothly at 150% scaling (no lag while
+      dragging; live % labels follow) and, reset to the Base case, the
+      outputs match the valuation page.
+- [ ] The ratio chart **masks** a known negative-EPS stretch as a gap for
+      a name that has one (no line through the loss period, no
+      interpolation).
+- [ ] Drawdown and Both (stacked) modes render sharp after maximize (the
+      resize debounce re-renders cards at the new DPI).
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -100,5 +114,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Watchlist | | |
 | Dialogs & flow | | |
 | Model export | | |
+| Explore | | |
 
 Date / machine / scaling: ______________________

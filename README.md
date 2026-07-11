@@ -65,6 +65,19 @@ sage `#6D9773` on a cream surface; brick red is reserved for negative/stale
 status, never a series colour — see `forensic_viz/palette.py` for the
 validator record).
 
+**Explore.** A screen-only tab of live chart cards, each with a mode
+dropdown that redraws just that card: **price** (Share price / Drawdown /
+Both stacked), **valuation ratios** — P/E, P/S and P/FCF on **TTM
+denominators** built with the same quarterly derivation as the export
+(Q4 = FY − 9-month YTD; a quarter with any missing leg is skipped, never
+interpolated) — and **revenue + margin** overlays. Honest-gap rule: a
+ratio point whose denominator is ≤ 0 becomes a gap in the line (masked,
+not interpolated), and a card whose inputs are missing says so in one
+muted line instead of drawing an empty frame. Trailing **PEG is
+deliberately absent**: it sign-flips through zero growth, and a forward
+PEG is a point, not a series. Explore never exports — the report pages
+stay static print artifacts.
+
 **DCF sandbox (native).** The Explore tab carries a **live DCF card** for
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
 FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g
