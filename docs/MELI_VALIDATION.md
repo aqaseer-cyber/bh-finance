@@ -35,22 +35,20 @@ gate order (FIX-11 first — it is the merge gate for FIX-13).
 | Capex (all four quarter cells populated + gap-fill footnote) | 1,343 | 860 | 1,343 / 860 · quarters 287/357/427/271 · gap-fill note present | PASS |
 | Interest Expense (new candidate) | 160 | 165 | empty FY2018+ (winner `InterestExpenseDebt`, FY2015–17 only) | **FAIL — open** |
 
-**Interest-expense diagnosis (2026-07-11):** no us-gaap candidate carries
-FY2018+ values in companyfacts (the gap-filler found nothing to fill —
-the tags audit shows a bare `InterestExpenseDebt`), while the 10-K
-instance verifiably carries 160/165. The likely filing fact: MELI tags
-recent interest expense under a **company extension element** (`meli:`
-namespace), which the us-gaap-only parser never sees. Consequence today:
-FCFF falls back to the levered-FCF proxy with the standing warning —
-conservative and labeled, not silent. To confirm the element name, run on
-a connected machine:
-
-```powershell
-python -c "import json,urllib.request; r=urllib.request.Request('https://data.sec.gov/api/xbrl/companyfacts/CIK0001099590.json',headers={'User-Agent':'Name you@example.com'}); d=json.load(urllib.request.urlopen(r)); print(sorted((ns,k) for ns,t in d['facts'].items() for k in t if 'nterest' in k))"
-```
-
-and paste the output — the fix (extension-namespace fallback for
-interest) ships as its own FIX once the tag is confirmed.
+**Interest-expense diagnosis (2026-07-11, updated):** the owner's
+companyfacts probe shows plain `us-gaap:InterestExpense` EXISTS (the
+interim gap-filler already consumes its 10-Q spans) and **no** `meli:`
+extension with "interest" in its name — the first extension hypothesis is
+refuted. Remaining candidates: (a) `InterestExpense` carries interim
+spans only and the 10-K's annual "Interest expense and other financial
+charges" line rides an extension element named without "interest"
+(`Financial…`); or (b) annual 10-K observations exist under
+`InterestExpense` and the annual filter (10-K form + ~365-day span) drops
+them — an app bug, reproducible offline. A second probe (extension
+elements filtered to finance/expense/charge names + recent
+`InterestExpense` observations with forms/spans) decides it; the fix
+ships once pinned. Consequence today: FCFF falls back to the levered-FCF
+proxy with the standing warning — conservative and labeled, not silent.
 
 ### Additional FIX-11 pass criteria
 
