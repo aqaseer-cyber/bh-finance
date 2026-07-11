@@ -92,16 +92,16 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 
 ## Explore (FIX-15)
 
-- [ ] Every card's mode dropdown redraws **that card only**, instantly,
+- [x] Every card's mode dropdown redraws **that card only**, instantly,
       and the redrawn chart is correct (spot-check P/S (TTM) against a
       hand ratio: price × diluted shares / TTM revenue at one date).
-- [ ] Sandbox sliders track smoothly at 150% scaling (no lag while
+- [x] Sandbox sliders track smoothly at 150% scaling (no lag while
       dragging; live % labels follow) and, reset to the Base case, the
       outputs match the valuation page.
-- [ ] The ratio chart **masks** a known negative-EPS stretch as a gap for
+- [x] The ratio chart **masks** a known negative-EPS stretch as a gap for
       a name that has one (no line through the loss period, no
       interpolation).
-- [ ] Drawdown and Both (stacked) modes render sharp after maximize (the
+- [x] Drawdown and Both (stacked) modes render sharp after maximize (the
       resize debounce re-renders cards at the new DPI).
 
 ## Sign-off
@@ -114,6 +114,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Watchlist | | |
 | Dialogs & flow | | |
 | Model export | | |
-| Explore | | |
+| Explore | Pass | owner-run 2026-07-11, Windows @150% |
 
 Date / machine / scaling: ______________________
