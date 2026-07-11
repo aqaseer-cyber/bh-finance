@@ -1148,8 +1148,9 @@ _METHOD_FIELDS = {
 }
 _METHOD_HELP = {
     "dcf": "FCFF 2-stage DCF, 10-year linear fade. WACC and the g₀ cases are "
-           "pre-filled (auto WACC build; analyst consensus growth: Bear ← low, "
-           "Base ← average, Bull ← high) — every value is editable.",
+           "pre-filled (auto WACC build; growth-anchor ladder: Bull ← "
+           "consensus, Base ← min anchor, Bear ← ½ Base) — every value is "
+           "editable.",
     "ri": "Residual income at r_e (pre-filled from the automated build). BV₀ "
           "defaults to latest reported equity; enter each case's sustainable "
           "ROE and book-growth path.",
