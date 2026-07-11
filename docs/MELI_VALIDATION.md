@@ -111,7 +111,7 @@ identical to the dialog's readout) **verbatim**:
 | Name | Anchor readout (verbatim) |
 |---|---|
 | MELI | anchors — consensus +26.6% (Yahoo, n=24, Rung 4) · 5y rev CAGR +48.7% · ROIC×RR +6.4% → Base = fundamental (binding) · analyst range +17.4%…+41.0% (dialog screenshot, 2026-07-11) |
-| PYPL | _pending_ |
+| PYPL | anchors — consensus +4.3% (Yahoo, n=42, Rung 4) · 5y rev CAGR +9.1% · ROIC×RR +0.0% → Base = fundamental (binding) · analyst range +1.1%…+10.6% (dialog screenshot, 2026-07-11; seeds Bear 0.0 / Base 0.0 / Bull 4.3) |
 
 Pass criteria:
 
@@ -131,8 +131,15 @@ Pass criteria:
       renders `partial disclosure axis — tie suppressed (1 member(s), 0%
       of consolidated)` on both the Model and Segments sheets — **no
       −99.8% red row** (US-only 35 / 51 $mm; export 2026-07-11).
-- [ ] PYPL control: low capex intensity ⇒ capex-normalized base ≈
-      as-reported base and no peak/trough flag unless genuinely deviant.
+- [x] PYPL control: low capex intensity ⇒ capex-normalized base ≈
+      as-reported base and no peak/trough flag unless genuinely deviant:
+      `base — as-reported $5.9B · capex-normalized $5.6B (5y median
+      intensity 2.6%)`, no flag (2026-07-11). Note: PYPL's fundamental
+      anchor is 0.0% — the per-year reinvestment rate (capex + ΔNWC − D&A)
+      clamps at the zero floor for a buyback-heavy low-capex name, so the
+      ladder's Base seed is the conservative floor; the readout says so
+      and every value stays editable (the analyst overrides, the
+      automation referees).
 
 Standing analytical caveat (also in the README): standard-track FCFF on an
 embedded-finance name carries the credit book in CFO; anchors discipline
@@ -147,4 +154,4 @@ Fill after each live run (append rows; keep failures with their diagnosis):
 |---|---|---|---|---|
 | 2026-07-11 | owner (export verified by Claude) | fix-15 @ ddf6ddd | FIX-11f | 8/9 PASS + criteria 3/4; interest-expense row FAIL (suspected meli: extension tag — open) |
 | 2026-07-11 | owner (export verified by Claude) | fix-15 @ ddf6ddd | FIX-13f | 10/11 PASS (row 6 count 340 vs 100, explained by 11-instance history); row 11 placeholder-UA run pending |
-| 2026-07-11 | owner (dialog + export) | fix-15 @ ddf6ddd | FIX-14 | anchors readout + capex line + FIX-14d suppression recorded; verdict-note state and PYPL control pending |
+| 2026-07-11 | owner (dialog + export) | fix-15 @ ddf6ddd | FIX-14 | anchors readout + capex line + FIX-14d suppression recorded; PYPL control PASS; verdict-note state pending |
