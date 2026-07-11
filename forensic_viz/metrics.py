@@ -551,6 +551,28 @@ def apply_track(data: DashboardData, selection: str) -> None:
     data.is_financial_sector = data.track in ("bank", "insurance")
 
 
+def refresh_interest_metrics(f: AnnualFundamentals,
+                             data: DashboardData) -> None:
+    """Recompute the interest-dependent displayed series after an
+    instance rescue patched ``f.series["interest_expense"]`` — the same
+    FCFF = FCF + after-tax-interest arithmetic as the original build
+    (master §4.0), so the auto valuation base un-levers correctly."""
+    interest_all = f.series.get("interest_expense") or []
+    n_all = len(f.fy_ends)
+    off = n_all - len(data.fy_ends)
+    eff_tax = (data.effective_tax_rate
+               if data.effective_tax_rate is not None else 0.21)
+    for i in range(off, n_all):
+        j = i - off
+        interest = interest_all[i] if i < len(interest_all) else None
+        data.interest_expense[j] = interest
+        fcf = data.fcf[j]
+        if fcf is not None and interest is not None:
+            data.fcff[j] = fcf + interest * (1 - eff_tax)
+        else:
+            data.fcff[j] = fcf
+
+
 def set_adjusted_ni(data: DashboardData, adjusted: Optional[float]) -> None:
     """Fluff filter (master §3.1): burden = |Adjusted − GAAP| / |GAAP|."""
     data.adjusted_ni = adjusted

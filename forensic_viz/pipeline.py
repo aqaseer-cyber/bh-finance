@@ -99,6 +99,22 @@ def build_dashboard_data(
                 status=f"segment fetch failed: {type(exc).__name__}: {exc}")
     except Exception:
         data.segments = None  # segments module itself unavailable
+    # Annual interest rescue: an extension-tagged IS line (MELI's
+    # "Interest expense and other financial charges") never reaches the
+    # companyfacts API (standard taxonomies only). Rescue the missing
+    # years from the just-cached filing instances' consolidated facts and
+    # refresh FCFF. Enrichment only — failure leaves the labeled
+    # levered-FCF proxy exactly as before.
+    try:
+        from .metrics import refresh_interest_metrics
+        from .segments import rescue_annual_series
+        if rescue_annual_series(fundamentals, "interest_expense",
+                                cache=cache):
+            refresh_interest_metrics(fundamentals, data)
+            data.health_notes.append(fundamentals.selection_notes[-1])
+    except Exception:
+        pass
+
     seg = data.segments
     if seg is not None and seg.n_segments >= 2:
         ax = seg.axes()[0]

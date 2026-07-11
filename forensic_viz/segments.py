@@ -560,6 +560,106 @@ def build_segment_data(instances: List[Tuple[str, str]],  # (label, xml)
                        coverage=coverage)
 
 
+def undimensioned_annual_facts(
+        xml_text: str, local_names) -> Dict[Span, float]:
+    """Consolidated (dimension-free) full-year USD facts whose element
+    LOCAL NAME is in `local_names` — namespace-agnostic, so a company
+    extension element (e.g. meli:InterestExpenseAndOtherFinancialCharges)
+    matches by the same name as its us-gaap candidate. The companyfacts
+    API serves standard taxonomies only, so an extension-tagged income-
+    statement line exists nowhere BUT the filing instance."""
+    root = ET.fromstring(xml_text)
+    usd_units = set()
+    for unit in root.iter():
+        if _local(unit.tag) != "unit":
+            continue
+        measures = [m.text or "" for m in unit.iter()
+                    if _local(m.tag) == "measure"]
+        if any(_local(m) == "USD" for m in measures):
+            usd_units.add(unit.get("id", ""))
+    spans: Dict[str, Span] = {}
+    for ctx in root.iter():
+        if _local(ctx.tag) != "context":
+            continue
+        start = end = None
+        has_dims = False
+        for el in ctx.iter():
+            ln = _local(el.tag)
+            if ln == "startDate":
+                start = _parse_date(el.text)
+            elif ln == "endDate":
+                end = _parse_date(el.text)
+            elif ln in ("explicitMember", "typedMember"):
+                has_dims = True
+        if has_dims or start is None or end is None:
+            continue
+        if not 330 <= (end - start).days <= 400:  # full fiscal years only
+            continue
+        spans[ctx.get("id", "")] = (start, end)
+    wanted = set(local_names)
+    out: Dict[Span, float] = {}
+    for el in root.iter():
+        if _local(el.tag) not in wanted:
+            continue
+        span = spans.get(el.get("contextRef", ""))
+        if span is None or el.get("unitRef", "") not in usd_units:
+            continue
+        try:
+            out[span] = float((el.text or "").strip())
+        except ValueError:
+            continue
+    return out
+
+
+def rescue_annual_series(annual: AnnualFundamentals, concept: str,
+                         cache: Optional[Cache] = None) -> List[int]:
+    """Fill None years of `annual.series[concept]` from the consolidated
+    facts of the (already-cached) filing instances; later filings win per
+    span (latest-restated). Returns the fiscal years filled. Rides the
+    same fetch/UA gate as segments; any failure returns [] — enrichment
+    only. Never overwrites a companyfacts value."""
+    series = list(annual.series.get(concept) or
+                  [None] * len(annual.fy_ends))
+    if not annual.fy_ends or all(v is not None for v in series):
+        return []
+    try:
+        instances, _skipped = fetch_segment_instances(annual, cache=cache)
+    except Exception:
+        return []
+    if not instances:
+        return []
+    local_names = DURATION_TAGS.get(concept, [])
+    by_span: Dict[Span, float] = {}
+    for _label, xml in instances:  # oldest→newest: later filings overwrite
+        try:
+            by_span.update(undimensioned_annual_facts(xml, local_names))
+        except ET.ParseError:
+            continue
+    filled: List[int] = []
+    for i, fe in enumerate(annual.fy_ends):
+        if i < len(series) and series[i] is not None:
+            continue
+        for (s, e), v in by_span.items():
+            if abs((e - fe).days) <= 7:
+                series[i] = v
+                filled.append(fe.year)
+                break
+    if not filled:
+        return []
+    annual.series[concept] = series
+    tag = annual.tags_used.get(concept, "")
+    years = (f"FY{min(filled)}–FY{max(filled)}" if len(filled) > 1
+             else f"FY{filled[0]}")
+    note = f"{years} rescued from filing instances"
+    annual.tags_used[concept] = (f"{tag} ({note})" if tag
+                                 else f"instance rescue ({note})")
+    annual.selection_notes.append(
+        f"{concept}: {len(filled)} fiscal year(s) rescued from the filing "
+        "instances' consolidated facts — the line is extension-tagged and "
+        "the companyfacts API serves standard taxonomies only")
+    return sorted(filled)
+
+
 def fetch_segment_data(annual: AnnualFundamentals,
                        cache: Optional[Cache] = None) -> SegmentData:
     """Fetch + parse the latest 10-K/10-Q instances.
