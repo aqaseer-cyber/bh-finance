@@ -78,6 +78,22 @@ def test_market_series_mask_without_prices_or_shares():
     assert d2.owners_yield is None and d2.adj_fcf_yield_now is None
 
 
+def test_owners_yield_pairs_legs_from_one_fiscal_year():
+    """Regression: independent latest-non-None scans could add FY2024
+    dividends to FY2025 buybacks. Both legs must come from the latest
+    fiscal year where either exists."""
+    d = _d()
+    d.dividends_paid = [None, 50e6, None]     # dividends stopped in FY2025
+    d.buybacks = [None, None, 200e6]
+    compute_market_ratios(d)
+    assert d.owners_yield == pytest.approx(200e6 / 8e9)   # not (50+200)/8e9
+    d2 = _d()
+    d2.dividends_paid = [None, None, 60e6]    # buybacks stopped in FY2025
+    d2.buybacks = [None, 100e6, None]
+    compute_market_ratios(d2)
+    assert d2.owners_yield == pytest.approx(60e6 / 8e9)
+
+
 def test_summary_stat_cagr_and_avg():
     assert summary_stat([100.0, None, 121.0], "cagr") is None  # < 3 points
     assert summary_stat([100.0, 110.0, 121.0], "cagr") == pytest.approx(0.10)

@@ -37,6 +37,16 @@ def test_implied_return_monotone_and_guarded():
     assert implied_return(50.0, BASE, G0, GT, BRIDGE, 0.0) is None
 
 
+def test_implied_return_survives_pathological_terminal_g():
+    """Regression: g_term=−1.0001 put the lower bracket at exactly −1.0
+    (−1.0001 + 1e-4 == −1.0 in IEEE doubles) — (1+r)^i is 0 inside
+    dcf_fcff and the ZeroDivisionError escaped into the Tk callback. The
+    bracket now clamps above −99% and arithmetic errors render as None."""
+    for gt in (-1.0001, -1.0, -2.5):
+        got = implied_return(40.0, BASE, G0, gt, BRIDGE, SHARES)
+        assert got is None or -0.99 <= got <= 0.60
+
+
 def test_price_for_return_inverts_implied_return():
     p15 = price_for_return(0.15, BASE, G0, GT, BRIDGE, SHARES)
     assert p15 == pytest.approx(_fv(0.15))

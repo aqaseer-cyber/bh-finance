@@ -199,7 +199,12 @@ def overview_kpi_card(d: DashboardData, dpi: int = 100,
                                          or []) if v is not None), None)
     nd_now = next((v for v in reversed(getattr(d, "net_debt_fy", []) or [])
                    if v is not None), None)
-    ev_now = (mcap_now + nd_now
+    mi_now = next((v for v in reversed(getattr(d, "minority_interest", [])
+                                       or []) if v is not None), None)
+    pref_now = next((v for v in reversed(getattr(d, "preferred_equity", [])
+                                         or []) if v is not None), None)
+    # EV carries all four bridge legs — same definition as market.ev_fy
+    ev_now = (mcap_now + nd_now + (mi_now or 0.0) + (pref_now or 0.0)
               if mcap_now is not None and nd_now is not None else None)
     roic_now = next((v for v in reversed(getattr(d, "roic", []) or [])
                      if v is not None), None)

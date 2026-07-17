@@ -95,10 +95,17 @@ def compute_market_ratios(d: DashboardData) -> None:
     d.adj_fcf_yield_now = (afcf_now / mcap_now
                            if afcf_now is not None and _pos(mcap_now)
                            else None)
-    divs = next((v for v in reversed(d.dividends_paid) if v is not None),
-                None)
-    bb = next((v for v in reversed(_series(d, "buybacks") or [])
-               if v is not None), None)
+    # dividends and buybacks paired from the SAME fiscal year — the latest
+    # one where either leg exists (independent latest-non-None scans could
+    # silently mix years); both arrays end at the latest FY, so negative
+    # indexing from the tail aligns them
+    bb_arr = _series(d, "buybacks") or []
+    divs = bb = None
+    for j in range(1, max(len(d.dividends_paid), len(bb_arr)) + 1):
+        dv, bv = _at(d.dividends_paid, -j), _at(bb_arr, -j)
+        if dv is not None or bv is not None:
+            divs, bb = dv, bv
+            break
     if mcap_now and (divs is not None or bb is not None):
         d.owners_yield = ((divs or 0.0) + (bb or 0.0)) / mcap_now
     else:

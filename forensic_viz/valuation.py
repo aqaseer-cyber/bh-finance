@@ -193,7 +193,10 @@ def implied_return(price_ps: Optional[float], base: Optional[float],
     if not price_ps or price_ps <= 0 or not base or base <= 0 \
             or not shares or shares <= 0:
         return None
-    lo, hi = g_term + 1e-4, _IRR_MAX
+    # keep the bracket above −100%: g_term ≤ −1 would put `lo` at (or
+    # below) a −1 discount rate, where (1+r)^i is 0 and dcf_fcff divides
+    # by zero (−1.0001 + 1e-4 is exactly −1.0 in IEEE doubles)
+    lo, hi = max(g_term + 1e-4, -0.99), _IRR_MAX
 
     def fv(r: float) -> float:
         return (dcf_fcff(base, r, g0, g_term)["ev"] - bridge) / shares
@@ -207,7 +210,7 @@ def implied_return(price_ps: Optional[float], base: Optional[float],
                 lo = mid
             else:
                 hi = mid
-    except ValuationError:
+    except (ValuationError, ArithmeticError):
         return None
     return (lo + hi) / 2
 
@@ -222,7 +225,7 @@ def price_for_return(hurdle: float, base: Optional[float], g0: float,
         return None
     try:
         fv = (dcf_fcff(base, hurdle, g0, g_term)["ev"] - bridge) / shares
-    except ValuationError:
+    except (ValuationError, ArithmeticError):
         return None
     return fv if fv > 0 else None
 

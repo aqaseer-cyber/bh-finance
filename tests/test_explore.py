@@ -203,6 +203,24 @@ def test_overview_kpi_card_renders_with_and_without_market_join():
     assert any(t == "–" for t in _texts(fig2))
 
 
+def test_overview_kpi_ev_carries_all_bridge_legs():
+    """Regression: the KPI EV/EBIT tile computed EV as mcap + net debt
+    only — the house EV (market.ev_fy) adds minority interest and
+    preferred as well."""
+    from forensic_viz.explore import overview_kpi_card
+    d = DashboardData(ticker="T", company="T", subtitle="",
+                      generated=dt.date(2026, 8, 10))
+    d.last_close = 80.0
+    d.diluted_shares = [100e6]
+    d.net_debt_fy = [8e8]
+    d.minority_interest = [50e6]
+    d.preferred_equity = [150e6]
+    d.ebit_reported = [640e6]
+    texts = _texts(overview_kpi_card(d, dpi=80, width_in=8.0))
+    assert "14.1×" in texts       # (8e9+8e8+50e6+150e6)/640e6 = 14.0625
+    assert "13.8×" not in texts   # mcap + net debt only would print 13.75
+
+
 def test_overview_valuation_card_with_and_without_result():
     from forensic_viz.explore import overview_valuation_card
     from forensic_viz.valuation import (
