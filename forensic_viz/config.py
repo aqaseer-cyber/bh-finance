@@ -31,6 +31,10 @@ PRICE_YEARS = 10
 
 # GUI defaults persisted via the Settings dialog (FIX-12e)
 GUI_DEFAULT_YEARS = 10
+# The Years windows the GUI offers — the single source both gui.YEAR_CHOICES
+# and the settings validator read: any value the combobox offers must
+# round-trip through settings.json.
+YEAR_WINDOW_CHOICES = (3, 5, 7, 10, DISPLAY_YEARS)
 USER_HOUSE_FILE = ""  # display-only echo of settings.json's house_file
 
 
@@ -86,7 +90,7 @@ def apply_user_settings(s: dict) -> None:
         yrs = int(s.get("default_years", 0))
     except (TypeError, ValueError):
         yrs = 0
-    if yrs in (3, 5, 7, 10):  # mirrors gui.YEAR_CHOICES
+    if yrs in YEAR_WINDOW_CHOICES:
         GUI_DEFAULT_YEARS = yrs
 
 

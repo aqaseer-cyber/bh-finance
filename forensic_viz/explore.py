@@ -293,7 +293,7 @@ def overview_valuation_card(d: DashboardData, res, dpi: int = 100,
                  f"{fmt_pct(res.implied_return_now)}/yr at P₀ · {rungs}")
         if res.hurdle_price is not None:
             first += (f" · {res.hurdle_rate * 100:.0f}% hurdle ≤ "
-                      f"\\${res.hurdle_price:,.2f}")
+                      f"\\${res.hurdle_price:,.2f} (ASSUMPTION)")
         lines.append(first)
     ec = getattr(res, "exit_check", None)
     if ec is not None and ec.get("fv_today") is not None:

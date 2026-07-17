@@ -108,18 +108,22 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 
 - [ ] Overview tab renders all five cards after Analyze; KPI tiles show
       dashes (–) only where an input is honestly missing, and the owner's
-      yield footnote ("issuance not netted") is present.
+      yield footnote ("issuance not netted") is present. The mouse wheel
+      scrolls the Overview (and Explore) tab to the cards below the fold.
 - [ ] After a DCF valuation the Overview valuation card gains the
-      entry-price ladder line and the 5y exit cross-check line; the
-      Valuation page shows the same ladder under the reverse-DCF frame.
+      entry-price ladder line — with the hurdle price labeled
+      (ASSUMPTION) — and the 5y exit cross-check line; the Valuation
+      page shows the same ladder under the reverse-DCF frame.
 - [ ] MELI and AAPL **Financial model…** exports carry the MARKET &
       RATIOS block (values per FY, today's values in the LTM column) and
       the CAGR/avg summary column; spot-check one market cap against
       FY-end close × diluted shares.
-- [ ] Tools → **Refresh prices** updates the last close and re-renders
-      within a few seconds, without refetching EDGAR data.
+- [ ] Tools → **Refresh prices** updates the last close and re-renders,
+      without refetching EDGAR data; the window stays responsive (spinner
+      + Cancel) while the fetch runs.
 - [ ] Years = 15 renders: report pages stay legible and the export grows
-      the extra fiscal-year columns.
+      the extra fiscal-year columns. Settings → default years = 15
+      persists across a relaunch.
 
 ## Sign-off
 

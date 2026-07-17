@@ -63,6 +63,17 @@ def test_invalid_years_choice_is_ignored(cfg):
     assert cfg.GUI_DEFAULT_YEARS == before
 
 
+def test_every_offered_years_choice_round_trips(cfg):
+    """Regression (FIX-16f): the Years combobox gained 15 but the
+    validator still pinned (3, 5, 7, 10), silently discarding a saved 15.
+    gui.YEAR_CHOICES now derives from config.YEAR_WINDOW_CHOICES, so every
+    offered value must apply."""
+    assert 15 in cfg.YEAR_WINDOW_CHOICES
+    for y in cfg.YEAR_WINDOW_CHOICES:
+        cfg.apply_user_settings({"default_years": y})
+        assert cfg.GUI_DEFAULT_YEARS == y
+
+
 def test_edgar_session_reads_the_mutated_attribute(cfg):
     """Regression for the import-style trap: edgar must read
     config.SEC_USER_AGENT at session-construction time, so the Settings

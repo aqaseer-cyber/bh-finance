@@ -242,3 +242,5 @@ def test_overview_valuation_card_with_and_without_result():
     texts = _texts(fig2)
     assert any("entry price (Base case)" in t for t in texts)
     assert any("5y exit cross-check" in t for t in texts)
+    # the 15% hurdle is a house ASSUMPTION and every rendering says so
+    assert any("hurdle" in t and "(ASSUMPTION)" in t for t in texts)

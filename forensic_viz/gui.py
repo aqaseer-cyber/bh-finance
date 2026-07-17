@@ -60,7 +60,7 @@ from .workbook import fill_workbook
 
 SCREEN_DPI = 100  # fallback dpi cap for on-screen rasters (used only when
 #                   the display DPI is unknown); the PDF export is vector
-YEAR_CHOICES = ("3", "5", "7", "10", "15")
+YEAR_CHOICES = tuple(str(y) for y in config.YEAR_WINDOW_CHOICES)
 PAGES = ("Dashboard", "Unit economics", "Health checks", "Valuation", "Verdict")
 REPO_URL = "https://github.com/aqaseer-cyber/bh-finance"
 
@@ -785,18 +785,39 @@ class App:
     def refresh_prices(self):
         """FIX-16f: refetch the price series only (cache bypassed) and
         recompute everything price-dependent — Altman MVE, the FY market
-        joins, the ratio cards — without touching the EDGAR data."""
+        joins, the ratio cards — without touching the EDGAR data. The
+        fetch runs on a worker thread through the same queue as Analyze:
+        a slow price host must never freeze the Tk event loop."""
         if self.data is None or self.busy:
             return
-        from .market import compute_market_ratios
+        self._cancel_event = threading.Event()
+        self._set_busy(True, "Refreshing prices…")
+        threading.Thread(target=self._prices_worker,
+                         args=(self.data.ticker, self._cancel_event),
+                         daemon=True).start()
+
+    def _prices_worker(self, ticker: str, cancel: threading.Event):
         from .prices import fetch_prices
-        d = self.data
-        self.status_var.set("Refreshing prices…")
-        self.root.update_idletasks()
         try:
-            prices = fetch_prices(d.ticker, cache=Cache(enabled=False))
+            prices = fetch_prices(ticker, cache=Cache(enabled=False))
         except Exception as exc:
-            self.status_var.set(f"Price refresh failed: {exc}")
+            if cancel.is_set():
+                self.queue.put(("cancelled", "price refresh"))
+            else:
+                self.queue.put(("prices_error", str(exc)))
+            return
+        if cancel.is_set():
+            self.queue.put(("cancelled", "price refresh"))
+        else:
+            self.queue.put(("prices", prices))
+
+    def _apply_prices(self, prices):
+        """Main-thread half of the refresh: trim to the window, rebuild
+        the price-dependent metrics, re-render."""
+        from .market import compute_market_ratios
+        d = self.data
+        if d is None:
+            self._set_busy(False, "Ready.")
             return
         cutoff = d.generated - _dt.timedelta(
             days=round(d.display_years * 365.25))
@@ -810,8 +831,8 @@ class App:
         compute_altman(d)
         compute_market_ratios(d)
         self._rerender_all(self._screen_dpi())
-        self.status_var.set(
-            f"Prices refreshed — last close ${d.last_close:,.2f}.")
+        self._set_busy(
+            False, f"Prices refreshed — last close ${d.last_close:,.2f}.")
 
     def open_settings(self):
         _SettingsDialog(self.root, on_saved=self._on_settings_saved)
@@ -1062,11 +1083,16 @@ class App:
     # ------------------------------------------------------------ scrolling
 
     def _current_canvas(self) -> Optional[tk.Canvas]:
+        """Scroll target of the SELECTED tab, whichever kind it is — the
+        report pages, Overview and Explore all expose `.canvas`. Tabs
+        without one (Watchlist's Treeview scrolls natively) return None
+        and the wheel handlers no-op."""
         try:
-            name = self.notebook.tab(self.notebook.select(), "text")
-            return self.tabs[name].canvas
+            widget = self.notebook.nametowidget(self.notebook.select())
         except (tk.TclError, KeyError):
             return None
+        canvas = getattr(widget, "canvas", None)
+        return canvas if isinstance(canvas, tk.Canvas) else None
 
     def _on_mousewheel(self, event):
         canvas = self._current_canvas()
@@ -1138,6 +1164,10 @@ class App:
                 elif kind == "compare":
                     self._set_busy(False, "Comparison opened in the browser.")
                     webbrowser.open(Path(payload).as_uri())
+                elif kind == "prices":
+                    self._apply_prices(payload)
+                elif kind == "prices_error":
+                    self._set_busy(False, f"Price refresh failed: {payload}")
                 elif kind == "cancelled":
                     self._set_busy(False, f"Cancelled — {payload} not built.")
                 elif kind == "error":
