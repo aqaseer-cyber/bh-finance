@@ -38,8 +38,8 @@ from .dashboard import (
 )
 from .edgar import EdgarError
 from .explore import (
-    PRICE_MODES, RATIO_MODES, REVENUE_MODES, price_card, ratio_card,
-    revenue_card,
+    PRICE_MODES, RATIO_MODES, REVENUE_MODES, overview_kpi_card,
+    overview_valuation_card, price_card, ratio_card, revenue_card,
 )
 from .export import export_pdf
 from .model_export import export_financial_model
@@ -279,6 +279,61 @@ class _ScrollTab(ttk.Frame):
         self.canvas.yview_moveto(0)
         self.canvas.xview_moveto(0)
         self._recenter()
+
+
+class _OverviewTab(ttk.Frame):
+    """FIX-16d: the one-screen landing — KPI strip, FV-vs-price with the
+    entry ladder and exit cross-check, then the price/margins/P-E cards.
+    Screen-only; renders what the audited pipeline already computed."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.canvas = tk.Canvas(self, background=P.PAGE, highlightthickness=0)
+        vbar = ttk.Scrollbar(self, orient=tk.VERTICAL,
+                             command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.inner = ttk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self._holders = []
+        for _ in range(5):
+            holder = ttk.Frame(self.inner)
+            holder.pack(fill=tk.X, padx=10, pady=(6, 0), anchor="w")
+            self._holders.append({"holder": holder, "canvas": None})
+
+    def _geometry(self):
+        dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
+        width_px = (self.canvas.winfo_width()
+                    or self.app.notebook.winfo_width() or 1000)
+        return dpi, max(560, width_px - 44) / dpi
+
+    def refresh(self):
+        d = self.app.data
+        if d is None:
+            return
+        dpi, width_in = self._geometry()
+        res = self.app.valuation_res
+        builders = (
+            lambda: overview_kpi_card(d, dpi=dpi, width_in=width_in),
+            lambda: overview_valuation_card(d, res, dpi=dpi,
+                                            width_in=width_in),
+            lambda: price_card(d, "Both (stacked)", dpi=dpi,
+                               width_in=width_in),
+            lambda: revenue_card(d, "All margins", dpi=dpi,
+                                 width_in=width_in),
+            lambda: ratio_card(d, "P/E (TTM)", dpi=dpi, width_in=width_in),
+        )
+        for slot, build in zip(self._holders, builders):
+            fig = build()
+            if slot["canvas"] is not None:
+                slot["canvas"].get_tk_widget().destroy()
+            slot["canvas"] = FigureCanvasTkAgg(fig, master=slot["holder"])
+            slot["canvas"].draw()
+            slot["canvas"].get_tk_widget().pack(anchor="w")
 
 
 class _SandboxCard(ttk.Frame):
@@ -636,6 +691,10 @@ class App:
         self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.ledger = Ledger()
         self._build_watchlist_tab()
+        # FIX-16d: the one-screen Overview lands before the report pages
+        self.overview_tab = _OverviewTab(self.notebook, self)
+        self.notebook.add(self.overview_tab, text="Overview",
+                          state=tk.DISABLED)
         self.tabs = {}
         for name in PAGES:
             tab = _ScrollTab(self.notebook)
@@ -789,6 +848,7 @@ class App:
                     open_triggers=self._open_trigger_texts())
         self._refresh_tabs()
         self.explore_tab.refresh()  # FIX-15b: cards re-render at the new DPI
+        self.overview_tab.refresh()
         if current:
             try:
                 self.notebook.select(current)
@@ -1080,6 +1140,8 @@ class App:
         self._refresh_tabs(select="Dashboard")
         self.explore_tab.refresh()
         self.notebook.tab(self.explore_tab, state=tk.NORMAL)
+        self.overview_tab.refresh()
+        self.notebook.tab(self.overview_tab, state=tk.NORMAL)
         note = ("  (price sources unavailable — fundamentals only)"
                 if data.price_error else "")
         self._set_busy(False, f"{data.company} — done.{note}")
@@ -1143,6 +1205,7 @@ class App:
             led = f" (ledger update failed: {type(exc).__name__})"
         self._refresh_tabs(select="Valuation")
         self.explore_tab.sandbox.refresh()  # FIX-15c: seed from this valuation
+        self.overview_tab.refresh()  # FIX-16d: ladder + exit check now exist
         gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
         self.status_var.set(f"Intrinsic value + verdict ready.{led}{gate}")
 

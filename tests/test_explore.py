@@ -183,3 +183,44 @@ def test_sandbox_compute_guards():
     out3 = sandbox_compute(5e8, 0.09, 0.05, 0.02, 1e8, 100e6, 0.0, False)
     assert out3["error"] is None and out3["fv_ps"] is not None
     assert out3["mos"] is None and out3["implied_g"] is None
+
+
+# ------------------------------------------------ FIX-16d Overview cards
+
+def test_overview_kpi_card_renders_with_and_without_market_join():
+    from forensic_viz.explore import overview_kpi_card
+    from forensic_viz.market import compute_market_ratios
+    d = _testco()
+    compute_market_ratios(d)
+    fig = overview_kpi_card(d, dpi=80, width_in=8.0)
+    texts = _texts(fig)
+    assert any("Owner's yield" in t for t in texts)
+    assert any("issuance not netted" in t for t in texts)
+    # bare data never crashes the tiles — everything renders as dashes
+    bare = DashboardData(ticker="T", company="T", subtitle="",
+                         generated=dt.date(2026, 8, 10))
+    fig2 = overview_kpi_card(bare, dpi=80, width_in=8.0)
+    assert any(t == "–" for t in _texts(fig2))
+
+
+def test_overview_valuation_card_with_and_without_result():
+    from forensic_viz.explore import overview_valuation_card
+    from forensic_viz.valuation import (
+        CaseInputs, ValuationInputs, build_valuation,
+    )
+    d = _testco()
+    fig = overview_valuation_card(d, None, dpi=80, width_in=8.0)
+    assert any("Run Intrinsic value" in t for t in _texts(fig))
+
+    d.last_close = d.price_closes[-1]
+    d.ev_ebit_fy = [10.0, 12.0, 14.0]   # arms the exit cross-check
+    inputs = ValuationInputs(
+        method="dcf", discount_rate=0.09,
+        cases={"Bear": CaseInputs(g0=0.02, g_term=0.02),
+               "Base": CaseInputs(g0=0.05, g_term=0.025),
+               "Bull": CaseInputs(g0=0.09, g_term=0.03)})
+    res = build_valuation(d, inputs)
+    fig2 = overview_valuation_card(d, res, dpi=80, width_in=8.0)
+    texts = _texts(fig2)
+    assert any("entry price (Base case)" in t for t in texts)
+    assert any("5y exit cross-check" in t for t in texts)

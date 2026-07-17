@@ -167,6 +167,144 @@ def ratio_card(d: DashboardData, mode: str, dpi: int = 100,
     return fig
 
 
+def _kpi_text(v, kind: str) -> str:
+    if v is None:
+        return "–"
+    if kind == "money":
+        from .metrics import fmt_money
+        return fmt_money(v)
+    if kind == "pct":
+        return f"{v * 100:.1f}%"
+    if kind == "ratio":
+        return f"{v:,.1f}×"
+    return f"{v:,.2f}"
+
+
+def overview_kpi_card(d: DashboardData, dpi: int = 100,
+                      width_in: float = 10.0) -> Figure:
+    """FIX-16d: the one-glance KPI strip (DVH-benchmark) — current market
+    joins over the audited series. Two rows of tiles; '–' where an input
+    is honestly missing."""
+    fig = Figure(figsize=(max(4.0, width_in), 1.9), dpi=dpi)
+    fig.patch.set_facecolor(P.PAGE)
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    shares_now = next((v for v in reversed(getattr(d, "diluted_shares", [])
+                                           or []) if v), None)
+    mcap_now = (d.last_close * shares_now
+                if getattr(d, "last_close", None) and shares_now else None)
+    eps_now = next((v for v in reversed(getattr(d, "eps_diluted", []) or [])
+                    if v is not None), None)
+    ebit_now = next((v for v in reversed(getattr(d, "ebit_reported", [])
+                                         or []) if v is not None), None)
+    nd_now = next((v for v in reversed(getattr(d, "net_debt_fy", []) or [])
+                   if v is not None), None)
+    ev_now = (mcap_now + nd_now
+              if mcap_now is not None and nd_now is not None else None)
+    roic_now = next((v for v in reversed(getattr(d, "roic", []) or [])
+                     if v is not None), None)
+    opm_now = next((v for v in reversed(getattr(d, "operating_margin", [])
+                                        or []) if v is not None), None)
+    tiles = [
+        ("Last close", d.last_close, "money"),
+        ("Market cap", mcap_now, "money"),
+        ("P/E (latest EPS)",
+         (d.last_close / eps_now
+          if d.last_close and eps_now and eps_now > 0 else None), "ratio"),
+        ("EV/EBIT",
+         (ev_now / ebit_now
+          if ev_now is not None and ebit_now and ebit_now > 0 else None),
+         "ratio"),
+        ("Net debt/EBIT",
+         (nd_now / ebit_now
+          if nd_now is not None and ebit_now and ebit_now > 0 else None),
+         "ratio"),
+        ("Adj FCF yield (ex-SBC)", getattr(d, "adj_fcf_yield_now", None),
+         "pct"),
+        ("Owner's yield*", getattr(d, "owners_yield", None), "pct"),
+        ("ROIC", roic_now, "pct"),
+        ("Op margin", opm_now, "pct"),
+        (f"Revenue CAGR ({max(1, len(d.fy_labels) - 1)}y)",
+         getattr(d, "revenue_cagr", None), "pct"),
+    ]
+    for k, (label, val, kind) in enumerate(tiles):
+        col, row_ = k % 5, k // 5
+        x, y = 0.01 + col * 0.20, 0.88 - row_ * 0.50
+        ax.text(x, y, label, fontsize=7.6, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+        ax.text(x, y - 0.17, _kpi_text(val, kind).replace("$", "\\$"),
+                fontsize=11.5, fontweight="bold", color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="top")
+    ax.text(0.01, 0.02, "* dividends + gross buybacks / market cap — "
+            "issuance not netted (see the dilution panel)",
+            fontsize=6.8, color=P.INK_MUTED, transform=ax.transAxes,
+            va="bottom")
+    return fig
+
+
+def overview_valuation_card(d: DashboardData, res, dpi: int = 100,
+                            width_in: float = 10.0) -> Figure:
+    """FIX-16d: FV cases vs price, the entry-price ladder and the 5y exit
+    cross-check — everything already computed by the audited valuation;
+    this card only renders it. Muted note until a DCF valuation exists."""
+    fig, (ax,) = _new_card(dpi, width_in, height=2.6)
+    if res is None or not getattr(res, "cases", None):
+        _panel_note(ax, "Run Intrinsic value… — FV cases, the entry-price "
+                        "ladder and the 5y exit cross-check render here.")
+        ax.spines["bottom"].set_visible(False)
+        return fig
+    _panel_title(ax, "Intrinsic value vs price",
+                 "audited valuation output — the Valuation page is the "
+                 "record")
+    names = [c.name for c in res.cases]
+    fvs = [c.fv_ps for c in res.cases]
+    xs = range(len(names))
+    ax.set_xlim(-0.5, len(names) - 0.5)
+    vals = [v for v in fvs if v is not None] + ([res.price] if res.price
+                                                else [])
+    ax.set_ylim(0, max(vals) * 1.25 if vals else 1)
+    ax.set_xticks(list(xs))
+    ax.set_xticklabels(names)
+    colors = [P.NEGATIVE, P.SERIES[2], P.SERIES[3]]
+    for x, fv, color in zip(xs, fvs, colors):
+        if fv is not None:
+            ax.bar(x, fv, width=0.5, color=color, zorder=3)
+            ax.annotate(f"\\${fv:,.0f}", xy=(x, fv), xytext=(0, 4),
+                        textcoords="offset points", ha="center",
+                        fontsize=8.4, color=P.INK_PRIMARY, zorder=4)
+    if res.price:
+        ax.axhline(res.price, color=P.INK_MUTED, linewidth=1.0,
+                   linestyle=(0, (4, 3)), zorder=2)
+        ax.annotate(f"P₀ \\${res.price:,.2f}", xy=(len(names) - 0.5,
+                                                   res.price),
+                    xytext=(-4, 4), textcoords="offset points", ha="right",
+                    fontsize=7.8, color=P.INK_MUTED, zorder=4)
+    lines = []
+    if getattr(res, "irr_ladder", None):
+        rungs = " ".join(
+            f"\\${p:,.0f}→{r * 100:.0f}%" if r is not None
+            else f"\\${p:,.0f}→n/a" for p, r in res.irr_ladder[::2])
+        first = (f"entry price (Base case): "
+                 f"{fmt_pct(res.implied_return_now)}/yr at P₀ · {rungs}")
+        if res.hurdle_price is not None:
+            first += (f" · {res.hurdle_rate * 100:.0f}% hurdle ≤ "
+                      f"\\${res.hurdle_price:,.2f}")
+        lines.append(first)
+    ec = getattr(res, "exit_check", None)
+    if ec is not None and ec.get("fv_today") is not None:
+        second = (f"5y exit cross-check: median EV/EBIT "
+                  f"{ec['multiple']:.1f}× on the Base fade ⇒ "
+                  f"\\${ec['fv_today']:,.2f}/sh today")
+        if ec.get("return_5y") is not None:
+            second += (f" · ≈ {ec['return_5y'] * 100:.1f}%/yr at P₀ "
+                       "(price-only; companion frame, not in FV_avg)")
+        lines.append(second)
+    for k, text in enumerate(lines):
+        ax.text(0.0, -0.16 - 0.13 * k, text, fontsize=7.4,
+                color=P.INK_SECONDARY, transform=ax.transAxes, va="top")
+    return fig
+
+
 WACC_EXCEEDS_G = "n/a — WACC must exceed g"
 
 
