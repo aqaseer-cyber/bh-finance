@@ -142,8 +142,9 @@ def test_export_layout_adapts_and_carries_pct_rows(tmp_path):
 
     ws = load_workbook(str(out))["Financial Model"]
     header = [c.value for c in ws[1]]
-    assert header[0] == "Line Items" and header[-1] == "LTM"
-    assert header[-5:-1] == ["Q3'25", "Q4'25", "Q1'26", "Q2'26"]
+    assert header[0] == "Line Items" and header[-2] == "LTM"
+    assert header[-1] == "CAGR/avg"  # FIX-16b per-row summary column
+    assert header[-6:-2] == ["Q3'25", "Q4'25", "Q1'26", "Q2'26"]
     assert ws.freeze_panes == "B2"
 
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]

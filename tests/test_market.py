@@ -86,3 +86,66 @@ def test_summary_stat_cagr_and_avg():
     assert summary_stat([-5.0, 100.0, 121.0], "cagr") is None  # endpoint ≤ 0
     assert summary_stat([0.10, 0.20, 0.30], "avg") == pytest.approx(0.20)
     assert summary_stat([0.10, None, 0.30], "avg") is None     # < 3 values
+
+
+def test_export_market_block_and_summary_column(tmp_path):
+    """FIX-16b: the export grows a MARKET & RATIOS block (FY columns +
+    today in the LTM column) and a per-row CAGR/avg summary column."""
+    import datetime as dt
+
+    from openpyxl import load_workbook
+
+    from forensic_viz.edgar import parse_companyfacts
+    from forensic_viz.metrics import (
+        apply_track, attach_fy_prices, build_fundamental_metrics,
+    )
+    from forensic_viz.model_export import export_financial_model
+    from test_model_export import _facts_with_quarters
+
+    d = DashboardData(ticker="TESTCO", company="TESTCO Inc", subtitle="",
+                      generated=dt.date(2026, 8, 10))
+    d.sic_code = "3571"
+    apply_track(d, "auto")
+    build_fundamental_metrics(
+        parse_companyfacts(_facts_with_quarters(), "TESTCO"), d)
+    d.price_dates = [e for e in d.fy_ends]
+    d.price_closes = [50.0 + i for i in range(len(d.fy_ends))]
+    d.last_close = d.price_closes[-1]
+    attach_fy_prices(d)
+    compute_market_ratios(d)
+    assert any(v is not None for v in d.market_cap_fy)
+
+    out = tmp_path / "m.xlsx"
+    export_financial_model(d, str(out))
+    ws = load_workbook(str(out))["Financial Model"]
+    header = [c.value for c in ws[1]]
+    assert header[-1] == "CAGR/avg"
+    labels = [str(ws.cell(row=r, column=1).value or "")
+              for r in range(1, ws.max_row + 1)]
+    mk = next(i + 1 for i, l in enumerate(labels)
+              if l.startswith("MARKET & RATIOS"))
+    sum_col = len(header)
+    fy_last_col = 1 + len(d.fundamentals.fy_ends)  # last FY column (1-based)
+
+    def row_of(label):
+        return next(i + 1 for i, l in enumerate(labels) if l == label)
+
+    mcap_row = row_of("Market Cap")
+    expect_mcap = d.market_cap_fy[-1] / 1e6
+    assert ws.cell(row=mcap_row, column=fy_last_col).value == \
+        pytest.approx(expect_mcap)
+    # today's value rides in the LTM column
+    ltm_col = header.index("LTM") + 1
+    shares_now = next(v for v in reversed(d.diluted_shares) if v)
+    assert ws.cell(row=mcap_row, column=ltm_col).value == \
+        pytest.approx(d.last_close * shares_now / 1e6)
+    # revenue row carries a CAGR summary matching summary_stat
+    rev_row = next(i + 1 for i, l in enumerate(labels)
+                   if l in ("Total Revenue",))
+    rev_ann = [ws.cell(row=rev_row, column=c).value
+               for c in range(2, fy_last_col + 1)]
+    got = ws.cell(row=rev_row, column=sum_col).value
+    assert got == pytest.approx(summary_stat(rev_ann, "cagr"))
+    # footnote provenance
+    joined = " ".join(labels)
+    assert "MARKET & RATIOS: market cap = FY-end close" in joined

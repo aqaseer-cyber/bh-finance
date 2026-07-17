@@ -44,6 +44,7 @@ from .edgar import (
     INSTANT_TAGS, AnnualFundamentals, QuarterlyFundamentals,
     parse_quarterly_facts,
 )
+from .market import summary_stat
 from .metrics import DashboardData, fy_label
 # FIX-15a: the quarter spine and discrete/YTD/LTM derivations moved verbatim
 # to quarters.py (shared with the Explore TTM series); this suite is their
@@ -63,6 +64,7 @@ _FMT_MONEY = '#,##0.0;(#,##0.0);"–"'    # $mm rows
 _FMT_PS = '0.00;(0.00);"–"'             # per-share rows (eps_diluted)
 _FMT_SHARES = "#,##0.0"                 # share-count rows (never negative)
 _FMT_PCT = '+0.0%;-0.0%;"–"'            # % change and tie-check rows
+_FMT_RATIO = '0.0"×";-0.0"×";"–"'       # market multiples (FIX-16b)
 
 # (label, concept, style, pct_row); concept None = section header;
 # "=name" = derived row; style: item | total | eps | shares
@@ -343,6 +345,8 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                + [quarter_label(qe, fy_ends) for qe in q_ends]
                + ["LTM"])
     ltm_col = 1 + len(headers)  # 1-based; column A is the line items
+    headers.append("CAGR/avg")  # FIX-16b per-row summary column
+    sum_col = ltm_col + 1
 
     ink = P.INK_PRIMARY.lstrip("#").upper()
     forest = P.GUI_SIDEBAR_BG.lstrip("#").upper()
@@ -362,7 +366,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     ws.cell(row=1, column=1, value="Line Items")
     for j, h in enumerate(headers, start=2):
         ws.cell(row=1, column=j, value=h)
-    for j in range(1, ltm_col + 1):
+    for j in range(1, sum_col + 1):
         c = ws.cell(row=1, column=j)
         c.fill = header_fill
         c.font = Font(bold=True, color=cream, size=10)
@@ -402,7 +406,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     for label, concept, style, pct_row in LAYOUT:
         if style == "section":
             ws.cell(row=r, column=1, value=label)
-            for j in range(1, ltm_col + 1):
+            for j in range(1, sum_col + 1):
                 c = ws.cell(row=r, column=j)
                 c.fill = section_fill
                 c.font = Font(bold=True, color=forest, size=10)
@@ -432,6 +436,14 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                 c.border = total_border
         if bold:
             ws.cell(row=r, column=1).border = total_border
+        # FIX-16b: per-row summary — geometric CAGR over the annual cells
+        # (None on sign-flips or thin data, matching the anchor-ladder rule)
+        s = summary_stat(list(row.ann), "cagr")
+        if s is not None:
+            c = ws.cell(row=r, column=sum_col, value=s)
+            c.number_format = fmt_pct
+            c.font = Font(italic=True, color=muted, size=8.5)
+            c.alignment = Alignment(horizontal="right")
         r += 1
         if pct_row:
             r = write_pct_row(r, row)
@@ -459,6 +471,87 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                     is_tie_breached = any(
                         g is not None and abs(g) > config.IS_TIE_TOL
                         for g in gaps)
+
+
+    # --------------------------------------------- MARKET & RATIOS (FIX-16b)
+    # Fundamentals joined to the FY-end market series, per year — the
+    # value investor's one-glance table (owner-ratified benchmark insight).
+    # The LTM column holds TODAY's values; years before the price window
+    # stay blank. Ratios mask on non-positive denominators (market.py).
+    disp_by_end = {e: i for i, e in enumerate(d.fy_ends)}
+
+    def _mk_full(vals_disp):
+        return [vals_disp[disp_by_end[fe]]
+                if fe in disp_by_end and disp_by_end[fe] < len(vals_disp)
+                else None for fe in fy_ends]
+
+    shares_now = _latest(d.diluted_shares)
+    mcap_now = (d.last_close * shares_now
+                if d.last_close and shares_now else None)
+    nd_now = _latest(d.net_debt_fy)
+    mi_now = _latest(d.minority_interest) or 0.0
+    pref_now = _latest(d.preferred_equity) or 0.0
+    ev_now = (mcap_now + nd_now + mi_now + pref_now
+              if mcap_now is not None and nd_now is not None else None)
+    eps_now = _latest(d.eps_diluted)
+    ebit_now = _latest(d.ebit_reported)
+    market_rows = [
+        ("Market Cap", d.market_cap_fy, "money", mcap_now, "cagr"),
+        ("Enterprise Value", d.ev_fy, "money", ev_now, "cagr"),
+        ("Net Debt", d.net_debt_fy, "money", nd_now, None),
+        ("Tangible Book (equity − goodwill − intangibles)",
+         d.tangible_book, "money", _latest(d.tangible_book), "cagr"),
+        ("P/E (FY-end close)", d.pe_fy, "ratio",
+         (d.last_close / eps_now
+          if d.last_close and eps_now and eps_now > 0 else None), "avg"),
+        ("EV/EBIT", d.ev_ebit_fy, "ratio",
+         (ev_now / ebit_now
+          if ev_now is not None and ebit_now and ebit_now > 0 else None),
+         "avg"),
+        ("Net Debt/EBIT", d.net_debt_ebit_fy, "ratio",
+         (nd_now / ebit_now
+          if nd_now is not None and ebit_now and ebit_now > 0 else None),
+         "avg"),
+        ("Adj FCF Yield (ex-SBC / mkt cap)", d.adj_fcf_yield_fy, "pct",
+         d.adj_fcf_yield_now, "avg"),
+    ]
+    market_written = False
+    for mlabel, disp_vals, kind, now_val, sum_kind in market_rows:
+        full = _mk_full(list(disp_vals or []))
+        if all(v is None for v in full) and now_val is None:
+            continue
+        if not market_written:
+            ws.cell(row=r, column=1,
+                    value="MARKET & RATIOS (FY-end close × diluted shares; "
+                          "EV incl. bridge legs; LTM column = today)")
+            for j in range(1, sum_col + 1):
+                c = ws.cell(row=r, column=j)
+                c.fill = section_fill
+                c.font = Font(bold=True, color=forest, size=10)
+            r += 1
+            market_written = True
+        ws.cell(row=r, column=1, value=mlabel)
+        ws.cell(row=r, column=1).font = Font(color=ink, size=10)
+        mscale = _MM if kind == "money" else 1.0
+        mfmt = {"money": fmt_mm, "ratio": _FMT_RATIO, "pct": fmt_pct}[kind]
+        cells16 = full + [None] * len(q_ends) + [now_val]
+        for j, v in enumerate(cells16, start=2):
+            c = ws.cell(row=r, column=j)
+            if v is not None:
+                c.value = v / mscale
+                c.number_format = mfmt
+            c.font = Font(color=ink, size=10)
+            c.alignment = Alignment(horizontal="right")
+            if j == ltm_col:
+                c.fill = ltm_fill
+        if sum_kind:
+            s16 = summary_stat(full, sum_kind)
+            if s16 is not None:
+                c = ws.cell(row=r, column=sum_col, value=s16)
+                c.number_format = fmt_pct if sum_kind == "cagr" else mfmt
+                c.font = Font(italic=True, color=muted, size=8.5)
+                c.alignment = Alignment(horizontal="right")
+        r += 1
 
     # ------------------------------------------------- SEGMENTS (as filed)
     seg = getattr(d, "segments", None)
@@ -576,6 +669,20 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         "and other 'Payments…' concepts are positive outflows as filed.",
         "Not investment advice.",
     ]
+    if market_written:  # FIX-16b provenance for the market block
+        notes.insert(-1, (
+            "MARKET & RATIOS: market cap = FY-end close × diluted shares "
+            "(the same MVE read as Altman Z); EV adds net debt + minority "
+            "interest + preferred (the equity-bridge legs); adj FCF = FCF "
+            "ex-SBC (house §2b); the LTM column holds today's values at "
+            "the last close."
+            + (f" Owner's yield now (dividends + gross buybacks / market "
+               f"cap; issuance NOT netted — see the dilution panel): "
+               f"{d.owners_yield:.1%}." if d.owners_yield is not None
+               else "")
+            + " Years before the price window are blank; ratios mask on "
+              "non-positive denominators. CAGR/avg column: geometric CAGR "
+              "for value rows, period average for multiples and yields."))
     if seg_lines:
         src = getattr(seg, "source", "") or "latest filings"
         extra = getattr(seg, "status", "")
