@@ -347,7 +347,9 @@ class _SandboxCard(ttk.Frame):
         self._outputs = {}
         for col, (key, label) in enumerate((
                 ("fv_ps", "FV / share"), ("mos", "MoS vs P₀"),
-                ("tv_share", "TV % of EV"), ("implied_g", "implied g (Track B)"))):
+                ("tv_share", "TV % of EV"),
+                ("implied_g", "implied g (Track B)"),
+                ("implied_return", "return @ P₀"))):
             ttk.Label(out, text=label, style="Muted.TLabel").grid(
                 row=0, column=col, sticky="w", padx=(0, 22))
             val = ttk.Label(out, text="–", font=("Segoe UI", 11, "bold"))
@@ -456,10 +458,14 @@ class _SandboxCard(ttk.Frame):
         self._outputs["implied_g"].configure(
             text=f"{ig * 100:.1f}%" if ig is not None else "–",
             foreground=ink)
+        ir = out["implied_return"]
+        self._outputs["implied_return"].configure(
+            text=f"{ir * 100:.1f}%" if ir is not None else "–",
+            foreground=ink)
 
     def _show_error(self, msg):
         self._outputs["fv_ps"].configure(text=msg, foreground=P.NEGATIVE)
-        for key in ("mos", "tv_share", "implied_g"):
+        for key in ("mos", "tv_share", "implied_g", "implied_return"):
             self._outputs[key].configure(text="–", foreground=P.INK_PRIMARY)
 
 

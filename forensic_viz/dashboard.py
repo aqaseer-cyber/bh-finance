@@ -1273,6 +1273,21 @@ def _valuation_table(ax, res):
         ax.text(0.0, 0.06, line, fontsize=8.4,
                 color=P.DELTA_BAD if over else P.INK_SECONDARY,
                 transform=ax.transAxes, va="top")
+    # FIX-16c entry-price ladder: what buying at each price earns under
+    # the Base-case fade, plus the price that buys the hurdle (ASSUMPTION)
+    if getattr(res, "irr_ladder", None):
+        # \$ throughout — paired bare $ signs open a mathtext span (FIX-12d)
+        rungs = " ".join(
+            f"\\${p:,.0f}→{fmt_pct(r, decimals=0)}" if r is not None
+            else f"\\${p:,.0f}→n/a"
+            for p, r in res.irr_ladder[::2])
+        line2 = (f"Entry price (Base case): implied annual return "
+                 f"{fmt_pct(res.implied_return_now)} at P₀ · {rungs}")
+        if res.hurdle_price is not None:
+            line2 += (f" · {fmt_pct(res.hurdle_rate, decimals=0)} hurdle "
+                      f"buys at ≤ \\${res.hurdle_price:,.2f} (ASSUMPTION)")
+        ax.text(0.0, 0.005, line2, fontsize=7.6, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
 
 
 def _warnings_callout(ax, res):

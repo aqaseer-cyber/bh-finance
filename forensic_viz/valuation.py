@@ -100,6 +100,11 @@ class ValuationResult:
     cases: List[CaseResult]
     implied_g: Optional[float] = None            # §4.D reverse DCF
     implied_g_basis: str = ""
+    # FIX-16c entry-price discipline (Base case, production dcf_fcff only)
+    implied_return_now: Optional[float] = None   # buying at P₀
+    irr_ladder: List = field(default_factory=list)  # [(price, return|None)]
+    hurdle_price: Optional[float] = None         # price that buys HURDLE_RATE
+    hurdle_rate: Optional[float] = None
     market_ev: Optional[float] = None
     bridge: Optional[float] = None               # net debt + MI + pref − non-op
     rate_build: str = ""                         # §4.0 build audit string
@@ -163,6 +168,72 @@ def reverse_dcf_implied_g(base_fcff: float, wacc: float,
     if market_ev <= 0 or base_fcff <= 0:
         return None
     return wacc - base_fcff / market_ev
+
+
+# FIX-16c: entry-price discipline (owner-ratified benchmark insight) —
+# what annual return does buying at a given price earn under the Base-case
+# fade, and what price buys the hurdle. Deliberately NO new math: both
+# directions run through the production `dcf_fcff`.
+HURDLE_RATE = 0.15        # ASSUMPTION: house entry hurdle, labeled on-page
+LADDER_STEPS = 9
+LADDER_SPREAD = 0.40      # ladder spans ±40% around P₀ (DVH-style strip)
+_IRR_MAX = 0.60           # implied returns beyond 60% render as n/a
+
+
+def implied_return(price_ps: Optional[float], base: Optional[float],
+                   g0: float, g_term: float, bridge: float,
+                   shares: Optional[float]) -> Optional[float]:
+    """The discount rate r solving (dcf_fcff EV − bridge)/shares = price —
+    the Base-case implied annual return of buying at `price_ps`. FV is
+    strictly decreasing in r, so a bisection over [g_term+ε, 60%] is
+    exact; None outside that bracket or on unusable inputs."""
+    if not price_ps or price_ps <= 0 or not base or base <= 0 \
+            or not shares or shares <= 0:
+        return None
+    lo, hi = g_term + 1e-4, _IRR_MAX
+
+    def fv(r: float) -> float:
+        return (dcf_fcff(base, r, g0, g_term)["ev"] - bridge) / shares
+
+    try:
+        if fv(hi) >= price_ps or fv(lo) <= price_ps:
+            return None  # cheaper than the 60% cap / dearer than ~g_term
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            if fv(mid) > price_ps:
+                lo = mid
+            else:
+                hi = mid
+    except ValuationError:
+        return None
+    return (lo + hi) / 2
+
+
+def price_for_return(hurdle: float, base: Optional[float], g0: float,
+                     g_term: float, bridge: float,
+                     shares: Optional[float]) -> Optional[float]:
+    """The entry price that earns `hurdle`: FV per share discounted at the
+    hurdle itself (closed-form — no search needed)."""
+    if not base or base <= 0 or not shares or shares <= 0 \
+            or hurdle is None or hurdle <= g_term:
+        return None
+    try:
+        fv = (dcf_fcff(base, hurdle, g0, g_term)["ev"] - bridge) / shares
+    except ValuationError:
+        return None
+    return fv if fv > 0 else None
+
+
+def price_irr_ladder(price: Optional[float], base: Optional[float],
+                     g0: float, g_term: float, bridge: float,
+                     shares: Optional[float], steps: int = LADDER_STEPS,
+                     spread: float = LADDER_SPREAD):
+    """[(price point, implied annual return)] at ±spread around `price`."""
+    if not price or price <= 0 or steps < 2:
+        return []
+    return [(p, implied_return(p, base, g0, g_term, bridge, shares))
+            for k in range(steps)
+            for p in (price * (1 - spread + 2 * spread * k / (steps - 1)),)]
 
 
 # ------------------------------------------------------------- orchestration
@@ -343,6 +414,19 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
                 f"reverse-DCF implied g {fmt_pct(result.implied_g)} exceeds the "
                 "3.5% cap — the market is paying for optionality; name it "
                 "before acting on a sub-price FV (master §4.D)")
+        # FIX-16c entry-price discipline: Base-case implied annual return
+        # at P₀, the ±40% price ladder, and the price that buys the
+        # HURDLE_RATE — every leg through the production dcf_fcff
+        bc = inputs.cases.get("Base")
+        if price and bc is not None and bc.g0 is not None \
+                and bc.g_term is not None:
+            result.implied_return_now = implied_return(
+                price, base, bc.g0, bc.g_term, bridge, shares)
+            result.irr_ladder = price_irr_ladder(
+                price, base, bc.g0, bc.g_term, bridge, shares)
+            result.hurdle_price = price_for_return(
+                HURDLE_RATE, base, bc.g0, bc.g_term, bridge, shares)
+            result.hurdle_rate = HURDLE_RATE
         for name in CASE_NAMES:
             c = inputs.cases[name]
             g0, g_term = _require(c.g0, f"{name} g0"), _require(c.g_term, f"{name} terminal g")

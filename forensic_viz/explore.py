@@ -27,7 +27,9 @@ from .dashboard import (
 )
 from .metrics import DashboardData, fmt_pct
 from .quarters import step_at, ttm_series
-from .valuation import ValuationError, dcf_fcff, reverse_dcf_implied_g
+from .valuation import (
+    ValuationError, dcf_fcff, implied_return, reverse_dcf_implied_g,
+)
 
 CARD_H = 3.2      # inches — small figures keep per-card redraws instant
 STACKED_H = 5.6   # the two-pane price/drawdown card
@@ -181,7 +183,8 @@ def sandbox_compute(base: float, wacc: float, g0: float, g_term: float,
     on a guard failure only "error" is set (wacc ≤ g renders as a message,
     never an exception)."""
     out = {"fv_ps": None, "mos": None, "tv_share": None,
-           "implied_g": None, "ev": None, "error": None}
+           "implied_g": None, "implied_return": None, "ev": None,
+           "error": None}
     if not shares or shares <= 0:
         out["error"] = "n/a — diluted share count unavailable"
         return out
@@ -208,6 +211,9 @@ def sandbox_compute(base: float, wacc: float, g0: float, g_term: float,
         if base_b > 0:
             out["implied_g"] = reverse_dcf_implied_g(
                 base_b, wacc, price * shares + bridge)
+        # FIX-16c: the return buying at P₀ earns under the slider fade
+        out["implied_return"] = implied_return(
+            price, eff_base, g0, g_term, bridge, shares)
     return out
 
 
