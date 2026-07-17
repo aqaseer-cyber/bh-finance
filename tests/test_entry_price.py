@@ -103,3 +103,57 @@ def test_sandbox_implied_return_matches_valuation_function():
                           price=40.0)
     assert out["implied_return"] == pytest.approx(
         implied_return(40.0, BASE, G0, GT, BRIDGE, SHARES))
+
+
+# ------------------------------------------- FIX-16e exit-multiple check
+
+def test_exit_multiple_check_hand_computed():
+    from forensic_viz.valuation import HORIZON, exit_multiple_check
+    d = DashboardData(ticker="T", company="T", subtitle="",
+                      generated=dt.date(2026, 7, 12))
+    d.ebit_reported = [380e6, 400e6]
+    d.ev_ebit_fy = [10.0, 12.0, 14.0, None]     # median 12.0
+    out = exit_multiple_check(d, base_g0=0.06, g_term=0.02, rate=0.10,
+                              bridge=6e8, shares=100e6, price=40.0)
+    ebit5 = 400e6
+    for i in range(1, 6):
+        ebit5 *= 1 + (0.06 + (0.02 - 0.06) * (i - 1) / (HORIZON - 1))
+    assert out["multiple"] == pytest.approx(12.0)
+    assert out["ebit5"] == pytest.approx(ebit5)
+    eq5 = (12.0 * ebit5 - 6e8) / 100e6
+    assert out["eq5_ps"] == pytest.approx(eq5)
+    assert out["fv_today"] == pytest.approx(eq5 / 1.1 ** 5)
+    assert out["return_5y"] == pytest.approx((eq5 / 40.0) ** 0.2 - 1)
+    # < 3 usable multiples or non-positive EBIT -> None
+    d.ev_ebit_fy = [10.0, 12.0]
+    assert exit_multiple_check(d, 0.06, 0.02, 0.10, 6e8, 100e6, 40.0) is None
+    d.ev_ebit_fy = [10.0, 12.0, 14.0]
+    d.ebit_reported = [-5e6]
+    assert exit_multiple_check(d, 0.06, 0.02, 0.10, 6e8, 100e6, 40.0) is None
+
+
+def test_exit_check_note_fires_without_moving_verdict_numerics():
+    from forensic_viz.verdict import build_verdict
+    inputs = ValuationInputs(
+        method="dcf", discount_rate=0.09,
+        cases={"Bear": CaseInputs(g0=0.02, g_term=0.02),
+               "Base": CaseInputs(g0=G0, g_term=GT),
+               "Bull": CaseInputs(g0=0.09, g_term=0.03)})
+
+    def verdict_for(with_mults):
+        d = _val_data()
+        d.ebit_reported = [400e6]
+        if with_mults:
+            d.ev_ebit_fy = [10.0, 12.0, 14.0]
+        res = build_valuation(d, inputs)
+        return res, build_verdict(d, inputs, res)
+
+    res1, v1 = verdict_for(True)
+    res2, v2 = verdict_for(False)
+    assert res1.exit_check is not None and res2.exit_check is None
+    assert any("5y exit cross-check" in n for n in v1.notes)
+    assert not any("5y exit cross-check" in n for n in v2.notes)
+    # companion frame only: every verdict numeric identical
+    assert v1.fv_avg == pytest.approx(v2.fv_avg)
+    assert v1.mos == pytest.approx(v2.mos)
+    assert v1.coherence == v2.coherence

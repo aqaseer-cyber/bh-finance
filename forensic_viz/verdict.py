@@ -149,6 +149,19 @@ def build_verdict(d: DashboardData, inputs: ValuationInputs,
                     f"median {med_rr:.0%} (×{implied_rr / med_rr:.1f}) — "
                     "franchise capacity unsupported; justify or cut g₀ "
                     "(master §4 discipline)")
+        # FIX-16e: 5y exit-multiple companion frame — note only, one $
+        # figure per line (mathtext), FV_avg and the gate untouched
+        ec = getattr(res, "exit_check", None)
+        if ec is not None:
+            line = (f"5y exit cross-check (companion, NOT in FV_avg): "
+                    f"Base-fade EBIT₅ × median EV/EBIT {ec['multiple']:.1f}× "
+                    f"− bridge, discounted at the valuation rate ⇒ "
+                    + (f"${ec['fv_today']:,.2f}/sh today"
+                       if ec["fv_today"] is not None else "n/a today"))
+            if ec["return_5y"] is not None:
+                line += (f"; ≈ {fmt_pct(ec['return_5y'])}/yr buying at P₀ "
+                         "(price-only, interim FCFF ignored)")
+            notes.append(line)
 
     elif method == "ri" and rate is not None and shares:
         bv0 = res.base_value

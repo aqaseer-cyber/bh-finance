@@ -23,6 +23,7 @@ is left to the analyst.
 from __future__ import annotations
 
 import datetime as dt
+import statistics
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -105,6 +106,8 @@ class ValuationResult:
     irr_ladder: List = field(default_factory=list)  # [(price, return|None)]
     hurdle_price: Optional[float] = None         # price that buys HURDLE_RATE
     hurdle_rate: Optional[float] = None
+    # FIX-16e: 5y exit-multiple companion frame (never in FV_avg/verdict)
+    exit_check: Optional[dict] = None
     market_ev: Optional[float] = None
     bridge: Optional[float] = None               # net debt + MI + pref − non-op
     rate_build: str = ""                         # §4.0 build audit string
@@ -222,6 +225,41 @@ def price_for_return(hurdle: float, base: Optional[float], g0: float,
     except ValuationError:
         return None
     return fv if fv > 0 else None
+
+
+def exit_multiple_check(d, base_g0: float, g_term: float,
+                        rate: Optional[float], bridge: float,
+                        shares: Optional[float],
+                        price: Optional[float]) -> Optional[dict]:
+    """FIX-16e: the 5y exit-multiple COMPANION frame (owner-ratified) —
+    never enters FV_avg or the verdict numerics.
+
+    EBIT₅ grows on the first five rungs of the SAME linear fade the DCF
+    uses (g₀ → g_term over 10y — no new growth assumption); exit
+    EV₅ = median historical EV/EBIT (the FIX-16a series, ≥ 3 years) ×
+    EBIT₅; equity₅ = EV₅ − today's bridge (held constant, a labeled
+    simplification). Returns {'multiple','ebit5','eq5_ps','fv_today',
+    'return_5y'} — return_5y is price-only (interim FCFF ignored,
+    conservative), fv_today discounts at the valuation's rate."""
+    ebit0 = _latest(getattr(d, "ebit_reported", None) or [])
+    mults = [v for v in getattr(d, "ev_ebit_fy", None) or []
+             if v is not None]
+    if not ebit0 or ebit0 <= 0 or len(mults) < 3 or not shares:
+        return None
+    mult = statistics.median(mults)
+    ebit5 = ebit0
+    for i in range(1, 6):
+        g_i = base_g0 + (g_term - base_g0) * (i - 1) / (HORIZON - 1)
+        ebit5 *= 1 + g_i
+    eq5_ps = (mult * ebit5 - bridge) / shares
+    if eq5_ps <= 0:
+        return None
+    fv_today = (eq5_ps / (1 + rate) ** 5
+                if rate is not None and rate > -1 else None)
+    ret5 = ((eq5_ps / price) ** (1 / 5) - 1
+            if price and price > 0 else None)
+    return {"multiple": mult, "ebit5": ebit5, "eq5_ps": eq5_ps,
+            "fv_today": fv_today, "return_5y": ret5}
 
 
 def price_irr_ladder(price: Optional[float], base: Optional[float],
@@ -427,6 +465,10 @@ def build_valuation(d: DashboardData, inputs: ValuationInputs) -> ValuationResul
             result.hurdle_price = price_for_return(
                 HURDLE_RATE, base, bc.g0, bc.g_term, bridge, shares)
             result.hurdle_rate = HURDLE_RATE
+            # FIX-16e companion frame (dict on the result; verdict adds
+            # the note, Overview renders it — FV_avg never sees it)
+            result.exit_check = exit_multiple_check(
+                d, bc.g0, bc.g_term, rate, bridge, shares, price)
         for name in CASE_NAMES:
             c = inputs.cases[name]
             g0, g_term = _require(c.g0, f"{name} g0"), _require(c.g_term, f"{name} terminal g")
