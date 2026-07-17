@@ -1,4 +1,4 @@
-# UI validation checklist (FIX-12 / FIX-15) — owner-run, Windows
+# UI validation checklist (FIX-12 / FIX-15 / FIX-16) — owner-run, Windows
 
 CI has no display and the development container has no Windows, so the
 presentation layer's final acceptance is this owner-run pass. Run it on a
@@ -43,7 +43,7 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 ## Menu, Settings & persistence (FIX-12e)
 
 - [ ] Menu bar: File (Save PDF / Financial model / Fill workbook / Exit),
-      Tools (Compare… / Settings…), Help (About / Open cache folder /
+      Tools (Compare… / Refresh prices / Settings…), Help (About / Open cache folder /
       Open settings folder). Data items are greyed out until an Analyze
       completes and while busy.
 - [ ] Fresh profile (delete `%LOCALAPPDATA%\ForensicStockViz\settings.json`):
@@ -104,6 +104,23 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 - [x] Drawdown and Both (stacked) modes render sharp after maximize (the
       resize debounce re-renders cards at the new DPI).
 
+## Overview & market joins (FIX-16)
+
+- [ ] Overview tab renders all five cards after Analyze; KPI tiles show
+      dashes (–) only where an input is honestly missing, and the owner's
+      yield footnote ("issuance not netted") is present.
+- [ ] After a DCF valuation the Overview valuation card gains the
+      entry-price ladder line and the 5y exit cross-check line; the
+      Valuation page shows the same ladder under the reverse-DCF frame.
+- [ ] MELI and AAPL **Financial model…** exports carry the MARKET &
+      RATIOS block (values per FY, today's values in the LTM column) and
+      the CAGR/avg summary column; spot-check one market cap against
+      FY-end close × diluted shares.
+- [ ] Tools → **Refresh prices** updates the last close and re-renders
+      within a few seconds, without refetching EDGAR data.
+- [ ] Years = 15 renders: report pages stay legible and the export grows
+      the extra fiscal-year columns.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -115,5 +132,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Dialogs & flow | | |
 | Model export | | |
 | Explore | Pass | owner-run 2026-07-11, Windows @150% |
+| Overview & market joins | | |
 
 Date / machine / scaling: ______________________

@@ -24,9 +24,10 @@ untouched, and a to-do list of the analyst cells with suggested sources
 2. Double-click **`run_windows.bat`**. The first run creates a local
    virtual environment and installs the dependencies; later runs start
    instantly.
-3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10) and
+3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10/15) and
    **Track**, press **Analyze**. The report opens as tabs (Watchlist /
-   Dashboard / Unit economics / Health / Valuation / Verdict / Explore);
+   Overview / Dashboard / Unit economics / Health / Valuation / Verdict /
+   Explore);
    **Save PDF (A4)…** / **Financial model…** / **Fill workbook…** produce
    the deliverables.
 
@@ -76,6 +77,32 @@ muted line instead of drawing an empty frame. Trailing **PEG is
 deliberately absent**: it sign-flips through zero growth, and a forward
 PEG is a point, not a series. Explore never exports — the report pages
 stay static print artifacts.
+
+**Overview & market joins.** The **Overview** tab is the one-screen
+landing: a KPI strip (last close, market cap, P/E, EV/EBIT, net-debt/EBIT,
+**adj-FCF yield** (ex-SBC, house §2b), **owner's yield** — dividends +
+gross buybacks over market cap, issuance deliberately NOT netted and the
+label says so — ROIC, operating margin, revenue CAGR), the FV-vs-price
+cases, and the price/margins/P-E cards. The financial-model export gains a
+**MARKET & RATIOS block** — market cap, EV (bridge-legs consistent), P/E,
+EV/EBIT, net-debt/EBIT, adj-FCF yield and tangible book **per fiscal
+year**, with today's values in the LTM column — plus a **CAGR/avg summary
+column** on every row (geometric CAGR for value rows, period average for
+multiples; sign-flips honestly print nothing). All of it joins series the
+app had already fetched and audited — the numbers carry the same
+provenance as everything else.
+
+**Entry-price discipline.** Every DCF prints the **Base-case implied
+annual return** of buying at P₀, a **±40% price ladder** (what each entry
+price earns), and the price at which the **15% hurdle** (labeled
+ASSUMPTION) is met — both directions solved through the production
+`dcf_fcff`, no parallel engine. The verdict notes add a **5y
+exit-multiple cross-check** (Base-fade EBIT₅ × median historical EV/EBIT,
+discounted at the valuation rate) as a labeled companion frame — it never
+enters FV_avg or the coherence gate. History depth: up to **15 fiscal
+years** on screen (`--years 15`; the default stays 10, and the export
+always shows every fetched year). **Tools → Refresh prices** refetches
+the price series only and recomputes everything price-dependent.
 
 **DCF sandbox (native).** The Explore tab carries a **live DCF card** for
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
