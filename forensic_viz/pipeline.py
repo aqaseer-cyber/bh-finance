@@ -83,6 +83,10 @@ def build_dashboard_data(
         data.price_error = f"unexpected price-data error: {exc}"
     _check_cancel()  # boundary 2: prices done (fetched or waived)
     compute_altman(data)
+    # FIX-16a: join fundamentals to the FY-end market series (mcap, EV,
+    # P/E, EV/EBIT, yields) — inputs already fetched, pure arithmetic
+    from .market import compute_market_ratios
+    compute_market_ratios(data)
     if data.is_financial_sector:
         data.health_notes.append(
             f"{data.track.title()} track (SIC {data.sic_code}): Standard-track "

@@ -195,6 +195,11 @@ INSTANT_TAGS: Dict[str, List[str]] = {
     # Financial-model export (three-statement sheet) extras
     "ppe_net": ["PropertyPlantAndEquipmentNet"],
     "goodwill": ["Goodwill"],
+    # FIX-16a: tangible book = equity − goodwill − intangibles
+    "intangibles": [
+        "IntangibleAssetsNetExcludingGoodwill",
+        "FiniteLivedIntangibleAssetsNet",
+    ],
 }
 
 _UNITS_BY_CONCEPT = {

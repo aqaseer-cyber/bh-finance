@@ -176,6 +176,19 @@ class DashboardData:
     _z_parts: List[Optional[dict]] = field(default_factory=list)
     fy_prices: List[Optional[float]] = field(default_factory=list)
 
+    # FIX-16a: market-joined per-FY ratio series (market.py; empty until
+    # prices attach — every ratio masks on a non-positive denominator)
+    market_cap_fy: List[Optional[float]] = field(default_factory=list)
+    ev_fy: List[Optional[float]] = field(default_factory=list)
+    pe_fy: List[Optional[float]] = field(default_factory=list)
+    ev_ebit_fy: List[Optional[float]] = field(default_factory=list)
+    net_debt_fy: List[Optional[float]] = field(default_factory=list)
+    net_debt_ebit_fy: List[Optional[float]] = field(default_factory=list)
+    adj_fcf_yield_fy: List[Optional[float]] = field(default_factory=list)
+    tangible_book: List[Optional[float]] = field(default_factory=list)
+    owners_yield: Optional[float] = None       # (divs + gross buybacks)/mcap
+    adj_fcf_yield_now: Optional[float] = None  # latest FCF ex-SBC / mcap
+
     # Prices
     price_dates: List[dt.date] = field(default_factory=list)
     price_closes: List[float] = field(default_factory=list)
