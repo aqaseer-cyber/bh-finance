@@ -6,10 +6,11 @@ from forensic_viz.edgar import EdgarError, parse_companyfacts
 from tests.conftest import ASSETS, CFO, NI, REVENUE, SHARES
 
 
-def test_fiscal_year_spine_takes_last_eleven_years(testco_facts):
+def test_fiscal_year_spine_takes_all_years_up_to_fetch_cap(testco_facts):
+    # FIX-16f: the fetch cap is 16y; TESTCO files 12, so all 12 ride
     f = parse_companyfacts(testco_facts, "TESTCO")
     assert f.entity_name == "TESTCO INC"
-    assert f.fy_ends == [dt.date(y, 12, 31) for y in range(2015, 2026)]
+    assert f.fy_ends == [dt.date(y, 12, 31) for y in range(2014, 2026)]
 
 
 def test_revenue_tag_migration_prefers_recent_coverage(testco_facts):
@@ -19,7 +20,7 @@ def test_revenue_tag_migration_prefers_recent_coverage(testco_facts):
     assert f.tags_used["revenue"].startswith(
         "RevenueFromContractWithCustomerExcludingAssessedTax")
     assert "from Revenues" in f.tags_used["revenue"]
-    assert f.series["revenue"] == [REVENUE[y] for y in range(2015, 2026)]
+    assert f.series["revenue"] == [REVENUE[y] for y in range(2014, 2026)]
 
 
 def test_amended_10ka_value_wins(testco_facts):
@@ -36,18 +37,18 @@ def test_quarterly_rows_are_excluded(testco_facts):
 
 def test_flows_shares_and_instants_align(testco_facts):
     f = parse_companyfacts(testco_facts, "TESTCO")
-    years = range(2015, 2026)
+    years = range(2014, 2026)
     assert f.series["net_income"] == [NI[y] for y in years]
     assert f.series["cfo"] == [CFO[y] for y in years]
     assert f.series["diluted_shares"] == [SHARES[y] for y in years]
     assert f.series["total_assets"] == [ASSETS[y] for y in years]
-    assert f.series["lt_debt_noncurrent"] == [300e6] * 11
-    assert f.series["lt_debt_current"] == [50e6] * 11
+    assert f.series["lt_debt_noncurrent"] == [300e6] * 12
+    assert f.series["lt_debt_current"] == [50e6] * 12
 
 
 def test_missing_gross_profit_leaves_none(testco_facts):
     f = parse_companyfacts(testco_facts, "TESTCO")
-    assert f.series["gross_profit"] == [None] * 11  # derived later in metrics
+    assert f.series["gross_profit"] == [None] * 12  # derived later in metrics
 
 
 def test_ifrs_only_filer_is_rejected():

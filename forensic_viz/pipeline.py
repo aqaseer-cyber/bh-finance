@@ -26,7 +26,7 @@ def build_dashboard_data(
     cache: Optional[Cache] = None,
     progress: ProgressFn = _noop,
     track: str = "auto",
-    years: int = config.DISPLAY_YEARS,
+    years: int = config.GUI_DEFAULT_YEARS,
     cancel: Optional[threading.Event] = None,
 ) -> DashboardData:
     """Fetch fundamentals (required) and prices (best-effort), derive metrics.

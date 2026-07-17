@@ -113,9 +113,12 @@ def main(argv=None) -> int:
     )
     parser.add_argument("ticker", nargs="?", help="US-listed ticker, e.g. AAPL")
     parser.add_argument("-o", "--out", help="output path (.pdf, or base name with --png)")
-    parser.add_argument("--years", type=int, default=config.DISPLAY_YEARS,
+    parser.add_argument("--years", type=int,
+                        default=config.GUI_DEFAULT_YEARS,
                         choices=range(1, config.DISPLAY_YEARS + 1), metavar="N",
-                        help=f"fiscal years to display, 1–{config.DISPLAY_YEARS} (default 10)")
+                        help=f"fiscal years to display, "
+                             f"1–{config.DISPLAY_YEARS} (default "
+                             f"{config.GUI_DEFAULT_YEARS})")
     parser.add_argument("--png", action="store_true",
                         help="write per-page PNGs instead of the A4 PDF")
     parser.add_argument("--model", nargs="?", const="", metavar="PATH",

@@ -621,6 +621,13 @@ def _score_tag(obs: Dict[dt.date, float], window_ends: List[dt.date]) -> float:
     for rank, end in enumerate(sorted(window_ends)):  # oldest first
         if end in obs:
             score += 1.0 + rank / max(n, 1)  # recent years weigh more
+            if rank >= n - 3:
+                # FIX-16f: with a 16-year window a linear weight lets a
+                # long-dead legacy tag out-score the living one (README
+                # invariant: "the tag covering the recent fiscal years
+                # wins, so the series can't silently end years ago") —
+                # coverage of the last three years dominates dead depth
+                score += 10.0
     return score
 
 

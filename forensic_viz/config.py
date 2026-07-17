@@ -19,15 +19,18 @@ UA_IS_PLACEHOLDER = SEC_USER_AGENT == _UA_PLACEHOLDER
 UA_WARNING = ("SEC requires an identifying User-Agent — set SEC_EDGAR_USER_AGENT "
               "to 'name email' before heavy use.")
 
-# Number of fiscal years shown on the dashboard; one extra is fetched for
-# year-over-year growth and average-asset calculations.
-DISPLAY_YEARS = 10
+# Fiscal-year depth (FIX-16f, owner-ratified): up to 15 years display
+# with one extra fetched for YoY/average-asset calculations. The DEFAULT
+# window stays 10 — the A4 report pages are tuned for it; 15 is opt-in
+# (Years combobox / --years 15). The model export always shows every
+# fetched year.
+DISPLAY_YEARS = 15
 FETCH_YEARS = DISPLAY_YEARS + 1
 
 PRICE_YEARS = 10
 
 # GUI defaults persisted via the Settings dialog (FIX-12e)
-GUI_DEFAULT_YEARS = DISPLAY_YEARS
+GUI_DEFAULT_YEARS = 10
 USER_HOUSE_FILE = ""  # display-only echo of settings.json's house_file
 
 

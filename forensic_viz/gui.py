@@ -9,6 +9,7 @@ opens it in the default browser.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import math
 import os
 import queue
@@ -46,8 +47,8 @@ from .model_export import export_financial_model
 from .compare import MAX_TICKERS, build_compare_html
 from .ledger import Ledger
 from .metrics import (
-    TRACKS, DashboardData, apply_track, compute_altman, fmt_money,
-    set_adjusted_ni,
+    TRACKS, DashboardData, apply_track, build_price_metrics, compute_altman,
+    fmt_money, set_adjusted_ni,
 )
 from .pipeline import build_dashboard_data
 from .valuation import (
@@ -59,7 +60,7 @@ from .workbook import fill_workbook
 
 SCREEN_DPI = 100  # fallback dpi cap for on-screen rasters (used only when
 #                   the display DPI is unknown); the PDF export is vector
-YEAR_CHOICES = ("3", "5", "7", "10")
+YEAR_CHOICES = ("3", "5", "7", "10", "15")
 PAGES = ("Dashboard", "Unit economics", "Health checks", "Valuation", "Verdict")
 REPO_URL = "https://github.com/aqaseer-cyber/bh-finance"
 
@@ -729,6 +730,8 @@ class App:
         m_file.add_command(label="Exit", command=root.destroy)
         m_tools = tk.Menu(menubar, tearoff=0)
         m_tools.add_command(label="Compare…", command=self.compare)
+        m_tools.add_command(label="Refresh prices",
+                            command=self.refresh_prices)
         m_tools.add_separator()
         m_tools.add_command(label="Settings…", command=self.open_settings)
         m_help = tk.Menu(menubar, tearoff=0)
@@ -757,6 +760,7 @@ class App:
         for label in ("Save PDF (A4)…", "Financial model…", "Fill workbook…"):
             self._menu_file.entryconfig(label, state=data_state)
         self._menu_tools.entryconfig("Compare…", state=any_state)
+        self._menu_tools.entryconfig("Refresh prices", state=data_state)
 
     def _maybe_prompt_ua(self):
         """One-time offer to open Settings when the SEC UA is a placeholder
@@ -777,6 +781,37 @@ class App:
                 "on EDGAR requests.\n\nOpen Settings to configure it now?",
                 parent=self.root):
             self.open_settings()
+
+    def refresh_prices(self):
+        """FIX-16f: refetch the price series only (cache bypassed) and
+        recompute everything price-dependent — Altman MVE, the FY market
+        joins, the ratio cards — without touching the EDGAR data."""
+        if self.data is None or self.busy:
+            return
+        from .market import compute_market_ratios
+        from .prices import fetch_prices
+        d = self.data
+        self.status_var.set("Refreshing prices…")
+        self.root.update_idletasks()
+        try:
+            prices = fetch_prices(d.ticker, cache=Cache(enabled=False))
+        except Exception as exc:
+            self.status_var.set(f"Price refresh failed: {exc}")
+            return
+        cutoff = d.generated - _dt.timedelta(
+            days=round(d.display_years * 365.25))
+        keep = [(day, c) for day, c in zip(prices.dates, prices.closes)
+                if day >= cutoff]
+        if keep:
+            prices.dates = [k[0] for k in keep]
+            prices.closes = [k[1] for k in keep]
+        build_price_metrics(prices, d)
+        d.fy_prices = []          # re-attach at the fresh closes
+        compute_altman(d)
+        compute_market_ratios(d)
+        self._rerender_all(self._screen_dpi())
+        self.status_var.set(
+            f"Prices refreshed — last close ${d.last_close:,.2f}.")
 
     def open_settings(self):
         _SettingsDialog(self.root, on_saved=self._on_settings_saved)

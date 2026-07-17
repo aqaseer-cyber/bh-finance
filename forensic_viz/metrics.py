@@ -46,7 +46,7 @@ class DashboardData:
     subtitle: str
     generated: dt.date
     demo: bool = False
-    display_years: int = config.DISPLAY_YEARS
+    display_years: int = config.GUI_DEFAULT_YEARS
 
     # Analyst consensus growth estimates (Yahoo) — one anchor on the
     # FIX-14a growth ladder (anchors.py): the mean seeds Bull, the low/high
