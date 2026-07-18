@@ -1,4 +1,4 @@
-# UI validation checklist (FIX-12 / FIX-15 / FIX-16) — owner-run, Windows
+# UI validation checklist (FIX-12 / FIX-15 / FIX-16 / FIX-17) — owner-run, Windows
 
 CI has no display and the development container has no Windows, so the
 presentation layer's final acceptance is this owner-run pass. Run it on a
@@ -125,6 +125,14 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       the extra fiscal-year columns. Settings → default years = 15
       persists across a relaunch.
 
+## Providers & probe (FIX-17a)
+
+- [ ] `setx` the three provider keys (README "Provider keys"), open a
+      NEW terminal, run `run_windows.bat --probe PYPL`: the matrix
+      prints with per-endpoint OK/DENIED/KEY? statuses, keys appear
+      only as `...tail4`, and the verdict lines state whether analyst
+      estimates are served. Paste the full output back to the session.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -137,5 +145,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Model export | | |
 | Explore | Pass | owner-run 2026-07-11, Windows @150% |
 | Overview & market joins | | |
+| Providers probe | | |
 
 Date / machine / scaling: ______________________

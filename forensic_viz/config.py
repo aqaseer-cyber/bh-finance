@@ -29,6 +29,14 @@ FETCH_YEARS = DISPLAY_YEARS + 1
 
 PRICE_YEARS = 10
 
+# FIX-17a: provider API keys — environment variable first, settings.json
+# (per-user app data, outside the repo) as fallback. Keys are NEVER
+# written into any file inside the repository, and are only ever
+# displayed as a …tail4 (providers.base.key_tail).
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "")
+TIINGO_API_KEY = os.environ.get("TIINGO_API_KEY", "")
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
+
 # GUI defaults persisted via the Settings dialog (FIX-12e)
 GUI_DEFAULT_YEARS = 10
 # The Years windows the GUI offers — the single source both gui.YEAR_CHOICES
@@ -81,11 +89,20 @@ def apply_user_settings(s: dict) -> None:
     at that moment, so mutating the module attribute here reaches every
     later request."""
     global SEC_USER_AGENT, UA_IS_PLACEHOLDER, GUI_DEFAULT_YEARS, USER_HOUSE_FILE
+    global FMP_API_KEY, TIINGO_API_KEY, FINNHUB_API_KEY
     ua = str(s.get("sec_user_agent") or "").strip()
     if ua and not os.environ.get("SEC_EDGAR_USER_AGENT"):
         SEC_USER_AGENT = ua
         UA_IS_PLACEHOLDER = False
     USER_HOUSE_FILE = str(s.get("house_file") or "")
+    # FIX-17a provider keys: a saved key only fills the gap; env wins
+    for attr, env_name, settings_key in (
+            ("FMP_API_KEY", "FMP_API_KEY", "fmp_api_key"),
+            ("TIINGO_API_KEY", "TIINGO_API_KEY", "tiingo_api_key"),
+            ("FINNHUB_API_KEY", "FINNHUB_API_KEY", "finnhub_api_key")):
+        saved = str(s.get(settings_key) or "").strip()
+        if saved and not os.environ.get(env_name):
+            globals()[attr] = saved
     try:
         yrs = int(s.get("default_years", 0))
     except (TypeError, ValueError):

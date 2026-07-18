@@ -436,6 +436,29 @@ file loads, the report labels flip from "ASSUMPTION" to "house".
   long-term debt (current + noncurrent) + short-term borrowings, falling back
   to `LongTermDebt`. Accruals ratio uses average total assets.
 
+### Provider keys & the capability probe (FIX-17a)
+
+EDGAR remains the single displayed source of truth; keyed providers
+(**FMP**, **Tiingo**, **Finnhub** — free registrations) recheck it,
+flag divergences, and fill cells EDGAR left empty — always visibly
+tagged (`docs/FIX17_SPEC.md`). Keys are read from environment
+variables first, saved settings as fallback, and are never written to
+any file in the repository. One-time setup in PowerShell:
+
+```powershell
+setx FMP_API_KEY "your-fmp-key"
+setx TIINGO_API_KEY "your-tiingo-token"
+setx FINNHUB_API_KEY "your-finnhub-key"
+```
+
+(then open a NEW terminal so the variables take effect). Verify what
+your keys actually serve with the live probe — it prints a capability
+matrix plus verdict lines and shows keys only as `...tail4`:
+
+```
+run_windows.bat --probe PYPL
+```
+
 ### SEC access requirements
 
 The SEC requires an identifying User-Agent; the default is set in

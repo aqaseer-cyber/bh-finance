@@ -175,7 +175,21 @@ def main(argv=None) -> int:
     parser.add_argument("--compare", metavar="TICKERS",
                         help="comma-separated tickers (2–4): build the "
                              "side-by-side comparison page and exit")
+    parser.add_argument("--probe", action="store_true",
+                        help="FIX-17a: live-test the configured provider "
+                             "API keys (FMP/Tiingo/Finnhub) against the "
+                             "given ticker (default PYPL) and exit")
     args = parser.parse_args(argv)
+
+    if args.probe:
+        # FIX-17a: live capability probe — settings fill key gaps first
+        config.apply_user_settings(config.load_user_settings())
+        from .providers import probe_all, render_probe
+        ticker = (args.ticker or "PYPL").upper()
+        print(f"probing configured provider keys against {ticker}…",
+              flush=True)
+        print(render_probe(probe_all(ticker), ticker))
+        return 0
 
     if args.ledger_history:
         from .ledger import Ledger
