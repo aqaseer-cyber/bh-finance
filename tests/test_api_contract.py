@@ -136,6 +136,47 @@ def test_anchors_endpoint(client):
     assert client.get("/api/anchors/NOPE").status_code == 404
 
 
+def test_financials_endpoint_reuses_export_derivations(client):
+    """R2 push 2: /api/financials must serve EXACTLY what the export
+    derives — same quarterly spine, same as-filed value source."""
+    from forensic_viz.edgar import annual_values_for_concept
+    from forensic_viz.model_export import build_model_rows
+    from forensic_viz.quarters import parse_quarterly_facts
+    _sse_events(client, "/api/run/TESTCO")
+    r = client.get("/api/financials/TESTCO")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    d = _testco()
+    f = d.fundamentals
+    rows, fy_ends, q_ends = build_model_rows(
+        f, parse_quarterly_facts(f.raw_facts, f))
+    assert len(data["quarter_labels"]) == len(q_ends)
+    got_rev = data["rows"]["revenue"]
+    assert got_rev["q"] == pytest.approx(
+        [v for v in rows["revenue"].q], abs=1e-6)
+    assert got_rev["ltm"] == pytest.approx(rows["revenue"].ltm)
+    # statement_values: joined via the export's own value source
+    from forensic_viz.edgar import PresRow
+    app2 = create_app(pipeline=None, token=TOKEN)
+    d2 = _testco()
+    concept = next(iter((f.raw_facts.get("facts") or {})
+                        .get("us-gaap") or {}), None)
+    if concept:
+        d2.statements = {"income": [
+            PresRow(concept=concept, label="X", depth=0,
+                    is_total=False, is_abstract=False)]}
+        app2.state.runs["TESTCO"] = d2
+        c2 = TestClient(app2,
+                        headers={"Authorization": f"Bearer {TOKEN}"})
+        sv = c2.get("/api/financials/TESTCO").json()["data"][
+            "statement_values"]
+        direct, unit = annual_values_for_concept(
+            d2.fundamentals.raw_facts, concept, d2.fundamentals.fy_ends)
+        assert sv[concept]["values"] == direct
+        assert sv[concept]["unit"] == unit
+    assert client.get("/api/financials/NOPE").status_code == 404
+
+
 def test_sandbox_parity(client):
     from forensic_viz.explore import sandbox_compute
     body = {"base": 5e8, "wacc": 0.09, "g0": 0.05, "g_term": 0.02,

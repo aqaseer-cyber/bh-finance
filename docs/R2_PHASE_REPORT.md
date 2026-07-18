@@ -34,14 +34,29 @@
 **Line count (charter metric)** — `gui.py + dashboard.py + explore.py`:
 4609 → **4157** (−452 net, with three new screens added elsewhere).
 
-## Remaining inside R2 (before the owner parity gate)
+## Push 2 (same day) — Financials completion
 
-1. Financials **quarterly toggle** + the **full as-filed value join**
-   (then the four-name validation protocol re-runs against the new
-   Financials/Segments screens).
-2. The five A4 report pages as Tk *screens* — removed once the owner's
-   parity checklist confirms the web screens cover them (the pages
-   survive inside the PDF exporter regardless, per the kill list).
+- **Quarterly toggle**: the model table switches Annual ↔ Quarterly+LTM;
+  columns and values come from `/api/financials`, which calls the SAME
+  `build_model_rows` the XLSX export uses (discrete quarters, YTD
+  differencing, derived Q4, LTM) — no parallel math, pinned by a
+  parity contract test.
+- **Full as-filed value join**: every non-abstract presentation line
+  now gets its values from `annual_values_for_concept` — the export
+  statement sheets' own value source, extension namespaces included —
+  with unit-aware formatting and per-line provenance on hover. The
+  R1 tag-map join survives only as a fallback.
+- R2.1 chart-scale fix (owner feedback): hidden-screen chart init +
+  legend overlap resolved.
+
+## Remaining inside R2 (owner parity gate)
+
+1. Owner runs the "v3 R2 — feature parity" checklist, including the
+   four-name validation protocol against the new Financials/Segments
+   screens.
+2. The five A4 report pages as Tk *screens* — removed once the parity
+   checklist confirms the web screens cover them (the pages survive
+   inside the PDF exporter regardless, per the kill list).
 3. `explore.py`'s now-unused Tk card builders are deleted with the
    module in R3 (`sandbox_compute` moves to the engine side then —
    it still powers `/api/sandbox`).

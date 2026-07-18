@@ -16,10 +16,20 @@
 
 (function () {
   const $ = (id) => document.getElementById(id);
+  let fin = null, finTicker = null;   // /api/financials cache
+  let modelMode = "annual";
+  let lastD = null;
 
   function esc(s) {
     return String(s ?? "").replace(/[&<>"]/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  function unitFmt(v, unit) {
+    if (unit === "USD/shares") return fmt.moneyRaw(v);
+    if (unit === "shares") return fmt.shares(v);
+    if (unit === "pure") return fmt.isNil(v) ? fmt.DASH : v.toFixed(4);
+    return fmt.money(v);
   }
 
   const LABELS = {
@@ -50,26 +60,58 @@
     return (f.fy_ends || []).map((iso) => String(iso).slice(0, 4));
   }
 
+  function fmtConcept(key, v) {
+    return key === "diluted_shares" || key === "basic_shares"
+      ? fmt.shares(v) : key === "eps_diluted"
+        ? fmt.moneyRaw(v) : fmt.money(v);
+  }
+
   function annualModelTable(d) {
     const f = d.fundamentals || {};
     const ys = years(f), series = f.series || {},
           tags = f.tags_used || {};
+    const quarterly = modelMode === "quarterly" && fin;
+    const cols = quarterly
+      ? (fin.quarter_labels || []).concat(["LTM"]) : ys;
     let html = '<table class="tbl"><tr><th>Concept</th>'
-      + ys.map((y) => "<th>" + y + "</th>").join("") + "</tr>";
+      + cols.map((y) => "<th>" + esc(y) + "</th>").join("") + "</tr>";
     for (const [key, arr] of Object.entries(series)) {
       if (!arr || !arr.some((v) => v !== null)) continue;
       const label = LABELS[key] || key;
       const tag = tags[key] || "";
+      let cells;
+      if (quarterly) {
+        const row = (fin.rows || {})[key];
+        if (!row) continue;
+        cells = (row.q || []).concat([row.ltm]);
+        if (!cells.some((v) => v !== null && v !== undefined)) continue;
+      } else {
+        cells = arr;
+      }
       html += "<tr><td>" + esc(label)
         + (tag ? '<span class="badge" title="' + esc(tag)
                  + '">xbrl</span>' : "") + "</td>"
-        + arr.map((v) => '<td class="num' + (v < 0 ? " neg" : "")
-          + '">' + (key === "diluted_shares" || key === "basic_shares"
-            ? fmt.shares(v) : key === "eps_diluted"
-              ? fmt.moneyRaw(v) : fmt.money(v)) + "</td>").join("")
+        + cells.map((v) => '<td class="num' + (v < 0 ? " neg" : "")
+          + '">' + fmtConcept(key, v) + "</td>").join("")
         + "</tr>";
     }
     return html + "</table>";
+  }
+
+  function modelToggle(d) {
+    const row = $("fin-model-modes");
+    if (!row) return;
+    row.innerHTML = [["annual", "Annual"],
+                     ["quarterly", "Quarterly + LTM"]].map(([m, l]) =>
+      '<button class="' + (m === modelMode ? "active" : "")
+      + '" data-m="' + m + '"' + (m === "quarterly" && !fin
+        ? " disabled" : "") + ">" + l + "</button>").join("");
+    row.onclick = (e) => {
+      if (!e.target.dataset.m || e.target.disabled) return;
+      modelMode = e.target.dataset.m;
+      modelToggle(d);
+      $("fin-model").innerHTML = annualModelTable(d);
+    };
   }
 
   function tagToConcept(f) {
@@ -83,24 +125,36 @@
   }
 
   function statementTable(d, rows) {
+    /* R2 push 2: the FULL as-filed join — every non-abstract line gets
+       its values from /api/financials.statement_values (the same
+       annual_values_for_concept the export's statement sheets use,
+       extension namespaces included). Fallback: the tag-map join. */
     const f = d.fundamentals || {};
     const ys = years(f), series = f.series || {};
     const rev = tagToConcept(f);
+    const sv = (fin && fin.statement_values) || {};
     let html = '<table class="tbl"><tr><th>As filed</th>'
       + ys.map((y) => "<th>" + y + "</th>").join("") + "</tr>";
     for (const r of rows) {
+      const full = sv[r.concept];
       const concept = rev[r.concept];
-      const arr = concept ? series[concept] : null;
+      const arr = full ? full.values
+        : concept ? series[concept] : null;
+      const unit = full ? full.unit : "";
       const pad = "&nbsp;".repeat(Math.max(0, (r.depth || 0)) * 2);
       const cls = r.is_abstract ? "abstract" : r.is_total ? "total" : "";
       html += "<tr><td class=\"" + cls + "\" title=\""
-        + esc(r.concept) + (concept
-          ? " → " + esc(f.tags_used[concept] || "") : " (not extracted;"
-          + " full as-filed join lands in R2)") + "\">"
+        + esc(r.concept)
+        + (full ? " · as filed (companyfacts, latest amendment wins)"
+                  + (unit ? " · " + esc(unit) : "")
+           : concept ? " → " + esc(f.tags_used[concept] || "")
+           : " · no annual facts for this concept") + "\">"
         + pad + esc(r.label || r.concept) + "</td>"
         + ys.map((_, i) => '<td class="num ' + cls
           + ((arr && arr[i] < 0) ? " neg" : "") + '">'
-          + (r.is_abstract ? "" : arr ? fmt.money(arr[i]) : fmt.DASH)
+          + (r.is_abstract ? "" : arr
+             ? (full ? unitFmt(arr[i], unit) : fmt.money(arr[i]))
+             : fmt.DASH)
           + "</td>").join("") + "</tr>";
     }
     return html + "</table>";
@@ -165,7 +219,18 @@
     return html;
   }
 
-  window.renderFinancials = function (d) {
+  window.renderFinancials = async function (d) {
+    lastD = d;
+    if (finTicker !== d.ticker) {
+      fin = null;
+      finTicker = d.ticker;
+      modelMode = "annual";
+      try {
+        fin = (await api.get("/api/financials/" + d.ticker)).data;
+      } catch (e) { fin = null; }
+      if (lastD !== d) return;   // a newer run superseded this fetch
+    }
+    modelToggle(d);
     $("fin-model").innerHTML = annualModelTable(d);
     const st = d.statements || {};
     const put = (id, key, fallback) => {

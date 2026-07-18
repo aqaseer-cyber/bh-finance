@@ -224,9 +224,8 @@
     <!-- ============================== Financials -->
     <div v-show="store.screen === 'financials'">
       <div class="section card">
-        <div class="card-title">Annual model (as-filed XBRL)
-          <span class="control muted">quarterly toggle lands in
-            R2</span>
+        <div class="card-title">Financial model (as-filed XBRL)
+          <span class="control toggle-row" id="fin-model-modes"></span>
         </div>
         <div class="tbl-wrap" id="fin-model"></div>
         <div class="card-foot">hover the xbrl badge for the concept's
@@ -236,9 +235,10 @@
         <div class="card">
           <div class="card-title">Income statement (as filed)</div>
           <div class="tbl-wrap" id="fin-is"></div>
-          <div class="card-foot">structure: presentation linkbase of
-            the latest 10-K; values joined where the as-filed concept
-            maps to an extracted series — full join in R2</div>
+          <div class="card-foot">presentation linkbase of the latest
+            10-K; values per line from companyfacts (latest amendment
+            wins, extension concepts included) — hover a line for
+            concept + unit</div>
         </div>
         <div class="card">
           <div class="card-title">Balance sheet (as filed)</div>

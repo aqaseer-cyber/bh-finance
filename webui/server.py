@@ -199,6 +199,46 @@ def create_app(pipeline: Optional[Callable] = None,
                              "wacc", getattr(d, "wacc_build",
                                              None))["data"]}}
 
+    @app.get("/api/financials/{ticker}", dependencies=[Depends(auth)])
+    async def financials(ticker: str):
+        """v3 R2 push 2: the export's OWN derivations, serialized — the
+        quarterly spine from the same `build_model_rows` the XLSX uses,
+        and full as-filed per-concept values from the same
+        `annual_values_for_concept` the statement sheets use (extension
+        namespaces included). No parallel math anywhere."""
+        from forensic_viz.edgar import annual_values_for_concept
+        from forensic_viz.metrics import fy_label
+        from forensic_viz.model_export import build_model_rows
+        from forensic_viz.quarters import (
+            parse_quarterly_facts, quarter_label,
+        )
+        d = _run(ticker)
+        f = getattr(d, "fundamentals", None)
+        if f is None or f.raw_facts is None or not f.fy_ends:
+            raise HTTPException(status_code=404,
+                                detail="run carries no raw facts")
+        qdata = parse_quarterly_facts(f.raw_facts, f)
+        rows, fy_ends, q_ends = build_model_rows(f, qdata)
+        stmts = getattr(d, "statements", None) or {}
+        statement_values = {}
+        for key in ("income", "balance", "cashflow"):
+            for prow in stmts.get(key, []) or []:
+                concept = getattr(prow, "concept", "")
+                if not concept or concept in statement_values \
+                        or getattr(prow, "is_abstract", False):
+                    continue
+                vals, unit = annual_values_for_concept(
+                    f.raw_facts, concept, f.fy_ends)
+                statement_values[concept] = {"values": vals,
+                                             "unit": unit}
+        return payload("financials", {
+            "fy_labels": [fy_label(e) for e in fy_ends],
+            "quarter_labels": [quarter_label(qe, fy_ends)
+                               for qe in q_ends],
+            "rows": rows,
+            "statement_values": statement_values,
+        })
+
     @app.post("/api/sandbox", dependencies=[Depends(auth)])
     async def sandbox(body: dict):
         from forensic_viz.explore import sandbox_compute

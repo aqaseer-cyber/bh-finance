@@ -215,6 +215,14 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 
 ## v3 R2 — feature parity (charter gate, owner-run)
 
+- [ ] Financials: the model-table toggle switches Annual ↔
+      Quarterly+LTM and the quarter values match the XLSX export's
+      quarter columns for the same ticker; as-filed IS/BS/CF lines all
+      carry values (extension-tagged lines included — check MELI's
+      interest expense) with concept + unit on hover.
+- [ ] Four-name validation (MELI / PYPL / AXON / GSL): the new
+      Financials + Segments screens agree with the financial-model
+      export for each name.
 - [ ] Quality screen: every §2.3 chart renders once — revenue card
       modes switch (level/growth/margins), Piotroski, Sloan, Altman,
       SBC, R&D, CCC, returns, incremental margins, health notes.
