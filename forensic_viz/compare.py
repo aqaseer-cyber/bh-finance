@@ -169,7 +169,7 @@ def build_compare_html(datas: List[DashboardData], path: str,
                      + f.to_html(full_html=False, include_plotlyjs=(i == 0),
                                  config={"displaylogo": False})
                      + "</div>")
-    parts.append("<div class='note'>Sources: SEC EDGAR XBRL, Stooq/Yahoo. "
+    parts.append("<div class='note'>Sources: SEC EDGAR XBRL; prices Tiingo/Stooq. "
                  "Ledger rows come from your local verdict ledger (§5.7). "
                  "Not investment advice.</div></main></body></html>")
     with open(path, "w", encoding="utf-8") as fh:

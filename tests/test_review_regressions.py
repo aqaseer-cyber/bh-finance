@@ -5,7 +5,7 @@ import pytest
 
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import DashboardData, build_fundamental_metrics
-from forensic_viz.prices import PriceError, parse_yahoo_chart
+from forensic_viz.prices import PriceError, parse_tiingo_daily
 from tests.conftest import FY_YEARS, REVENUE, _annual, _usd
 
 
@@ -35,25 +35,26 @@ def test_newest_fiscal_year_survives_tag_migration(testco_facts):
         in f.tags_used["revenue"]
 
 
-def test_yahoo_zero_closes_are_dropped():
-    n = 40
-    closes = [0.0] + [100.0 + i for i in range(1, n)]  # leading Yahoo glitch row
-    payload = {"chart": {"result": [{
-        "timestamp": [1700000000 + i * 86400 for i in range(n)],
-        "indicators": {"quote": [{"close": closes}]},
-    }], "error": None}}
-    series = parse_yahoo_chart(payload, "TEST")
-    assert len(series.closes) == n - 1
+def _tiingo_row(i, close):
+    return {"date": f"2024-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}",
+            "close": close, "splitFactor": 1.0}
+
+
+def test_price_zero_closes_are_dropped():
+    """Zero-close glitch rows (the recurring price-feed defect the old
+    Yahoo leg exhibited) must be dropped, never plotted — same guard,
+    now on the Tiingo leg (FIX-17b)."""
+    rows = [_tiingo_row(0, 0.0)] + [
+        _tiingo_row(i, 100.0 + i) for i in range(1, 40)]
+    series = parse_tiingo_daily(rows, "TEST")
+    assert len(series.closes) == 39
     assert min(series.closes) > 0
 
 
-def test_yahoo_all_zero_closes_raise():
-    payload = {"chart": {"result": [{
-        "timestamp": [1700000000 + i * 86400 for i in range(40)],
-        "indicators": {"quote": [{"close": [0.0] * 40}]},
-    }], "error": None}}
+def test_price_all_zero_closes_raise():
+    rows = [_tiingo_row(i, 0.0) for i in range(40)]
     with pytest.raises(PriceError):
-        parse_yahoo_chart(payload, "TEST")
+        parse_tiingo_daily(rows, "TEST")
 
 
 def test_negative_revenue_year_yields_no_margins(testco_facts):

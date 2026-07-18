@@ -428,9 +428,12 @@ file loads, the report labels flip from "ASSUMPTION" to "house".
   can't silently end years ago. Because a 10-year window usually spans such a
   migration, years the winning tag misses are filled from the next-ranked tag
   and the mix is **recorded in the audit string** (footer + CSV) — never silent.
-- **Prices** — Stooq daily CSV (keyless), falling back to the Yahoo Finance
-  chart API. Split-adjusted closes. If both fail, the dashboard still renders
-  from fundamentals alone.
+- **Prices** — Tiingo daily API (keyed, FIX-17b primary; split-only
+  adjustment derived from as-traded closes + split factors so FY-end
+  close × shares equals the real market cap of the day), falling back
+  to Stooq daily CSV (keyless). The Yahoo chart scrape is retired. If
+  every source fails, the dashboard still renders from fundamentals
+  alone.
 - **Derived** — FCF = CFO − capex. Gross profit falls back to
   revenue − cost of revenue when `GrossProfit` isn't tagged. Total debt =
   long-term debt (current + noncurrent) + short-term borrowings, falling back
@@ -495,7 +498,7 @@ python -m forensic_viz AAPL --years 5 --model  # cached after the first run
 ```
 
 Layout: `forensic_viz/edgar.py` (XBRL pull + tag selection),
-`prices.py` (Stooq/Yahoo), `metrics.py` (derivations), `dashboard.py`
+`prices.py` (Tiingo/Stooq), `metrics.py` (derivations), `dashboard.py`
 (renderer), `quarters.py` (shared quarter/TTM machinery), `explore.py`
 (Explore cards + sandbox compute), `gui.py` (Tkinter app), `pipeline.py`
 (orchestration), `export.py` (A4 PDF + CSV), `estimates.py` (analyst

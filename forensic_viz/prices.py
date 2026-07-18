@@ -1,7 +1,15 @@
-"""Daily price history: Stooq CSV first (keyless), Yahoo chart API fallback.
+"""Daily price history (FIX-17b): Tiingo primary (keyed), Stooq CSV
+fallback (keyless). The Yahoo chart scrape is retired (owner-ratified —
+undocumented endpoint, the stack's least reliable leg).
 
-Both sources return split-adjusted closes. Price failure is non-fatal to the
-dashboard — fundamentals render without the price panels.
+House basis: SPLIT-adjusted closes, dividends NOT backed out — an FY-end
+close × diluted shares must equal the real market cap of that day, so a
+total-return series (Tiingo's adjClose) would misstate history. Tiingo
+serves raw closes plus per-day split factors; the split-only adjustment
+is derived here and pinned by tests.
+
+Price failure stays non-fatal to the dashboard — fundamentals render
+without the price panels.
 """
 from __future__ import annotations
 
@@ -15,12 +23,10 @@ import requests
 
 from . import config
 from .cache import Cache
+from .providers.base import ProviderError
+from .providers.tiingo import TiingoClient
 
 STOOQ_URL = "https://stooq.com/q/d/l/?s={symbol}&d1={d1}&d2={d2}&i=d"
-YAHOO_URL = (
-    "https://query1.finance.yahoo.com/v8/finance/chart/"
-    "{symbol}?range={years}y&interval=1d"
-)
 
 
 class PriceError(RuntimeError):
@@ -43,7 +49,8 @@ def _stooq_symbol(ticker: str) -> str:
     return ticker.strip().lower().replace(".", "-") + ".us"
 
 
-def _yahoo_symbol(ticker: str) -> str:
+def _dash_symbol(ticker: str) -> str:
+    """Tiingo symbol form: uppercase, class dots as dashes (BRK.B -> BRK-B)."""
     return ticker.strip().upper().replace(".", "-")
 
 
@@ -74,29 +81,55 @@ def parse_stooq_csv(text: str, symbol: str) -> PriceSeries:
     )
 
 
-def parse_yahoo_chart(payload: dict, symbol: str) -> PriceSeries:
-    try:
-        result = payload["chart"]["result"][0]
-        timestamps = result["timestamp"]
-        quote = result["indicators"]["quote"][0]
-        adj = result["indicators"].get("adjclose", [{}])[0].get("adjclose")
-        closes_raw = adj if adj else quote["close"]
-    except (KeyError, IndexError, TypeError) as exc:
-        err = None
+def parse_tiingo_daily(rows, symbol: str) -> PriceSeries:
+    """Tiingo daily rows -> split-only-adjusted closes.
+
+    `close` is as-traded; a row's `splitFactor` (ex-date) applies to all
+    OLDER rows. Walking newest -> oldest and dividing by the factors
+    accumulated from strictly newer rows reproduces the house basis;
+    `divCash` is deliberately ignored (see module docstring)."""
+    if not isinstance(rows, list):
+        raise PriceError("Unexpected Tiingo response (not a list)")
+    pairs = []
+    for r in rows:
         try:
-            err = payload["chart"]["error"]["description"]
-        except Exception:
-            pass
-        raise PriceError(f"Unexpected Yahoo response ({err or exc})")
-    dates, closes = [], []
-    for ts, c in zip(timestamps, closes_raw):
-        if c is None or c <= 0:  # 0.0 closes are a recurring Yahoo data glitch
+            d = dt.date.fromisoformat(str(r["date"])[:10])
+            c = float(r["close"])
+            sf = float(r.get("splitFactor") or 1.0)
+        except (KeyError, TypeError, ValueError):
             continue
-        dates.append(dt.datetime.fromtimestamp(ts, dt.timezone.utc).date())
-        closes.append(float(c))
-    if len(dates) < 30:
-        raise PriceError(f"Yahoo returned too few rows ({len(dates)})")
-    return PriceSeries(symbol=symbol, dates=dates, closes=closes, source="Yahoo Finance")
+        if c > 0:
+            pairs.append((d, c, sf))
+    if len(pairs) < 30:
+        raise PriceError(f"Tiingo returned too few rows ({len(pairs)})")
+    pairs.sort()
+    closes = [0.0] * len(pairs)
+    factor = 1.0
+    for i in range(len(pairs) - 1, -1, -1):
+        _, c, sf = pairs[i]
+        closes[i] = c / factor
+        if sf and sf != 1.0:
+            factor *= sf
+    return PriceSeries(symbol=symbol, dates=[p[0] for p in pairs],
+                       closes=closes, source="Tiingo")
+
+
+def _fetch_tiingo(ticker: str, cache: Cache, start: dt.date,
+                  today: dt.date) -> PriceSeries:
+    sym = _dash_symbol(ticker)
+    ckey = (f"tiingo://daily/{sym}"
+            f"?start={start.isoformat()}&end={today.isoformat()}")
+    cached = cache.get(ckey, config.TTL_PRICES)
+    if cached is not None:
+        try:
+            return parse_tiingo_daily(cached, ticker.upper())
+        except PriceError:
+            pass  # poisoned/stale cache entry — fall through to a fetch
+    rows = TiingoClient().daily_prices(sym, start=start.isoformat(),
+                                       end=today.isoformat())
+    series = parse_tiingo_daily(rows, ticker.upper())
+    cache.put(ckey, rows)  # cache only bodies that parsed successfully
+    return series
 
 
 def fetch_prices(
@@ -105,11 +138,19 @@ def fetch_prices(
     years: int = config.PRICE_YEARS,
     today: Optional[dt.date] = None,
 ) -> PriceSeries:
-    """5 years of daily closes; raises PriceError if every source fails."""
+    """Daily closes, Tiingo -> Stooq; raises PriceError if all fail."""
     cache = cache or Cache()
     today = today or dt.date.today()
     start = today - dt.timedelta(days=int(years * 365.25) + 7)
     errors: List[str] = []
+
+    if config.TIINGO_API_KEY:
+        try:
+            return _fetch_tiingo(ticker, cache, start, today)
+        except (PriceError, ProviderError) as exc:
+            errors.append(f"Tiingo: {exc}")
+    else:
+        errors.append("Tiingo: no API key (see README 'Provider keys')")
 
     stooq_sym = _stooq_symbol(ticker)
     url = STOOQ_URL.format(
@@ -133,26 +174,5 @@ def fetch_prices(
         return series
     except (requests.RequestException, PriceError) as exc:
         errors.append(f"Stooq: {exc}")
-
-    yurl = YAHOO_URL.format(symbol=_yahoo_symbol(ticker), years=years)
-    cached = cache.get(yurl, config.TTL_PRICES)
-    if cached is not None:
-        try:
-            return parse_yahoo_chart(cached, ticker.upper())
-        except PriceError:
-            pass
-    try:
-        resp = requests.get(
-            yurl,
-            timeout=config.HTTP_TIMEOUT,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        series = parse_yahoo_chart(payload, ticker.upper())
-        cache.put(yurl, payload)
-        return series
-    except (requests.RequestException, ValueError, PriceError) as exc:
-        errors.append(f"Yahoo: {exc}")
 
     raise PriceError("; ".join(errors))
