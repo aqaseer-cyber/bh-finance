@@ -12,6 +12,7 @@ from webui.server import create_app
 STATIC = Path(__file__).resolve().parent.parent / "webui" / "static"
 
 OWN_FILES = ["index.html", "app.js", "overview.js", "financials.js",
+             "quality.js", "valuation.js", "watchlist.js",
              "fmt.js", "theme.js", "tokens.css"]
 VENDORED = ["vendor/petite-vue.js", "vendor/echarts.min.js",
             "vendor/lightweight-charts.js", "vendor/VENDORED.json"]

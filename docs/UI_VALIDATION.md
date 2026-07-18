@@ -213,6 +213,27 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 - [ ] Packaging proof: build_exe_windows.bat produces an exe that
       launches BOTH shells (default Tk and --web).
 
+## v3 R2 — feature parity (charter gate, owner-run)
+
+- [ ] Quality screen: every §2.3 chart renders once — revenue card
+      modes switch (level/growth/margins), Piotroski, Sloan, Altman,
+      SBC, R&D, CCC, returns, incremental margins, health notes.
+- [ ] Valuation screen end-to-end: anchors readout matches the Tk
+      dialog's line for the same ticker; Compute produces the same
+      Bear/Base/Bull FVs and FV_avg/MoS as the Tk valuation for the
+      same inputs; sensitivity center cell equals FV_avg; verdict
+      block shows the coherence gate + triggers; sandbox sliders
+      update live; ledger row appears after compute (check Watchlist).
+- [ ] Watchlist: rows sort on header click, MoS colored, stale rows
+      red, row click opens the history drawer, re-run loads and runs
+      the ticker.
+- [ ] Kill-list spot check: the Tk app now opens with Watchlist + the
+      five report pages only (no Overview/Explore tabs); everything
+      they showed is reachable on the web screens.
+- [ ] Note anything the web screens still render worse than Tk — that
+      list decides when the five Tk report pages are removed as
+      screens (they stay in the PDF regardless).
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -231,6 +252,7 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Insiders & estimates | Pass | owner-run 2026-07-18 |
 | Chart interactivity | Pass | owner-run 2026-07-18 |
 | Speed | Pass | owner-run 2026-07-18 |
-| v3 R1 web shell | | |
+| v3 R1 web shell | Pass | owner-run 2026-07-18 (side-by-side @150% + packaging) |
+| v3 R2 parity | | |
 
 Date / machine / scaling: ______________________

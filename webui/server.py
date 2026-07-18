@@ -161,9 +161,43 @@ def create_app(pipeline: Optional[Callable] = None,
         except ValuationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         app.state.valuations[d.ticker] = (res, verdict)
+        # v3 R2: the verdict page's own sensitivity grid + open triggers
+        # ride along (existing engine code, serialized verbatim)
+        from forensic_viz.dashboard import verdict_sensitivity
+        try:
+            sens = verdict_sensitivity(res, verdict)
+        except Exception:
+            sens = None
+        triggers = []
+        try:
+            from forensic_viz.ledger import Ledger
+            triggers = Ledger().open_triggers(d.ticker)
+        except Exception:
+            pass
         return {"schema": SCHEMA_VERSION, "kind": "valuation",
                 "data": {"result": payload("valuation_result", res)["data"],
-                         "verdict": payload("verdict", verdict)["data"]}}
+                         "verdict": payload("verdict", verdict)["data"],
+                         "sensitivity": payload("sensitivity",
+                                                sens)["data"],
+                         "triggers": payload("triggers",
+                                             triggers)["data"]}}
+
+    @app.get("/api/anchors/{ticker}", dependencies=[Depends(auth)])
+    async def anchors(ticker: str):
+        """FIX-14a growth-anchor ladder + method suggestion — prefills
+        for the Valuation screen (engine functions, serialized)."""
+        from forensic_viz.anchors import anchor_readout, \
+            build_growth_anchors
+        from forensic_viz.valuation import suggest_method
+        d = _run(ticker)
+        a = build_growth_anchors(d)
+        return {"schema": SCHEMA_VERSION, "kind": "anchors",
+                "data": {"anchors": payload("growth_anchors", a)["data"],
+                         "readout": anchor_readout(a),
+                         "suggested_method": suggest_method(d.track),
+                         "wacc_build": payload(
+                             "wacc", getattr(d, "wacc_build",
+                                             None))["data"]}}
 
     @app.post("/api/sandbox", dependencies=[Depends(auth)])
     async def sandbox(body: dict):

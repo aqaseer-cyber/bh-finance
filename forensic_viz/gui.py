@@ -25,9 +25,7 @@ from typing import Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from matplotlib.backends.backend_tkagg import (
-    FigureCanvasTkAgg, NavigationToolbar2Tk,
-)
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from . import config
 from . import palette as P
@@ -40,11 +38,8 @@ from .dashboard import (
     render_valuation, render_verdict,
 )
 from .edgar import EdgarError
-from .explore import (
-    PRICE_MODES, RATIO_MODES, REVENUE_MODES, estimates_card, hover_readout,
-    insider_card, overview_kpi_card, overview_valuation_card, price_card,
-    profile_card, ratio_card, revenue_card,
-)
+# v3 R2 kill list: the Tk Overview/Explore/Sandbox surfaces are gone —
+# their content lives on the web shell's screens (run_web.bat)
 from .export import export_pdf
 from .model_export import export_financial_model
 from .compare import MAX_TICKERS, build_compare_html
@@ -285,438 +280,6 @@ class _ScrollTab(ttk.Frame):
         self._recenter()
 
 
-class _CardToolbar(NavigationToolbar2Tk):
-    """FIX-17g: Home / Pan / Zoom only — NO save button (Explore never
-    exports, the FIX-15 doctrine) and no coordinate message area (the
-    hover readout covers it)."""
-
-    toolitems = [t for t in NavigationToolbar2Tk.toolitems
-                 if t[0] in ("Home", "Pan", "Zoom")]
-
-    def set_message(self, s):
-        pass
-
-
-def _attach_hover(fig_canvas) -> None:
-    """FIX-17g: crosshair + nearest-value readout on the chart cards —
-    native matplotlib events on the embedded Tk canvas, no HTML."""
-    fig = fig_canvas.figure
-    state: dict = {}
-
-    def artists(ax):
-        if ax not in state:
-            vline = ax.axvline(ax.get_xlim()[0], color=P.INK_MUTED,
-                               linewidth=0.8, linestyle=":",
-                               visible=False, zorder=9, gid="hover17g")
-            txt = ax.text(0.99, 0.97, "", transform=ax.transAxes,
-                          ha="right", va="top", fontsize=7.2,
-                          color=P.INK_PRIMARY, zorder=10,
-                          bbox=dict(boxstyle="round,pad=0.3",
-                                    facecolor=P.PAGE,
-                                    edgecolor=P.INK_MUTED,
-                                    linewidth=0.5, alpha=0.92))
-            state[ax] = (vline, txt)
-        return state[ax]
-
-    def clear(_event=None):
-        dirty = False
-        for vline, txt in state.values():
-            if vline.get_visible() or txt.get_text():
-                vline.set_visible(False)
-                txt.set_text("")
-                dirty = True
-        if dirty:
-            fig_canvas.draw_idle()
-
-    def on_move(event):
-        ax = event.inaxes
-        if ax is None or event.xdata is None:
-            clear()
-            return
-        lines = [(ln.get_label(), ln.get_xdata(), ln.get_ydata())
-                 for ln in ax.get_lines()
-                 if ln.get_gid() != "hover17g"
-                 and len(ln.get_xdata()) > 3]
-        text = hover_readout(lines, float(event.xdata),
-                             is_date=ax.xaxis.converter is not None)
-        vline, txt = artists(ax)
-        for other_ax, (ov, ot) in state.items():
-            if other_ax is not ax:
-                ov.set_visible(False)
-                ot.set_text("")
-        if not text:
-            clear()
-            return
-        vline.set_xdata([event.xdata, event.xdata])
-        vline.set_visible(True)
-        txt.set_text(text)
-        fig_canvas.draw_idle()
-
-    fig_canvas.mpl_connect("motion_notify_event", on_move)
-    fig_canvas.mpl_connect("figure_leave_event", clear)
-
-
-class _OverviewTab(ttk.Frame):
-    """FIX-16d: the one-screen landing — KPI strip, FV-vs-price with the
-    entry ladder and exit cross-check, then the price/margins/P-E cards.
-    Screen-only; renders what the audited pipeline already computed."""
-
-    def __init__(self, parent, app):
-        super().__init__(parent)
-        self.app = app
-        self.canvas = tk.Canvas(self, background=P.PAGE, highlightthickness=0)
-        vbar = ttk.Scrollbar(self, orient=tk.VERTICAL,
-                             command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vbar.set)
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.inner = ttk.Frame(self.canvas)
-        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
-            scrollregion=self.canvas.bbox("all")))
-        self._holders = []
-        # FIX-17d/e/f: profile header, KPI strip, valuation, estimates,
-        # insiders, then the three chart cards
-        for _ in range(8):
-            holder = ttk.Frame(self.inner)
-            holder.pack(fill=tk.X, padx=10, pady=(6, 0), anchor="w")
-            self._holders.append({"holder": holder, "canvas": None})
-        self._profile_expanded = False  # FIX-17d.1 click-to-expand state
-
-    def _geometry(self):
-        dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
-        width_px = (self.canvas.winfo_width()
-                    or self.app.notebook.winfo_width() or 1000)
-        return dpi, max(560, width_px - 44) / dpi
-
-    def refresh(self):
-        d = self.app.data
-        if d is None:
-            return
-        dpi, width_in = self._geometry()
-        res = self.app.valuation_res
-        builders = (
-            lambda: profile_card(d, dpi=dpi, width_in=width_in,
-                                 expanded=self._profile_expanded),
-            lambda: overview_kpi_card(d, dpi=dpi, width_in=width_in),
-            lambda: overview_valuation_card(d, res, dpi=dpi,
-                                            width_in=width_in),
-            lambda: estimates_card(d, dpi=dpi, width_in=width_in),
-            lambda: insider_card(d, dpi=dpi, width_in=width_in),
-            lambda: price_card(d, "Both (stacked)", dpi=dpi,
-                               width_in=width_in),
-            lambda: revenue_card(d, "All margins", dpi=dpi,
-                                 width_in=width_in),
-            lambda: ratio_card(d, "P/E (TTM)", dpi=dpi, width_in=width_in),
-        )
-        for k, build in enumerate(builders):
-            self._render_slot(
-                k, build(),
-                on_click=self._toggle_profile if k == 0 else None,
-                hover=k in (5, 6, 7))   # FIX-17g: the chart cards
-
-    def _render_slot(self, k: int, fig, on_click=None, hover=False):
-        slot = self._holders[k]
-        if slot["canvas"] is not None:
-            slot["canvas"].get_tk_widget().destroy()
-        slot["canvas"] = FigureCanvasTkAgg(fig, master=slot["holder"])
-        slot["canvas"].draw()
-        widget = slot["canvas"].get_tk_widget()
-        widget.pack(anchor="w")
-        if on_click is not None:
-            widget.bind("<Button-1>", lambda _e: on_click())
-            widget.configure(cursor="hand2")
-        if hover:
-            _attach_hover(slot["canvas"])
-        return slot["canvas"]
-
-    def _toggle_profile(self):
-        """FIX-17d.1: click the header card to expand/collapse the full
-        company description — only that slot re-renders."""
-        d = self.app.data
-        if d is None:
-            return
-        self._profile_expanded = not self._profile_expanded
-        dpi, width_in = self._geometry()
-        self._render_slot(0, profile_card(d, dpi=dpi, width_in=width_in,
-                                          expanded=self._profile_expanded),
-                          on_click=self._toggle_profile)
-
-
-class _SandboxCard(ttk.Frame):
-    """FIX-15c: native DCF sandbox — a thin Tk skin over the PRODUCTION
-    functions (`dcf_fcff` via `sandbox_compute`, the last valuation's
-    bridge, `reverse_dcf_implied_g`). Deliberately no new math. Visible
-    once a DCF valuation exists; other methods get a muted note (banks /
-    REITs mirror the old HTML behavior). The app's valuation page and
-    exports stay the audited record."""
-
-    _SLIDERS = (  # (attr, label, lo %, hi %)
-        ("wacc", "WACC", 5.0, 15.0),
-        ("g0", "Stage-1 g₀", -5.0, 25.0),
-        ("gt", "Terminal g", 0.0, config.GDP_CAP * 100),
-    )
-
-    def __init__(self, parent, app):
-        super().__init__(parent)
-        self.app = app
-        self._job = None
-        head = ttk.Frame(self)
-        head.pack(fill=tk.X, padx=10, pady=(16, 2), anchor="w")
-        ttk.Label(head, text="DCF sandbox (§4.A)",
-                  font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
-        self.note = ttk.Label(self, style="Secondary.TLabel", justify="left",
-                              text="Run Intrinsic value… (DCF) to enable "
-                                   "the sandbox.")
-        self.note.pack(fill=tk.X, padx=12, anchor="w")
-        self.body = ttk.Frame(self)
-
-        row = ttk.Frame(self.body)
-        row.pack(fill=tk.X, padx=12, pady=(4, 2), anchor="w")
-        ttk.Label(row, text="Base FCFF ($mm, as-reported):").pack(side=tk.LEFT)
-        self.base_var = tk.StringVar()
-        base_entry = ttk.Entry(row, textvariable=self.base_var, width=12)
-        base_entry.pack(side=tk.LEFT, padx=(6, 14))
-        base_entry.bind("<KeyRelease>", lambda _e: self._debounced())
-        self.exsbc_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row, text="ex-SBC base (house §2b)",
-                        variable=self.exsbc_var,
-                        command=self._debounced).pack(side=tk.LEFT)
-        ttk.Label(row, text="Reset to case:").pack(side=tk.LEFT, padx=(16, 4))
-        self.case_var = tk.StringVar(value="Base")
-        case_box = ttk.Combobox(row, state="readonly", width=6,
-                                textvariable=self.case_var,
-                                values=list(CASE_NAMES))
-        case_box.pack(side=tk.LEFT)
-        case_box.bind("<<ComboboxSelected>>", lambda _e: self._reset_case())
-
-        self._scale_vars, self._scale_labels = {}, {}
-        for attr, label, lo, hi in self._SLIDERS:
-            srow = ttk.Frame(self.body)
-            srow.pack(fill=tk.X, padx=12, pady=1, anchor="w")
-            ttk.Label(srow, text=label, width=11).pack(side=tk.LEFT)
-            var = tk.DoubleVar(value=lo)
-            self._scale_vars[attr] = var
-            ttk.Scale(srow, from_=lo, to=hi, variable=var, length=280,
-                      command=lambda _v, a=attr: self._on_slide(a)).pack(
-                side=tk.LEFT, padx=(4, 8))
-            live = ttk.Label(srow, width=8)
-            live.pack(side=tk.LEFT)
-            self._scale_labels[attr] = live
-
-        out = ttk.Frame(self.body)
-        out.pack(fill=tk.X, padx=12, pady=(6, 10), anchor="w")
-        self._outputs = {}
-        for col, (key, label) in enumerate((
-                ("fv_ps", "FV / share"), ("mos", "MoS vs P₀"),
-                ("tv_share", "TV % of EV"),
-                ("implied_g", "implied g (Track B)"),
-                ("implied_return", "return @ P₀"))):
-            ttk.Label(out, text=label, style="Muted.TLabel").grid(
-                row=0, column=col, sticky="w", padx=(0, 22))
-            val = ttk.Label(out, text="–", font=("Segoe UI", 11, "bold"))
-            val.grid(row=1, column=col, sticky="w", padx=(0, 22))
-            self._outputs[key] = val
-
-    # sliders update their live label instantly; the compute is debounced
-    # 100 ms so drags stay smooth (FIX-15c)
-    def _on_slide(self, attr):
-        v = self._scale_vars[attr].get()
-        self._scale_labels[attr].configure(text=f"{v:.1f}%")
-        self._debounced()
-
-    def _debounced(self):
-        if self._job:
-            self.after_cancel(self._job)
-        self._job = self.after(100, self._recompute)
-
-    def _reset_case(self):
-        res = self.app.valuation_res
-        inputs = getattr(res, "_inputs", None)
-        if res is None or inputs is None:
-            return
-        case = inputs.cases.get(self.case_var.get())
-        if case is None or case.g0 is None:
-            return
-        self._scale_vars["g0"].set(case.g0 * 100)
-        self._scale_vars["gt"].set(case.g_term * 100)
-        if res.discount_rate:
-            self._scale_vars["wacc"].set(res.discount_rate * 100)
-        self._seed_base(res)
-        for attr in self._scale_vars:
-            self._scale_labels[attr].configure(
-                text=f"{self._scale_vars[attr].get():.1f}%")
-        self._recompute()
-
-    def _seed_base(self, res):
-        """Entry always holds the AS-REPORTED base: un-subtract SBC when
-        the last valuation ran ex-SBC, and mirror its checkbox — the
-        sandbox then reproduces that valuation exactly."""
-        base = res.base_value
-        if base is None:
-            return
-        inputs = getattr(res, "_inputs", None)
-        ex = bool(inputs is not None and inputs.ex_sbc)
-        if ex:
-            from .valuation import effective_sbc
-            base += effective_sbc(self.app.data) or 0.0
-        self.exsbc_var.set(ex)
-        self.base_var.set(f"{base / 1e6:.0f}")
-
-    def refresh(self):
-        res = self.app.valuation_res
-        if res is None:
-            self.body.pack_forget()
-            self.note.configure(text="Run Intrinsic value… (DCF) to enable "
-                                     "the sandbox.")
-            self.note.pack(fill=tk.X, padx=12, anchor="w")
-            return
-        if res.method != "dcf":
-            self.body.pack_forget()
-            self.note.configure(
-                text=f"Sandbox applies to the DCF method — the last "
-                     f"valuation used '{res.method}' (banks/REITs value "
-                     "through ROE/AFFO, not an FCFF fade).")
-            self.note.pack(fill=tk.X, padx=12, anchor="w")
-            return
-        self.note.pack_forget()
-        self.body.pack(fill=tk.X, anchor="w")
-        self.case_var.set("Base")
-        self._reset_case()
-
-    def _recompute(self):
-        self._job = None
-        d, res = self.app.data, self.app.valuation_res
-        if d is None or res is None:
-            return
-        from .valuation import effective_sbc
-        from .explore import sandbox_compute
-        try:
-            base = float(self.base_var.get().replace(",", "")) * 1e6
-        except ValueError:
-            self._show_error("n/a — base must be a number ($mm)")
-            return
-        bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
-        out = sandbox_compute(
-            base, self._scale_vars["wacc"].get() / 100,
-            self._scale_vars["g0"].get() / 100,
-            self._scale_vars["gt"].get() / 100,
-            bridge, res.shares, effective_sbc(d) or 0.0,
-            self.exsbc_var.get(), price=d.last_close)
-        if out["error"]:
-            self._show_error(out["error"])
-            return
-        neg = P.NEGATIVE
-        ink = P.INK_PRIMARY
-        self._outputs["fv_ps"].configure(
-            text=f"${out['fv_ps']:,.2f}", foreground=ink)
-        mos = out["mos"]
-        self._outputs["mos"].configure(
-            text=f"{mos * 100:+.1f}%" if mos is not None else "–",
-            foreground=neg if mos is not None and mos < 0 else ink)
-        self._outputs["tv_share"].configure(
-            text=f"{out['tv_share'] * 100:.0f}%", foreground=ink)
-        ig = out["implied_g"]
-        self._outputs["implied_g"].configure(
-            text=f"{ig * 100:.1f}%" if ig is not None else "–",
-            foreground=ink)
-        ir = out["implied_return"]
-        self._outputs["implied_return"].configure(
-            text=f"{ir * 100:.1f}%" if ir is not None else "–",
-            foreground=ink)
-
-    def _show_error(self, msg):
-        self._outputs["fv_ps"].configure(text=msg, foreground=P.NEGATIVE)
-        for key in ("mos", "tv_share", "implied_g", "implied_return"):
-            self._outputs[key].configure(text="–", foreground=P.INK_PRIMARY)
-
-
-class _ExploreTab(ttk.Frame):
-    """FIX-15b: a scrollable column of live chart cards, screen-only
-    (the report/PDF pipeline never renders these figures). Each card is a
-    title + mode combobox over its own small canvas; a mode change redraws
-    THAT card only. Figures are plt-free (`Figure()` directly), so
-    destroying the old Tk canvas releases them — no figure leaks."""
-
-    _CARDS = (("Share price & drawdown", PRICE_MODES, price_card),
-              ("Valuation ratios (TTM)", RATIO_MODES, ratio_card),
-              ("Revenue & margins", REVENUE_MODES, revenue_card))
-
-    def __init__(self, parent, app):
-        super().__init__(parent)
-        self.app = app
-        self.canvas = tk.Canvas(self, background=P.PAGE, highlightthickness=0)
-        vbar = ttk.Scrollbar(self, orient=tk.VERTICAL,
-                             command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vbar.set)
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.inner = ttk.Frame(self.canvas)
-        self._win = self.canvas.create_window((0, 0), window=self.inner,
-                                              anchor="nw")
-        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
-            scrollregion=self.canvas.bbox("all")))
-        self._cards = []
-        for title, modes, builder in self._CARDS:
-            head = ttk.Frame(self.inner)
-            head.pack(fill=tk.X, padx=10, pady=(12, 2), anchor="w")
-            ttk.Label(head, text=title,
-                      font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
-            var = tk.StringVar(value=modes[0])
-            box = ttk.Combobox(head, state="readonly", width=18,
-                               textvariable=var, values=list(modes))
-            box.pack(side=tk.LEFT, padx=(12, 0))
-            # FIX-17g: per-card Home/Pan/Zoom toolbar lives in the head
-            # row (rebuilt with the canvas on every redraw)
-            tbar_holder = ttk.Frame(head)
-            tbar_holder.pack(side=tk.RIGHT)
-            holder = ttk.Frame(self.inner)
-            holder.pack(fill=tk.X, padx=10, anchor="w")
-            card = {"var": var, "builder": builder, "holder": holder,
-                    "canvas": None, "tbar_holder": tbar_holder,
-                    "toolbar": None}
-            box.bind("<<ComboboxSelected>>",
-                     lambda _e, c=card: self._redraw(c))
-            self._cards.append(card)
-        # FIX-15c: the fourth card is controls, not a figure
-        self.sandbox = _SandboxCard(self.inner, app)
-        self.sandbox.pack(fill=tk.X, anchor="w")
-
-    def _card_geometry(self):
-        dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
-        width_px = (self.canvas.winfo_width()
-                    or self.app.notebook.winfo_width() or 1000)
-        return dpi, max(560, width_px - 44) / dpi
-
-    def _redraw(self, card):
-        d = self.app.data
-        if d is None:
-            return
-        dpi, width_in = self._card_geometry()
-        fig = card["builder"](d, card["var"].get(), dpi=dpi,
-                              width_in=width_in)
-        if card["toolbar"] is not None:
-            card["toolbar"].destroy()
-            card["toolbar"] = None
-        if card["canvas"] is not None:
-            card["canvas"].get_tk_widget().destroy()
-        card["canvas"] = FigureCanvasTkAgg(fig, master=card["holder"])
-        card["canvas"].draw()
-        card["canvas"].get_tk_widget().pack(anchor="w")
-        # FIX-17g: interactivity — zoom/pan toolbar + hover readout
-        card["toolbar"] = _CardToolbar(card["canvas"],
-                                       card["tbar_holder"],
-                                       pack_toolbar=False)
-        card["toolbar"].pack(side=tk.RIGHT)
-        _attach_hover(card["canvas"])
-
-    def refresh(self):
-        """Re-render every card (fresh data or a DPI/viewport change)."""
-        for card in self._cards:
-            self._redraw(card)
-        self.sandbox.refresh()
-
-
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -812,18 +375,11 @@ class App:
         self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.ledger = Ledger()
         self._build_watchlist_tab()
-        # FIX-16d: the one-screen Overview lands before the report pages
-        self.overview_tab = _OverviewTab(self.notebook, self)
-        self.notebook.add(self.overview_tab, text="Overview",
-                          state=tk.DISABLED)
         self.tabs = {}
         for name in PAGES:
             tab = _ScrollTab(self.notebook)
             self.tabs[name] = tab
             self.notebook.add(tab, text=name, state=tk.DISABLED)
-        # FIX-15b: Explore cards (screen-only, never in the PDF)
-        self.explore_tab = _ExploreTab(self.notebook, self)
-        self.notebook.add(self.explore_tab, text="Explore", state=tk.DISABLED)
         self.refresh_watchlist()
 
         root.bind_all("<MouseWheel>", self._on_mousewheel)      # Windows/macOS
@@ -1023,8 +579,6 @@ class App:
                     self.data, self.valuation_res, self.verdict, dpi=dpi,
                     open_triggers=self._open_trigger_texts())
         self._refresh_tabs()
-        self.explore_tab.refresh()  # FIX-15b: cards re-render at the new DPI
-        self.overview_tab.refresh()
         if current:
             try:
                 self.notebook.select(current)
@@ -1204,7 +758,7 @@ class App:
 
     def _current_canvas(self) -> Optional[tk.Canvas]:
         """Scroll target of the SELECTED tab, whichever kind it is — the
-        report pages, Overview and Explore all expose `.canvas`. Tabs
+        report pages expose `.canvas`. Tabs
         without one (Watchlist's Treeview scrolls natively) return None
         and the wheel handlers no-op."""
         try:
@@ -1323,10 +877,6 @@ class App:
         self.valuation_res = None
         self.verdict = None
         self._refresh_tabs(select="Dashboard")
-        self.explore_tab.refresh()
-        self.notebook.tab(self.explore_tab, state=tk.NORMAL)
-        self.overview_tab.refresh()
-        self.notebook.tab(self.overview_tab, state=tk.NORMAL)
         note = ("  (price sources unavailable — fundamentals only)"
                 if data.price_error else "")
         audit = getattr(data, "audit_report", None)
@@ -1394,8 +944,6 @@ class App:
         except Exception as exc:  # still non-blocking, but visibly so (12g)
             led = f" (ledger update failed: {type(exc).__name__})"
         self._refresh_tabs(select="Valuation")
-        self.explore_tab.sandbox.refresh()  # FIX-15c: seed from this valuation
-        self.overview_tab.refresh()  # FIX-16d: ladder + exit check now exist
         gate = f" · rating gate: {verdict.coherence}" if verdict is not None else ""
         self.status_var.set(f"Intrinsic value + verdict ready.{led}{gate}")
 

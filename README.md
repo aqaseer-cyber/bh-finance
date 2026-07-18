@@ -480,7 +480,13 @@ toggles, verdict strip, KPI row, badged estimates + insider cards) and
 the **Financials** screen (annual model table, as-filed IS/BS/CF
 structure with joined values, segments with synth flags, data-audit
 line). Charts are vendored ECharts + lightweight-charts (no CDN, no
-build step). The Tk GUI remains the DEFAULT UI until the R2 parity
+build step). **R2 adds the Quality, Valuation and Watchlist screens**
+(anchors-seeded case grid, football field, sensitivity, live sandbox,
+verdict + triggers, sortable ledger) and **executes the kill list**:
+the Tk Overview/Explore/sandbox tabs are deleted — their content
+lives on the web screens (`docs/R2_PHASE_REPORT.md` records the
+deletions and line counts). The Tk GUI (Watchlist + report pages +
+valuation dialog + exports) remains the DEFAULT until the R2 parity
 gate passes.
 
 ## Data sources & methodology

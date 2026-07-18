@@ -106,11 +106,34 @@ def test_valuation_parity_with_direct_engine_call(client):
     by_name = {c["name"]: c for c in got["cases"]}
     for c in direct.cases:
         assert by_name[c.name]["fv_ps"] == pytest.approx(c.fv_ps)
-    assert r.json()["data"]["verdict"]["fv_avg"] is not None
+    data_out = r.json()["data"]
+    assert data_out["verdict"]["fv_avg"] is not None
+    # v3 R2: the sensitivity grid rides along; its center cell
+    # reproduces the page's FV average exactly (engine docstring)
+    sens = data_out["sensitivity"]
+    assert sens and sens["kind"] == "dcf"
+    ci, cj = sens["center"]
+    assert sens["cells"][ci][cj] == \
+        pytest.approx(data_out["verdict"]["fv_avg"])
+    assert isinstance(data_out["triggers"], list)
     # bad case name -> 422, engine error (empty manual) -> 422
     bad = client.post("/api/valuation", json={
         "ticker": "TESTCO", "cases": {"Wat": {}}})
     assert bad.status_code == 422
+
+
+def test_anchors_endpoint(client):
+    _sse_events(client, "/api/run/TESTCO")
+    r = client.get("/api/anchors/TESTCO")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["suggested_method"] in ("dcf", "ri", "affo", "manual")
+    assert "anchors" in data and "readout" in data
+    # seeds serialize as a plain name->float map when present
+    seeds = data["anchors"].get("seeds") or {}
+    for v in seeds.values():
+        assert v is None or isinstance(v, (int, float))
+    assert client.get("/api/anchors/NOPE").status_code == 404
 
 
 def test_sandbox_parity(client):

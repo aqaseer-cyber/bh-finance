@@ -73,6 +73,154 @@
       </div>
     </div>
 
+    <!-- ============================== Quality -->
+    <div v-show="store.screen === 'quality'">
+      <div class="section card">
+        <div class="card-title">Revenue
+          <span class="control toggle-row" id="q-rev-modes"></span>
+        </div>
+        <div id="q-revenue" class="chart-box small"></div>
+        <div class="card-foot">one card, three modes — the standalone
+          growth/architecture panels died on the kill list</div>
+      </div>
+      <div class="section grid cols-2">
+        <div class="card"><div class="card-title">Piotroski F-score
+          </div><div id="q-piotroski" class="chart-box small"></div>
+          <div class="card-foot">of 9 signals (evaluable subset counted
+            honestly)</div></div>
+        <div class="card"><div class="card-title">Accruals (Sloan)
+          </div><div id="q-accruals" class="chart-box small"></div>
+          <div class="card-foot">earnings ahead of cash when positive
+          </div></div>
+        <div class="card"><div class="card-title">Altman Z</div>
+          <div id="q-altman" class="chart-box small"></div>
+          <div class="card-foot">distress &lt; 1.8 · grey zone
+            1.8–3.0 (Standard track only)</div></div>
+        <div class="card"><div class="card-title">SBC discipline</div>
+          <div id="q-sbc" class="chart-box small"></div>
+          <div class="card-foot">house §2b: SBC is a real cost — FCF
+            vs FCF ex-SBC</div></div>
+        <div class="card"><div class="card-title">R&amp;D audit</div>
+          <div id="q-rnd" class="chart-box small"></div>
+          <div class="card-foot">&nbsp;</div></div>
+        <div class="card"><div class="card-title">Cash conversion
+          cycle</div><div id="q-ccc" class="chart-box small"></div>
+          <div class="card-foot">the one CCC chart in the app (the
+            duplicate died on the kill list)</div></div>
+        <div class="card"><div class="card-title">Returns on capital
+          </div><div id="q-returns" class="chart-box small"></div>
+          <div class="card-foot">&nbsp;</div></div>
+        <div class="card"><div class="card-title">Margins vs
+          incremental</div>
+          <div id="q-incremental" class="chart-box small"></div>
+          <div class="card-foot">incremental = Δop income / Δrevenue
+          </div></div>
+      </div>
+      <div class="section card">
+        <div class="card-title">Health notes</div>
+        <div id="q-notes" class="muted"></div>
+      </div>
+    </div>
+
+    <!-- ============================== Valuation -->
+    <div v-show="store.screen === 'valuation'">
+      <div class="section card">
+        <div class="card-title">Growth anchors (FIX-14a)</div>
+        <div id="val-anchors" class="muted"></div>
+        <div class="card-foot">Bull ← consensus (Rung 4, badged) ·
+          Base ← min anchor · Bear ← ½ Base — every prefill stays
+          editable</div>
+      </div>
+      <div class="section card">
+        <div class="card-title">Inputs
+          <span class="control" id="val-status"></span>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;
+                    align-items:center">
+          <label>Method <select id="val-method">
+            <option value="dcf">DCF</option>
+            <option value="ri">Residual income</option>
+            <option value="affo">AFFO</option>
+            <option value="manual">Manual</option>
+          </select></label>
+          <label>WACC % <input id="val-wacc" class="num" size="6">
+          </label>
+          <label><input type="checkbox" id="val-exsbc"> ex-SBC base
+          </label>
+          <label>Rating <select id="val-rating">
+            <option value=""></option>
+            <option>Strong Buy</option><option>Buy</option>
+            <option>Hold</option><option>Sell</option>
+          </select></label>
+          <button class="primary" id="val-go">Compute</button>
+        </div>
+        <table class="tbl" id="val-cases"></table>
+        <div class="card-foot">percent fields entered in percent;
+          WACC blank = auto-build</div>
+      </div>
+      <div class="section grid cols-2">
+        <div class="card">
+          <div class="card-title">Cases</div>
+          <div id="val-cases-out"></div>
+          <div id="val-extras" class="card-foot"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Intrinsic value vs price</div>
+          <div id="val-field" class="chart-box small"></div>
+          <div class="card-foot">&nbsp;</div>
+        </div>
+      </div>
+      <div class="section grid cols-2">
+        <div class="card">
+          <div class="card-title">Sensitivity</div>
+          <div id="val-sens"></div>
+          <div class="card-foot">the verdict page's own grid — center
+            cell reproduces FV average exactly</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Verdict &amp; gates</div>
+          <div id="val-verdict"></div>
+          <div class="card-foot">coherence-gated (§5); paid data never
+            reaches this block</div>
+        </div>
+      </div>
+      <div class="section card">
+        <div class="card-title">DCF sandbox (live)</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;
+                    align-items:center">
+          <label>WACC <input type="range" id="sb-wacc" min="5"
+            max="15" step="0.1" value="9">
+            <span id="sb-wacc-l" class="num"></span></label>
+          <label>g₀ <input type="range" id="sb-g0" min="-5" max="25"
+            step="0.1" value="5">
+            <span id="sb-g0-l" class="num"></span></label>
+          <label>g_term <input type="range" id="sb-gt" min="0"
+            max="3" step="0.1" value="2">
+            <span id="sb-gt-l" class="num"></span></label>
+          <label>Base FCFF $M <input id="sb-base" class="num"
+            size="8"></label>
+          <label>Bridge $M <input id="sb-bridge" class="num"
+            size="8"></label>
+          <label>Shares M <input id="sb-shares" class="num"
+            size="8"></label>
+        </div>
+        <div id="sb-out" class="num"></div>
+        <div class="card-foot">the FIX-15c compute — production
+          functions via /api/sandbox, no parallel engine</div>
+      </div>
+    </div>
+
+    <!-- ============================== Watchlist -->
+    <div v-show="store.screen === 'watchlist'">
+      <div class="section card">
+        <div class="card-title">Verdict ledger (§5.7)</div>
+        <div class="tbl-wrap" id="wl-table"></div>
+        <div class="card-foot">click a row for history · sortable
+          headers · stale price flagged red · re-run loads the ticker
+        </div>
+      </div>
+    </div>
+
     <!-- ============================== Financials -->
     <div v-show="store.screen === 'financials'">
       <div class="section card">
@@ -122,5 +270,8 @@
 <script src="/static/app.js"></script>
 <script src="/static/overview.js"></script>
 <script src="/static/financials.js"></script>
+<script src="/static/quality.js"></script>
+<script src="/static/valuation.js"></script>
+<script src="/static/watchlist.js"></script>
 </body>
 </html>

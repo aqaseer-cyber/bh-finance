@@ -28,9 +28,9 @@ const store = window.PetiteVue.reactive({
   screens: [
     ["overview", "Overview"],
     ["financials", "Financials"],
-    ["quality", "Quality (R2)"],
-    ["valuation", "Valuation (R2)"],
-    ["watchlist", "Watchlist (R2)"],
+    ["quality", "Quality"],
+    ["valuation", "Valuation"],
+    ["watchlist", "Watchlist"],
   ],
   ticker: "",
   running: false,
@@ -39,7 +39,6 @@ const store = window.PetiteVue.reactive({
   ledgerRow: null,
 
   nav(s) {
-    if (s === "quality" || s === "valuation" || s === "watchlist") return;
     store.screen = s;
     store.render();
   },
@@ -95,11 +94,20 @@ const store = window.PetiteVue.reactive({
   },
 
   render() {
+    // the watchlist reads the ledger — it renders without a run
+    if (store.screen === "watchlist" && window.renderWatchlist) {
+      window.renderWatchlist();
+      return;
+    }
     if (!store.data) return;
     if (store.screen === "overview" && window.renderOverview)
       window.renderOverview(store.data, store.ledgerRow);
     if (store.screen === "financials" && window.renderFinancials)
       window.renderFinancials(store.data);
+    if (store.screen === "quality" && window.renderQuality)
+      window.renderQuality(store.data);
+    if (store.screen === "valuation" && window.renderValuation)
+      window.renderValuation(store.data);
   },
 });
 
