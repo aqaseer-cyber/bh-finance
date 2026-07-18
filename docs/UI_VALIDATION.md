@@ -181,6 +181,15 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 - [ ] Wheel scrolling of the tab still works when the cursor is over a
       chart (the crosshair must not swallow the wheel).
 
+## Speed (FIX-17h)
+
+- [ ] Cold Analyze of a fresh multi-segment ticker (e.g. UNH,
+      --no-cache) completes noticeably faster than before the update;
+      the segment/insider stages no longer crawl one request at a time.
+- [ ] Re-Analyze of the same ticker (warm) completes in seconds; the
+      cache folder now contains facts.db and deleting it only makes the
+      next run slower, never wrong.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -198,5 +207,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Company profile | Pass* | owner-run 2026-07-18 — *text overlap + no expand; fixed in FIX-17d.1, re-verify below |
 | Insiders & estimates | Pass | owner-run 2026-07-18 |
 | Chart interactivity | | |
+| Speed | | |
 
 Date / machine / scaling: ______________________

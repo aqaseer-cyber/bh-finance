@@ -125,6 +125,16 @@ years** on screen (`--years 15`; the default stays 10, and the export
 always shows every fetched year). **Tools → Refresh prices** refetches
 the price series only and recomputes everything price-dependent.
 
+**Speed (FIX-17h).** Filing-instance and Form 4 fetches are
+**prefetched concurrently** — workers share the SEC pacing lock, so
+the request rate never exceeds the polite serial ceiling; parallelism
+only overlaps round-trip latency. Parsed XBRL instances are memoized
+in a **SQLite fact store** (`facts.db` inside the cache folder, keyed
+by content hash + parser version — filings are immutable, so entries
+never go stale and the file can be deleted freely; it rebuilds
+itself). Cold Analyze is markedly faster; warm re-analysis skips the
+multi-megabyte XML parses entirely.
+
 **Chart interactivity (FIX-17g, native).** The Explore and Overview
 chart cards carry a **hover crosshair** — move the cursor and a dotted
 guide plus a readout box show the nearest date and each plotted

@@ -179,6 +179,10 @@ BETA_MIN_OBS = 40           # minimum weekly observations for the regression
 HTTP_TIMEOUT = 30  # seconds per request
 HTTP_RETRIES = 3
 SEC_MIN_INTERVAL = 0.15  # polite spacing between SEC calls (10 req/s cap)
+# FIX-17h: cache-warming prefetch concurrency. Workers share the SAME
+# pacing lock, so the request rate NEVER exceeds the serial ceiling —
+# parallelism only overlaps round-trip latency.
+SEC_PARALLEL = 6
 
 # Cache TTLs in seconds
 TTL_TICKER_MAP = 7 * 86400

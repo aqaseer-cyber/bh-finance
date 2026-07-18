@@ -426,6 +426,32 @@ class _SecSession:
                "'name email' and retry" if saw_403 else ""))
 
 
+def prefetch_texts(sec: "_SecSession", urls, ttl: float) -> None:
+    """FIX-17h: warm the cache for `urls` concurrently, then let the
+    caller's existing SERIAL logic run unchanged (it now hits cache).
+
+    Concurrency only overlaps round-trip latency — every worker still
+    acquires the shared pacing lock, so the SEC request rate never
+    exceeds the serial ceiling. Per-URL failures are swallowed here;
+    the serial pass keeps its own retry/skip semantics."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    misses = [u for u in dict.fromkeys(urls)
+              if u and sec.cache.get(u, ttl) is None]
+    if len(misses) < 2:
+        return
+
+    def one(url: str) -> None:
+        try:
+            sec.get_text(url, ttl)
+        except Exception:
+            pass
+
+    workers = max(1, min(config.SEC_PARALLEL, len(misses)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, misses))
+
+
 def _norm_ticker(ticker: str) -> str:
     return re.sub(r"[^A-Z0-9.\-]", "", ticker.strip().upper())
 
@@ -994,6 +1020,21 @@ def fetch_segment_instances(
 
     if not annual.cik:
         return out, skipped
+    # FIX-17h: warm the cache for every primary instance concurrently;
+    # the serial loop below keeps its exact fallback/skip semantics
+    warm = []
+    if annual.annual_filings:
+        for filing in select_annual_filings(annual.annual_filings, years):
+            if filing.accession and filing.document:
+                warm.append(instance_url(annual.cik, filing.accession,
+                                         filing.document))
+    elif annual.latest_10k_accession:
+        warm.append(instance_url(annual.cik, annual.latest_10k_accession,
+                                 annual.latest_10k_document))
+    if annual.latest_10q_accession:
+        warm.append(instance_url(annual.cik, annual.latest_10q_accession,
+                                 annual.latest_10q_document))
+    prefetch_texts(sec, warm, config.TTL_FILING_INSTANCE)
     if annual.annual_filings:
         for filing in select_annual_filings(annual.annual_filings, years):
             label = (f"{filing.form} {filing.accession} "

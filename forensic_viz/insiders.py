@@ -23,6 +23,7 @@ from . import config
 from .cache import Cache
 from .edgar import (
     SUBMISSIONS_URL, EdgarError, _require_declared_ua, _SecSession,
+    prefetch_texts,
 )
 
 TX_CODES = {"P": "P — Purchase", "S": "S — Sale"}
@@ -179,12 +180,18 @@ def fetch_insider_panel(fundamentals, cache: Optional[Cache] = None,
     panel = InsiderPanel(filings_read=len(selected),
                          filings_in_window=in_window,
                          window_months=months)
+
+    def form4_url(accn: str, doc: str) -> str:
+        return (f"https://www.sec.gov/Archives/edgar/data/"
+                f"{fundamentals.cik}/{accn.replace('-', '')}/{doc}")
+
+    # FIX-17h: warm all Form 4s concurrently (immutable, cached a year)
+    prefetch_texts(sec, [form4_url(a, doc) for a, doc, _ in selected],
+                   config.TTL_FILING_INSTANCE)
     for accn, doc, _fdate in selected:
-        url = (f"https://www.sec.gov/Archives/edgar/data/"
-               f"{fundamentals.cik}/{accn.replace('-', '')}/{doc}")
         try:
-            panel.rows.extend(parse_form4(
-                sec.get_text(url, config.TTL_FILING_INSTANCE)))
+            panel.rows.extend(parse_form4(sec.get_text(
+                form4_url(accn, doc), config.TTL_FILING_INSTANCE)))
         except EdgarError:
             continue   # one unfetchable filing never kills the panel
     panel.rows.sort(key=lambda t: t.date, reverse=True)

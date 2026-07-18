@@ -372,10 +372,77 @@ def _default_source(labels: List[str]) -> str:
     return " + ".join(bits) or ", ".join(labels)
 
 
+# --------------------------------------- FIX-17h parsed-instance store
+
+SEG_PARSER_VERSION = 1   # bump when parse_instance's output changes
+
+_SEP = "\x1f"
+
+
+def _dump_parsed(p: ParsedInstance) -> dict:
+    """ParsedInstance -> JSON-safe dict (tuple keys joined on a unit
+    separator, spans as ISO dates, sets as sorted lists)."""
+    def spans(d):
+        return {f"{a.isoformat()}{_SEP}{b.isoformat()}": v
+                for (a, b), v in d.items()}
+    return {
+        "singles": {_SEP.join(k): spans(v) for k, v in p.singles.items()},
+        "crosses": {_SEP.join(k): spans(v) for k, v in p.crosses.items()},
+        "n_multi": p.n_multi,
+        "member_qnames": {_SEP.join(k): sorted(v)
+                          for k, v in p.member_qnames.items()},
+        "conflicts": list(p.conflicts),
+    }
+
+
+def _load_parsed(d: dict) -> ParsedInstance:
+    def spans(raw):
+        out = {}
+        for k, v in raw.items():
+            a, b = k.split(_SEP)
+            out[(dt.date.fromisoformat(a), dt.date.fromisoformat(b))] = v
+        return out
+    return ParsedInstance(
+        singles={tuple(k.split(_SEP)): spans(v)
+                 for k, v in d["singles"].items()},
+        crosses={tuple(k.split(_SEP)): spans(v)
+                 for k, v in d["crosses"].items()},
+        n_multi=int(d["n_multi"]),
+        member_qnames={tuple(k.split(_SEP)): set(v)
+                       for k, v in d["member_qnames"].items()},
+        conflicts=list(d["conflicts"]),
+    )
+
+
+def stored_parse(store) -> "callable":
+    """A parse_instance wrapper memoized in the FactStore by content
+    hash — used ONLY on the network path (fetch_segment_data);
+    build_segment_data's default stays the pure parser, so offline
+    tests never touch app data."""
+    import hashlib
+
+    def parse(xml_text: str) -> ParsedInstance:
+        key = (f"seg-parse:v{SEG_PARSER_VERSION}:"
+               + hashlib.sha256(xml_text.encode("utf-8", "replace"))
+               .hexdigest()[:32])
+        hit = store.get(key)
+        if hit is not None:
+            try:
+                return _load_parsed(hit)
+            except (KeyError, TypeError, ValueError):
+                pass  # corrupt row -> live parse overwrites it
+        parsed = parse_instance(xml_text)
+        store.put(key, _dump_parsed(parsed))
+        return parsed
+
+    return parse
+
+
 def build_segment_data(instances: List[Tuple[str, str]],  # (label, xml)
                        source: str = "",
                        aliases: Optional[Dict[str, str]] = None,
-                       skipped: Optional[List[str]] = None) -> SegmentData:
+                       skipped: Optional[List[str]] = None,
+                       parse=None) -> SegmentData:
     """Merge parsed instances into ordered segment lines, with provenance.
 
     Instances arrive oldest→newest with the 10-Q last, so a plain
@@ -421,7 +488,7 @@ def build_segment_data(instances: List[Tuple[str, str]],  # (label, xml)
 
     for label, xml_text in instances:
         try:
-            parsed = parse_instance(xml_text)
+            parsed = (parse or parse_instance)(xml_text)
         except ET.ParseError:
             result_skipped.append(f"{label}: parse error")
             continue
@@ -677,7 +744,12 @@ def fetch_segment_data(annual: AnnualFundamentals,
             "filing XBRL instances unreachable (offline, or an unexpected "
             "EDGAR layout for this filer)"))
     aliases = config.SEGMENT_ALIASES.get((annual.ticker or "").upper(), {})
-    data = build_segment_data(instances, aliases=aliases, skipped=skipped)
+    # FIX-17h: the network path memoizes each instance's parse in the
+    # fact store (content-hashed, immutable) — warm re-analysis skips
+    # the multi-MB XML parses entirely
+    from .factstore import FactStore
+    data = build_segment_data(instances, aliases=aliases, skipped=skipped,
+                              parse=stored_parse(FactStore()))
     # honest shortfall: fewer annual instances than the history window asks
     n_annual = sum(1 for lbl, _ in instances if not lbl.startswith("10-Q"))
     want = min(config.SEGMENT_HISTORY_YEARS,
