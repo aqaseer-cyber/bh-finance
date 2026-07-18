@@ -327,6 +327,19 @@ def _label_for(default: str, concept: Optional[str],
     return _TAG_LABELS.get(primary, default)
 
 
+def _statement_completeness_line(d: DashboardData) -> str:
+    """v3 R3a (a6): the Cover's statement-completeness declaration — every
+    as-filed sheet present, or the missing ones named with the reason
+    (never a silently absent sheet)."""
+    stmts = getattr(d, "statements", None) or {}
+    if all(k in stmts for k in ("income", "balance", "cashflow")):
+        return ("Income Statement · Balance Sheet · Cash Flow — all "
+                "identified in the filing's presentation")
+    return (getattr(d, "statements_note", "") or
+            "statement structure not fetched in this run — as-filed "
+            "sheets omitted")
+
+
 def export_financial_model(d: DashboardData, path: str) -> str:
     """Write the consolidated three-statement model workbook; returns path."""
     from openpyxl import Workbook
@@ -377,6 +390,9 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         ("Contents", "Model (annual + quarterly + LTM) · "
                      "Income Statement · Balance Sheet · Cash Flow · "
                      "Segments — single format regime (FIX-12h)"),
+        # v3 R3a (a6): statement completeness declared on the Cover —
+        # a sheet that could not be produced is named with the reason
+        ("Statement sheets", _statement_completeness_line(d)),
         ("Provenance", "every concept's XBRL tag audit is footnoted on "
                        "the Model sheet; paid-provider data never "
                        "enters this workbook"),
@@ -694,6 +710,9 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                 src = ("FMP (aggregator)" if e.source == "FMP"
                        else "Finnhub as-reported (aggregator)")
                 status = ("DIVERGENT" if e.kind == "divergent"
+                          else "RESTATED (EDGAR carries the recast; "
+                               "provider carries the original)"
+                          if e.kind == "restated"
                           else "RESCUABLE (EDGAR empty)")
                 color = bad if e.kind == "divergent" else muted
                 row_vals = (e.item, e.fy, fmt_val(e.ours, e.unit),
@@ -751,11 +770,13 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     if rep is not None and (rep.checked or rep.entries or rep.error):
         notes.insert(-1, (
             "DATA AUDIT: tolerance ±2% (floor $2M); provider values never "
-            "replace EDGAR numbers on this sheet. Finnhub compares values "
-            "as FIRST filed — a later restatement flags as a divergence "
-            "(signal, not error); a provider value of exactly 0 is "
-            "treated as absent. Filling rescuable cells into the series "
-            "(with recompute) is FIX-17c.2."))
+            "replace EDGAR numbers on this sheet. Where EDGAR's own "
+            "filings carry more than one value for a span the row is "
+            "classed RESTATED (the filer recast the number; the provider "
+            "serves the original) — only rows EDGAR itself never changed "
+            "are DIVERGENT. A provider value of exactly 0 is treated as "
+            "absent. Filling rescuable cells into the series (with "
+            "recompute) is FIX-17c.2."))
     if seg_lines:
         src = getattr(seg, "source", "") or "latest filings"
         extra = getattr(seg, "status", "")

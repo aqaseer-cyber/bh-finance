@@ -1066,10 +1066,19 @@ _XLINK = "{http://www.w3.org/1999/xlink}"
 _STD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
 # The three primary statements in a FilingSummary's report list; the $
 # anchors exclude 'Parenthetical' and comprehensive-income variants.
+# v3 R3a (a6): CONDENSED and '(LOSS)' variants admitted — both appear in
+# real 10-K report lists and used to fall through to "sheets omitted".
 _STATEMENT_SHORTNAME_RX = re.compile(
-    r"CONSOLIDATED (BALANCE SHEETS?$"
-    r"|STATEMENTS? OF (INCOME|OPERATIONS)$"
+    r"(?:CONDENSED )?CONSOLIDATED (BALANCE SHEETS?$"
+    r"|STATEMENTS? OF (INCOME|OPERATIONS)( ?\(LOSS\))?$"
     r"|STATEMENTS? OF CASH FLOWS?$)", re.IGNORECASE)
+
+# a6 second pass: filers that publish ONLY a combined comprehensive
+# statement (no separate income statement report) — accepted for the
+# income key when nothing matched the primary pattern.
+_COMPREHENSIVE_ONLY_RX = re.compile(
+    r"(?:CONDENSED )?CONSOLIDATED STATEMENTS? OF COMPREHENSIVE "
+    r"(INCOME|LOSS)( ?\(LOSS\))?$", re.IGNORECASE)
 
 
 @dataclass
@@ -1101,14 +1110,21 @@ def _humanize_concept(local: str) -> str:
 
 def parse_filing_summary(xml_text: str) -> Dict[str, Tuple[str, str]]:
     """{'income'/'balance'/'cashflow': (Role URI, ShortName)} for the three
-    consolidated primary statements; 'Parenthetical' reports excluded."""
+    consolidated primary statements; 'Parenthetical' reports excluded.
+
+    v3 R3a (a6): a second pass accepts a combined comprehensive-income
+    statement for the income key — but only when NO separate income
+    statement matched, so the exclusion of comprehensive variants as
+    duplicates still holds for ordinary filers."""
     root = ET.fromstring(xml_text)
-    out: Dict[str, Tuple[str, str]] = {}
+    reports: List[Tuple[str, str]] = []
     for report in root.iter("Report"):
         short = (report.findtext("ShortName") or "").strip()
         role = (report.findtext("Role") or "").strip()
-        if not short or not role or "parenthetical" in short.lower():
-            continue
+        if short and role and "parenthetical" not in short.lower():
+            reports.append((short, role))
+    out: Dict[str, Tuple[str, str]] = {}
+    for short, role in reports:
         if not _STATEMENT_SHORTNAME_RX.search(short):
             continue
         upper = short.upper()
@@ -1119,6 +1135,49 @@ def parse_filing_summary(xml_text: str) -> Dict[str, Tuple[str, str]]:
         else:
             key = "income"
         out.setdefault(key, (role, short))  # first matching report wins
+    if "income" not in out:
+        for short, role in reports:
+            if _COMPREHENSIVE_ONLY_RX.search(short):
+                out["income"] = (role, short)
+                break
+    return out
+
+
+# a6 fallback hints: last path segment of a presentationLink role URI ->
+# statement key, for filers whose FilingSummary ShortNames defeat the
+# patterns above (role URIs are far more uniform than display names)
+_ROLE_URI_HINTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("income", ("statementsofincome", "statementofincome",
+                "statementsofoperations", "statementofoperations",
+                "incomestatement")),
+    ("balance", ("balancesheet", "statementsoffinancialposition",
+                 "statementoffinancialposition")),
+    ("cashflow", ("statementsofcashflows", "statementofcashflows",
+                  "cashflowsstatement", "cashflowstatement")),
+)
+
+
+def roles_from_pre_linkbase(pre_xml: str) -> Dict[str, Tuple[str, str]]:
+    """v3 R3a (a6): scan the presentation linkbase's own role URIs for the
+    three primary statements — the fallback when FilingSummary ShortNames
+    match nothing. Parenthetical roles excluded; first match per key wins;
+    the synthesized ShortName says where it came from."""
+    try:
+        root = ET.fromstring(pre_xml)
+    except ET.ParseError:
+        return {}
+    out: Dict[str, Tuple[str, str]] = {}
+    for link in root.iter():
+        if _local(link.tag) != "presentationLink":
+            continue
+        role = link.get(_XLINK + "role", "")
+        tail = role.rsplit("/", 1)[-1].lower()
+        if not tail or "parenthetical" in tail:
+            continue
+        for key, hints in _ROLE_URI_HINTS:
+            if key not in out and any(h in tail for h in hints):
+                out[key] = (role, f"{role.rsplit('/', 1)[-1]} "
+                                  "(pre-linkbase fallback)")
     return out
 
 
@@ -1304,14 +1363,23 @@ def fetch_statement_presentation(annual: AnnualFundamentals,
         roles = parse_filing_summary(summary)
     except Exception as exc:
         return {}, [f"FilingSummary.xml unusable: {exc}"]
-    if not roles:
-        return {}, ["no consolidated-statement reports found in "
-                    "FilingSummary.xml"]
     stem = (annual.latest_10k_document or "").rsplit(".", 1)[0]
     pre = _fetch_linkbase(sec, base, stem, "_pre.xml", ttl)
     if pre is None:
         return {}, ["presentation linkbase (_pre.xml) not found in the "
                     "filing folder"]
+    # v3 R3a (a6): FilingSummary ShortNames that defeat the patterns fall
+    # back to the pre-linkbase's own role URIs, per missing statement
+    fallback = None
+    for key in ("income", "balance", "cashflow"):
+        if key not in roles:
+            if fallback is None:
+                fallback = roles_from_pre_linkbase(pre)
+            if key in fallback:
+                roles[key] = fallback[key]
+    if not roles:
+        return {}, ["no consolidated-statement reports found in "
+                    "FilingSummary.xml or the pre-linkbase role URIs"]
     lab = _fetch_linkbase(sec, base, stem, "_lab.xml", ttl) or ""
     try:
         rows = build_statement_rows(pre, lab, roles)
@@ -1321,4 +1389,13 @@ def fetch_statement_presentation(annual: AnnualFundamentals,
         return {}, ["the presentation roles matched no rows"]
     rows["_short_names"] = {k: sn for k, (_r, sn) in roles.items()
                             if k in rows}
-    return rows, []
+    # a6: no silent absence — a statement that could not be identified is
+    # DECLARED missing (the note reaches the UI card, the workbook Cover
+    # and the report appendix)
+    notes = [f"{title}: not identified in this filing's presentation — "
+             "sheet omitted"
+             for key, title in (("income", "Income Statement"),
+                                ("balance", "Balance Sheet"),
+                                ("cashflow", "Cash Flow"))
+             if key not in rows]
+    return rows, notes

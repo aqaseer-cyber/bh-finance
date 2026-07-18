@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from . import config
-from .anchors import CAPEX_DEVIATION, capex_intensity
+from .anchors import CAPEX_DEVIATION, capex_intensity, trimmed_mean
 from .metrics import DashboardData, fmt_money, fmt_pct
 
 HORIZON = 10
@@ -243,7 +243,16 @@ def exit_multiple_check(d, base_g0: float, g_term: float,
     EBIT₅; equity₅ = EV₅ − today's bridge (held constant, a labeled
     simplification). Returns {'multiple','ebit5','eq5_ps','fv_today',
     'return_5y'} — return_5y is price-only (interim FCFF ignored,
-    conservative), fv_today discounts at the valuation's rate."""
+    conservative), fv_today discounts at the valuation's rate.
+
+    v3 R3a (a2): ALSO carries a regime-trimmed variant ('multiple_trimmed',
+    'fv_today_trimmed', 'return_5y_trimmed') — the same arithmetic on the
+    interquintile MEAN of the yearly EV/EBIT observations (top and bottom
+    quintile dropped), so a single bubble or crash year can't set the exit
+    while a genuine multi-year regime still registers. (A trimmed MEDIAN
+    — the design's literal wording — is arithmetically the raw median;
+    see anchors.trimmed_mean.) The report shows `trimmed (raw)`; raw keys
+    are unchanged."""
     ebit0 = _latest(getattr(d, "ebit_reported", None) or [])
     mults = [v for v in getattr(d, "ev_ebit_fy", None) or []
              if v is not None]
@@ -254,15 +263,33 @@ def exit_multiple_check(d, base_g0: float, g_term: float,
     for i in range(1, 6):
         g_i = base_g0 + (g_term - base_g0) * (i - 1) / (HORIZON - 1)
         ebit5 *= 1 + g_i
-    eq5_ps = (mult * ebit5 - bridge) / shares
-    if eq5_ps <= 0:
+
+    def _frame(m):
+        eq5 = (m * ebit5 - bridge) / shares
+        if eq5 <= 0:
+            return None
+        fv = (eq5 / (1 + rate) ** 5
+              if rate is not None and rate > -1 else None)
+        r5 = ((eq5 / price) ** (1 / 5) - 1
+              if price and price > 0 else None)
+        return eq5, fv, r5
+
+    raw = _frame(mult)
+    if raw is None:
         return None
-    fv_today = (eq5_ps / (1 + rate) ** 5
-                if rate is not None and rate > -1 else None)
-    ret5 = ((eq5_ps / price) ** (1 / 5) - 1
-            if price and price > 0 else None)
-    return {"multiple": mult, "ebit5": ebit5, "eq5_ps": eq5_ps,
-            "fv_today": fv_today, "return_5y": ret5}
+    eq5_ps, fv_today, ret5 = raw
+    out = {"multiple": mult, "ebit5": ebit5, "eq5_ps": eq5_ps,
+           "fv_today": fv_today, "return_5y": ret5,
+           "multiple_trimmed": None, "fv_today_trimmed": None,
+           "return_5y_trimmed": None}
+    m_trim = trimmed_mean(mults)
+    if m_trim is not None:
+        trimmed = _frame(m_trim)
+        if trimmed is not None:
+            out["multiple_trimmed"] = m_trim
+            out["fv_today_trimmed"] = trimmed[1]
+            out["return_5y_trimmed"] = trimmed[2]
+    return out
 
 
 def price_irr_ladder(price: Optional[float], base: Optional[float],

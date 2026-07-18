@@ -167,6 +167,12 @@ def build_dashboard_data(
         stmts, notes = fetch_statement_presentation(fundamentals, cache=cache)
         data.statements = stmts or None
         data.statements_note = "; ".join(notes)
+        # v3 R3a (a6): a declared-missing statement is a warning, so the
+        # report's register prints it (no silent absence)
+        missing = [n for n in notes if "not identified" in n]
+        if missing:
+            data.health_notes.append(
+                "Statement sheets: " + "; ".join(missing))
     except Exception as exc:  # incl. the FIX-13a UA gate — keep the reason
         data.statements = None
         data.statements_note = f"{type(exc).__name__}: {exc}"

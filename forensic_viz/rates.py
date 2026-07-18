@@ -45,7 +45,10 @@ class WaccBuild:
     r_f_source: str = ""
     beta_raw: Optional[float] = None
     beta: Optional[float] = None           # Blume-adjusted
-    erp: float = config.ERP_ASSUMPTION
+    # v3 R3a (a5): default_factory, NOT a plain default — a plain default
+    # froze config.ERP_ASSUMPTION at import time, so a house file applied
+    # via settings never reached a later WACC build (the field bug)
+    erp: float = field(default_factory=lambda: config.ERP_ASSUMPTION)
     r_e: Optional[float] = None
     r_d: Optional[float] = None
     tax: Optional[float] = None

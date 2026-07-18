@@ -125,17 +125,58 @@
               + (ledgerRow.age_days ?? "?") + "d");
   }
 
+  /* v3 R3a (a3): stale-series guard — mirrors forensic_viz/kpi.stale_note.
+     A KPI whose underlying series ends before the latest fiscal year shows
+     the staleness note, never the relic value. Series are tail-aligned
+     with fy_labels (equal-length padded, or shorter aligning at the tail). */
+  function staleNote(series, labels) {
+    if (!labels || !labels.length) return null;
+    const seq = series || [];
+    let lastIdx = -1;
+    for (let i = seq.length - 1; i >= 0; i--)
+      if (seq[i] !== null && seq[i] !== undefined) { lastIdx = i; break; }
+    if (lastIdx < 0) return null;
+    const labelIdx = lastIdx + (labels.length - seq.length);
+    if (labelIdx >= labels.length - 1) return null;
+    if (labelIdx < 0) return "n/a (series ends before " + labels[0] + ")";
+    return "n/a (series ends " + labels[labelIdx] + ")";
+  }
+
+  /* element-wise "either leg present", tail-aligned — the owner's-yield
+     guard series (the KPI pairs dividends + buybacks from one FY) */
+  function eitherLeg(a, b) {
+    a = a || []; b = b || [];
+    const n = Math.max(a.length, b.length), out = [];
+    for (let j = n; j >= 1; j--) {
+      const av = a[a.length - j], bv = b[b.length - j];
+      out.push(av ?? bv ?? null);
+    }
+    return out;
+  }
+
   function kpiRow(d) {
+    const labels = d.fy_labels || [];
+    const series = (d.fundamentals || {}).series || {};
+    const guard = (s, value) => {
+      const note = staleNote(s, labels);
+      return note
+        ? '<span class="muted" style="font-size:12px">' + esc(note) + "</span>"
+        : value;
+    };
     const tiles = [
-      ["Revenue (latest FY)", fmt.money(pres.last(
-        (d.fundamentals || {}).series?.revenue))],
-      ["Op margin", fmt.pctPlain(pres.last(d.operating_margin))],
-      ["ROIC", fmt.pctPlain(pres.last(d.roic))],
-      ["FCF", fmt.money(pres.last(d.fcf))],
-      ["Adj FCF yield", fmt.pctPlain(d.adj_fcf_yield_now)],
-      ["Owner's yield*", fmt.pctPlain(d.owners_yield)],
-      ["P/E (FY)", fmt.ratio(pres.last(d.pe_fy))],
-      ["EV/EBIT (FY)", fmt.ratio(pres.last(d.ev_ebit_fy))],
+      ["Revenue (latest FY)",
+       guard(series.revenue, fmt.money(pres.last(series.revenue)))],
+      ["Op margin",
+       guard(d.operating_margin, fmt.pctPlain(pres.last(d.operating_margin)))],
+      ["ROIC", guard(d.roic, fmt.pctPlain(pres.last(d.roic)))],
+      ["FCF", guard(d.fcf, fmt.money(pres.last(d.fcf)))],
+      ["Adj FCF yield",
+       guard(d.fcf_ex_sbc, fmt.pctPlain(d.adj_fcf_yield_now))],
+      ["Owner's yield*",
+       guard(eitherLeg(d.dividends_paid, series.buybacks || d.buybacks),
+             fmt.pctPlain(d.owners_yield))],
+      ["P/E (FY)", guard(d.pe_fy, fmt.ratio(pres.last(d.pe_fy)))],
+      ["EV/EBIT (FY)", guard(d.ev_ebit_fy, fmt.ratio(pres.last(d.ev_ebit_fy)))],
     ];
     $("ov-kpis").innerHTML = tiles.map(([label, value]) =>
       '<div class="kpi"><span class="kpi-label">' + esc(label)

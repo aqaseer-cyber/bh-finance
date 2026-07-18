@@ -7,6 +7,11 @@ reports three outcomes per (item, fiscal year):
 
   match       within tolerance — counted, silent
   divergent   the sources disagree — flagged with both values
+  restated    v3 R3a (a4): the sources disagree BUT EDGAR's own filings
+              carry more than one distinct value for that span — the
+              filer recast the number and the provider is serving the
+              original. Listed separately from true divergences (the
+              MELI FY2023 false alarm).
   rescuable   EDGAR left the cell empty but a provider has a value —
               surfaced with its source tag (series fill + recompute
               cascade is FIX-17c.2, deliberately not v1)
@@ -29,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import config
-from .edgar import DURATION_TAGS
+from .edgar import (ANNUAL_FORMS, DURATION_TAGS, INSTANT_TAGS, _parse_date)
 
 # tolerance: |a-b| <= max(REL * max(|a|,|b|), floor). The floor absorbs
 # aggregator rounding (statements are frequently re-published in $mm).
@@ -87,7 +92,7 @@ class AuditEntry:
     ours: Optional[float]
     theirs: float
     source: str                   # "FMP" | "FNH"
-    kind: str                     # "divergent" | "rescuable"
+    kind: str                     # "divergent" | "restated" | "rescuable"
     unit: str = "money"
 
 
@@ -105,6 +110,10 @@ class AuditReport:
         return [e for e in self.entries if e.kind == "divergent"]
 
     @property
+    def restated(self) -> List[AuditEntry]:
+        return [e for e in self.entries if e.kind == "restated"]
+
+    @property
     def rescuable(self) -> List[AuditEntry]:
         return [e for e in self.entries if e.kind == "rescuable"]
 
@@ -114,6 +123,7 @@ class AuditReport:
         src = " + ".join(self.sources) or "no providers"
         s = (f"Data audit: {self.checked} item-years vs {src} — "
              f"{self.matched} match, {len(self.divergent)} divergent, "
+             f"{len(self.restated)} restated, "
              f"{len(self.rescuable)} rescuable (EDGAR empty)")
         if self.error:
             s += f" · partial: {self.error}"
@@ -159,9 +169,74 @@ def _date(raw) -> Optional[dt.date]:
         return None
 
 
+def _concept_tags(f, concept: str) -> List[str]:
+    """Candidate tags for the restatement scan, most specific first: the
+    per-year substitution record, then the winning tag (first token of the
+    tags_used audit string), then the concept's full priority list."""
+    tags: List[str] = []
+    for by_year in (getattr(f, "year_sources", None) or {}).get(
+            concept, {}).values():
+        if by_year and by_year not in tags:
+            tags.append(by_year)
+    used = (getattr(f, "tags_used", None) or {}).get(concept, "")
+    first = str(used).split(";")[0].split("(")[0].strip()
+    if first and first not in tags:
+        tags.append(first)
+    for t in DURATION_TAGS.get(concept) or INSTANT_TAGS.get(concept) or []:
+        if t not in tags:
+            tags.append(t)
+    return tags
+
+
+def _edgar_restated(f, concept: str, fy_end: dt.date,
+                    floor: float) -> bool:
+    """v3 R3a (a4): True when EDGAR's OWN filings carry more than one
+    distinct value (beyond the audit tolerance) for this concept's annual
+    span — the filer recast the number in a later filing, so a provider
+    serving the original is 'restated', not 'divergent'.
+
+    Scans the raw companyfacts payload for the concept's tag(s): annual
+    forms only; duration concepts match full-year spans ending at the FY
+    end, instant concepts match the balance-sheet date (±7 days). The
+    first tag with ≥1 span observation decides — mixing tags would turn
+    every tag migration into a fake restatement."""
+    raw = getattr(f, "raw_facts", None) or {}
+    facts = raw.get("facts") or {}
+    is_duration = concept in DURATION_TAGS
+    for tag in _concept_tags(f, concept):
+        entry = None
+        for ns in sorted(facts, key=lambda n: (n != "us-gaap", n)):
+            if tag in facts[ns]:
+                entry = facts[ns][tag]
+                break
+        if entry is None:
+            continue
+        vals: List[float] = []
+        for unit_items in (entry.get("units") or {}).values():
+            for item in unit_items or []:
+                if not str(item.get("form", "")).startswith(ANNUAL_FORMS):
+                    continue
+                end = _parse_date(str(item.get("end", "")))
+                val = item.get("val")
+                if end is None or not isinstance(val, (int, float)):
+                    continue
+                if abs((end - fy_end).days) > 7:
+                    continue
+                if is_duration:
+                    start = _parse_date(str(item.get("start", "")))
+                    if start is None or not 330 <= (end - start).days <= 400:
+                        continue
+                vals.append(float(val))
+        if vals:
+            lo, hi = min(vals), max(vals)
+            return not _tolerant_match(lo, hi, floor)
+    return False
+
+
 def _compare(report: AuditReport, item: str, fy: str,
              ours: Optional[float], theirs: Optional[float], source: str,
-             absolute: bool, floor: float, unit: str) -> None:
+             absolute: bool, floor: float, unit: str,
+             restated_check=None) -> None:
     if theirs is None:
         return
     if ours is None:
@@ -173,8 +248,11 @@ def _compare(report: AuditReport, item: str, fy: str,
     if _tolerant_match(a, b, floor):
         report.matched += 1
     else:
+        # a4: only a genuine mismatch pays for the restatement scan
+        kind = ("restated" if restated_check is not None
+                and restated_check() else "divergent")
         report.entries.append(AuditEntry(item, fy, ours, theirs, source,
-                                         "divergent", unit))
+                                         kind, unit))
 
 
 # ------------------------------------------------------------------ FMP
@@ -201,7 +279,9 @@ def reconcile_fmp(d, statements: Dict[str, list],
             theirs = _num(row.get(fmp_field))
             fy = f"FY{f.fy_ends[i].year}"
             _compare(report, label, fy, ours, theirs, "FMP",
-                     absolute, floor, unit)
+                     absolute, floor, unit,
+                     restated_check=lambda c=concept, e=f.fy_ends[i],
+                     fl=floor: _edgar_restated(f, c, e, fl))
 
 
 # -------------------------------------------------------------- Finnhub
@@ -243,7 +323,9 @@ def reconcile_finnhub(d, payload: dict, report: AuditReport) -> None:
             ours = series[i] if series and i < len(series) else None
             theirs = _fnh_lookup(rep.get(section), DURATION_TAGS[concept])
             _compare(report, label, fy, ours, theirs, "FNH",
-                     False, _MONEY_FLOOR, unit)
+                     False, _MONEY_FLOOR, unit,
+                     restated_check=lambda c=concept, e=f.fy_ends[i]:
+                     _edgar_restated(f, c, e, _MONEY_FLOOR))
 
 
 # ------------------------------------------------------------- fetching

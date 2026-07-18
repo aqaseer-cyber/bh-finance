@@ -306,3 +306,107 @@ def anchor_readout(a: GrowthAnchors) -> str:
         lo, hi = a.consensus_range
         line += f" · analyst range {lo:+.1%}…{hi:+.1%}"
     return line
+
+
+# ------------------------------------------------ v3 R3a: base quality
+
+RECEIVABLE_BOOK_PREFIXES = ("LoansAndLeasesReceivable", "NotesReceivable")
+RECEIVABLE_MATERIALITY = 0.10   # receivable book vs total assets
+ACCRUALS_CHALLENGE = 0.15       # |3y median accruals| beyond this
+CFO_NI_CHALLENGE = 3.0          # CFO running this many times NI
+
+_FINANCE_SIC = range(6000, 7000)
+
+
+@dataclass
+class BaseQuality:
+    """R3a a1 — the base-quality gate: a report challenges its own base
+    before presenting a verdict on it. Text + a flag, never a number:
+    goldens stay byte-identical."""
+
+    accruals_median_3y: Optional[float]
+    cfo_ni_ratio: Optional[float]
+    financial_signature: bool
+    challenged: bool
+    text: str
+
+
+def _receivable_book_material(d) -> bool:
+    f = getattr(d, "fundamentals", None)
+    raw = getattr(f, "raw_facts", None) if f is not None else None
+    facts = (raw or {}).get("facts") or {}
+    assets = None
+    ta = getattr(d, "total_assets", None) or []
+    for v in reversed(ta):
+        if v:
+            assets = v
+            break
+    if not assets:
+        return False
+    for ns in facts:
+        for tag, body in facts[ns].items():
+            if not tag.startswith(RECEIVABLE_BOOK_PREFIXES):
+                continue
+            for unit_entries in (body.get("units") or {}).values():
+                vals = [e.get("val") for e in unit_entries
+                        if isinstance(e.get("val"), (int, float))]
+                if vals and abs(vals[-1]) / assets \
+                        >= RECEIVABLE_MATERIALITY:
+                    return True
+    return False
+
+
+def assess_base_quality(d) -> BaseQuality:
+    """Pure read of already-computed series + raw facts (a1)."""
+    import statistics
+
+    acc = [v for v in (getattr(d, "accruals_ratio", None) or [])[-3:]
+           if v is not None]
+    med = statistics.median(acc) if acc else None
+    ni = next((v for v in reversed(getattr(d, "net_income", None) or [])
+               if v is not None), None)
+    cfo = next((v for v in reversed(getattr(d, "cfo", None) or [])
+                if v is not None), None)
+    ratio = (cfo / ni) if (ni is not None and ni > 0
+                           and cfo is not None) else None
+    try:
+        sic = int(getattr(d, "sic_code", "") or 0)
+    except ValueError:
+        sic = 0
+    fin_sig = sic in _FINANCE_SIC or _receivable_book_material(d)
+    challenged = ((med is not None and abs(med) > ACCRUALS_CHALLENGE)
+                  or (ratio is not None and ratio > CFO_NI_CHALLENGE)
+                  or fin_sig)
+    text = ""
+    if challenged:
+        x = f"{ratio:.1f}" if ratio is not None else "n/a"
+        a = f"{med:+.0%}" if med is not None else "n/a"
+        text = (f"CFO runs {x}× net income (3y median accruals {a}) — "
+                "the Standard-track FCFF base carries financing float; "
+                "SOTP / de-consolidated credit is the house-preferred "
+                "frame. Verdict below is conditional on the base.")
+    return BaseQuality(accruals_median_3y=med, cfo_ni_ratio=ratio,
+                       financial_signature=fin_sig,
+                       challenged=challenged, text=text)
+
+
+def trimmed_mean(values, quintile: float = 0.2) -> Optional[float]:
+    """R3a a2 — the regime-trimmed statistic: drop the top and bottom
+    quintile of the yearly observations (whole observations; nothing
+    dropped when fewer than 5 remain usable), then take the MEAN of the
+    interquintile core.
+
+    The design text says "trimmed median", but a median is invariant
+    under symmetric trimming — dropping k observations from both ends of
+    a sorted list never moves its middle — so that statistic would equal
+    the raw median on every input and the report's `trimmed (raw)` pair
+    would print one number twice. The interquintile mean is the estimator
+    that actually responds to a multi-year regime (half a decade at
+    elevated multiples) while staying protected from single-year
+    outliers. Deviation recorded in docs/R3_PHASE_REPORT.md."""
+    vals = sorted(v for v in (values or []) if v is not None)
+    if not vals:
+        return None
+    k = int(len(vals) * quintile)
+    core = vals[k:len(vals) - k] if len(vals) - 2 * k >= 1 else vals
+    return sum(core) / len(core)

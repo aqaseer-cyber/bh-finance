@@ -45,3 +45,55 @@ print API and the owner wants the screen look in print.
 - Owner-run (open): the rewritten `docs/UI_VALIDATION.md` (v3 shell)
   fully ticked + the fresh MELI run reviewed externally against the
   filing instances.
+
+---
+
+# R3a — engine-adjacent computations (docs/V3_R3_EXPORT_DESIGN.md)
+
+Shipped as the first gated slice of the export design. Six items, all
+tested offline (`tests/test_r3a.py`), goldens byte-identical.
+
+- **a1 base-quality gate** — `anchors.assess_base_quality` /
+  `BaseQuality`: challenged when 3y median |accruals| > 15%, CFO/NI >
+  3.0, or a financial signature (SIC 6000–6999, or a
+  `LoansAndLeasesReceivable*`/`NotesReceivable*` book ≥ 10% of assets).
+  Text + flag only — no number changes. Rendering lands in R3b P1.
+- **a2 regime-trimmed exit multiple** — `exit_multiple_check` now also
+  returns `multiple_trimmed` / `fv_today_trimmed` / `return_5y_trimmed`
+  (raw keys untouched). **Spec deviation, recorded:** the design says
+  "trimmed median", but a median is invariant under symmetric trimming
+  (dropping the top and bottom quintile of a sorted list never moves
+  its middle), so that statistic would equal the raw median on every
+  input and `trimmed (raw)` would print one number twice. Implemented
+  as the interquintile MEAN (`anchors.trimmed_mean`): protected from
+  single-year outliers, still responds to a genuine multi-year regime.
+- **a3 stale-series KPI guard** — new `forensic_viz/kpi.py`
+  (`stale_note`, tail-aligned last-index check) mirrored by
+  `staleNote` in `overview.js`; every Overview strip KPI is guarded,
+  incl. `fcf_ex_sbc` behind the Adj-FCF-yield tile (the "FCF ex-SBC
+  $110.2M" relic).
+- **a4 restatement-aware reconciliation** — before flagging divergent,
+  `reconcile._edgar_restated` scans the raw companyfacts payload for
+  >1 distinct EDGAR value at that concept's span (annual forms, own
+  tag only); if found the entry is classed `restated (EDGAR carries
+  the recast; provider carries the original)` — separate list,
+  separate summary count, own DATA-AUDIT status line (the MELI FY2023
+  false alarm).
+- **a5 house-config precedence** — two real bugs fixed:
+  `apply_user_settings` never re-ran the house loader (constants kept
+  import-time values; now `_apply_house(_load_house(saved=…))` rebinds
+  all twelve house constants), and `WaccBuild.erp` was a plain
+  dataclass default frozen at import (now `default_factory`).
+  Regression tests pin settings-apply, build-time ERP, and
+  `WACC_Build!B5 == config.ERP_ASSUMPTION` at fill time.
+- **a6 statement-name hardening** — ShortName regex admits
+  `CONDENSED` and `(LOSS)` variants; a comprehensive-only second pass
+  covers combined-statement filers; a pre-linkbase role-URI fallback
+  (`roles_from_pre_linkbase`) catches ShortNames that defeat both;
+  anything still unmatched is DECLARED missing ("… not identified in
+  this filing's presentation — sheet omitted") on the UI card, the
+  workbook Cover ("Statement sheets" row), and the warnings register
+  (report).
+
+Gate: suite 326/0 (22 new), goldens byte-identical, frozen-engine
+edits confined to the seams a1–a6 name.

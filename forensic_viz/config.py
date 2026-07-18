@@ -100,6 +100,10 @@ def apply_user_settings(s: dict) -> None:
         SEC_USER_AGENT = ua
         UA_IS_PLACEHOLDER = False
     USER_HOUSE_FILE = str(s.get("house_file") or "")
+    # v3 R3a (a5): re-run the house loader so a saved house file
+    # reaches the ASSUMPTION constants NOW (env candidate still wins
+    # inside _load_house) — the settings rework had left them stale
+    _apply_house(_load_house(saved=s.get("house_file")))
     # FIX-17a provider keys: a saved key only fills the gap; env wins
     for attr, env_name, settings_key in (
             ("FMP_API_KEY", "FMP_API_KEY", "fmp_api_key"),
@@ -116,22 +120,30 @@ def apply_user_settings(s: dict) -> None:
         GUI_DEFAULT_YEARS = yrs
 
 
-def _load_house() -> dict:
-    """Load house_assumptions.toml if present (env override, cwd, or repo root).
+_FROM_DISK = object()   # sentinel: read the saved path from settings.json
+
+
+def _load_house(saved=_FROM_DISK) -> dict:
+    """Load house_assumptions.toml if present (env override, saved
+    settings path, cwd, or repo root).
 
     Real house values are never committed — only house_assumptions.example.toml
     (with the code defaults) ships. When a file is found, its keys override the
     ASSUMPTION defaults below and the report labels flip ASSUMPTION -> house.
-    """
+
+    `saved` lets apply_user_settings pass its OWN house_file value (the
+    dict it received may be newer than what's on disk); the default
+    reads settings.json."""
     import pathlib
 
     cands = []
     env = os.environ.get("HOUSE_ASSUMPTIONS_FILE")
     if env:
         cands.append(pathlib.Path(env))
-    saved = load_user_settings().get("house_file")  # Settings dialog (FIX-12e)
+    if saved is _FROM_DISK:
+        saved = load_user_settings().get("house_file")  # FIX-12e
     if saved:
-        cands.append(pathlib.Path(saved))
+        cands.append(pathlib.Path(str(saved)))
     cands += [pathlib.Path.cwd() / "house_assumptions.toml",
               pathlib.Path(__file__).resolve().parent.parent / "house_assumptions.toml"]
     for c in cands:
@@ -150,27 +162,40 @@ def _load_house() -> dict:
     return {}
 
 
-_HOUSE = _load_house()
-HOUSE_LOADED = bool(_HOUSE)
-HOUSE_PATH = _HOUSE.get("_path", "")
+def _apply_house(house: dict) -> None:
+    """Bind every house-overridable ASSUMPTION from a loaded house
+    dict. v3 R3a (a5): ALSO re-run by `apply_user_settings`, so a house
+    file saved to settings.json reaches these constants without a
+    process restart — the field bug was USER_HOUSE_FILE updating while
+    ERP_ASSUMPTION kept its import-time value.
 
-# Phase-3 health-check defaults + discount-rate/stress ASSUMPTIONs. Overridable
-# via house_assumptions.toml (FIX-7); labeled on the report as ASSUMPTION when
-# no house file is loaded, "house" when one is.
-ERP_ASSUMPTION          = float(_HOUSE.get("erp", 0.046))
-DEBT_SPREAD_ASSUMPTION  = float(_HOUSE.get("debt_spread", 0.015))
-GDP_CAP                 = float(_HOUSE.get("gdp_cap", 0.035))
-RND_LIFE_YEARS          = int(_HOUSE.get("rnd_life_years", 5))
-RND_MATERIALITY         = float(_HOUSE.get("rnd_materiality", 0.05))
-SLOAN_FLAG              = float(_HOUSE.get("sloan_flag", 0.10))
-BETA_WINDOW_YEARS       = int(_HOUSE.get("beta_window_years", 5))
-STANDARD_FCFF_SHOCK     = float(_HOUSE.get("standard_fcff_shock", -0.05))
-BANK_NIM_SHOCK          = float(_HOUSE.get("bank_nim_shock", -0.01))
-INSURANCE_CR_SHOCK      = float(_HOUSE.get("insurance_cr_shock", 0.05))
-REIT_YIELD_SHOCK        = float(_HOUSE.get("reit_yield_shock", 0.01))
+    Phase-3 health-check defaults + discount-rate/stress ASSUMPTIONs;
+    labeled on the report as ASSUMPTION when no house file is loaded,
+    "house" when one is."""
+    global _HOUSE, HOUSE_LOADED, HOUSE_PATH
+    global ERP_ASSUMPTION, DEBT_SPREAD_ASSUMPTION, GDP_CAP
+    global RND_LIFE_YEARS, RND_MATERIALITY, SLOAN_FLAG
+    global BETA_WINDOW_YEARS, STANDARD_FCFF_SHOCK, BANK_NIM_SHOCK
+    global INSURANCE_CR_SHOCK, REIT_YIELD_SHOCK, IS_TIE_TOL
+    _HOUSE = house
+    HOUSE_LOADED = bool(house)
+    HOUSE_PATH = house.get("_path", "")
+    ERP_ASSUMPTION = float(house.get("erp", 0.046))
+    DEBT_SPREAD_ASSUMPTION = float(house.get("debt_spread", 0.015))
+    GDP_CAP = float(house.get("gdp_cap", 0.035))
+    RND_LIFE_YEARS = int(house.get("rnd_life_years", 5))
+    RND_MATERIALITY = float(house.get("rnd_materiality", 0.05))
+    SLOAN_FLAG = float(house.get("sloan_flag", 0.10))
+    BETA_WINDOW_YEARS = int(house.get("beta_window_years", 5))
+    STANDARD_FCFF_SHOCK = float(house.get("standard_fcff_shock", -0.05))
+    BANK_NIM_SHOCK = float(house.get("bank_nim_shock", -0.01))
+    INSURANCE_CR_SHOCK = float(house.get("insurance_cr_shock", 0.05))
+    REIT_YIELD_SHOCK = float(house.get("reit_yield_shock", 0.01))
+    # FIX-11: income-statement basis coherence tolerance
+    IS_TIE_TOL = float(house.get("is_tie_tol", 0.02))
 
-# FIX-11: income-statement basis coherence tolerance (house-overridable)
-IS_TIE_TOL = float(_HOUSE.get("is_tie_tol", 0.02))
+
+_apply_house(_load_house())
 
 ALTMAN_DISTRESS = 1.81      # Altman Z zone boundaries (original 1968 model —
 ALTMAN_SAFE = 2.99          # a fixed academic constant, not a house parameter)
