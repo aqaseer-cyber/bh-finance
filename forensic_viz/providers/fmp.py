@@ -80,6 +80,41 @@ def _span(rows) -> str:
     return f"{len(rows)} records {yr(rows[-1])}..{yr(rows[0])}"
 
 
+FREE_STATEMENT_LIMIT = 5   # probe-verified: free plan rejects limit > 5
+
+
+def _stmt_fetch(method):
+    """Statements at full depth, retrying at the free-plan depth when
+    the 402 names the 'limit' parameter (probe-verified free behavior:
+    the endpoint IS served, five fiscal years deep)."""
+    def fetch():
+        from .base import ProviderError
+        try:
+            return method(limit=40)
+        except ProviderError as exc:
+            if exc.status == 402 and "limit" in str(exc).lower():
+                return {"_free_depth": method(limit=FREE_STATEMENT_LIMIT)}
+            raise
+    return fetch
+
+
+def _stmt_describe(j) -> str:
+    if isinstance(j, dict) and "_free_depth" in j:
+        inner = _span(j["_free_depth"])
+        return f"{inner} (free-plan depth)" if inner else ""
+    return _span(j)
+
+
+def _target(j) -> str:
+    row = j[0] if isinstance(j, list) and j else (
+        j if isinstance(j, dict) and j else None)
+    if not row:
+        return ""
+    v = row.get("targetConsensus") or row.get("targetMedian") \
+        or row.get("consensus")
+    return f"consensus target {v}" if v is not None else ""
+
+
 def probe(ticker: str, transport=None) -> "list[ProbeResult]":
     c = FMPClient(transport=transport, timeout=20)
     return [
@@ -89,19 +124,18 @@ def probe(ticker: str, transport=None) -> "list[ProbeResult]":
                              f"{j[0].get('fullTimeEmployees', '?')}")
                   if isinstance(j, list) and j else None),
         run_check(c.name, "income-statement (annual)",
-                  lambda: c.income_statement(ticker), _span),
+                  _stmt_fetch(lambda limit: c.income_statement(
+                      ticker, limit=limit)), _stmt_describe),
         run_check(c.name, "cash-flow-statement (annual)",
-                  lambda: c.cash_flow_statement(ticker), _span),
+                  _stmt_fetch(lambda limit: c.cash_flow_statement(
+                      ticker, limit=limit)), _stmt_describe),
         run_check(c.name, "balance-sheet (annual)",
-                  lambda: c.balance_sheet_statement(ticker), _span),
+                  _stmt_fetch(lambda limit: c.balance_sheet_statement(
+                      ticker, limit=limit)), _stmt_describe),
         run_check(c.name, "ANALYST ESTIMATES (annual)",
                   lambda: c.analyst_estimates(ticker), _span),
         run_check(c.name, "price-target consensus",
-                  lambda: c.price_target_consensus(ticker),
-                  lambda j: (f"consensus {j[0].get('consensus', '?')}"
-                             if isinstance(j, list) and j else
-                             (f"consensus {j.get('consensus', '?')}"
-                              if isinstance(j, dict) and j else None))),
+                  lambda: c.price_target_consensus(ticker), _target),
         run_check(c.name, "grades consensus",
                   lambda: c.grades_consensus(ticker),
                   lambda j: ("served" if j else None)),

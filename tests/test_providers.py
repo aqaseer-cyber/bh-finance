@@ -157,6 +157,28 @@ def test_probe_matrix_and_verdicts_available(keys):
     assert key_tail(FAKE_FMP) in out
 
 
+def test_fmp_statement_probe_retries_at_free_depth(keys):
+    """Probe-verified free-plan behavior: limit>5 answers 402 naming the
+    'limit' parameter, but the endpoint IS served at limit<=5 — the
+    probe must report OK (free-plan depth), not DENIED."""
+    class LimitAware(Recorder):
+        def __call__(self, url, headers, params, timeout):
+            self.calls.append((url, dict(headers), dict(params)))
+            if "income-statement" in url:
+                if int(params.get("limit", 0)) > 5:
+                    return (402, "Premium Query Parameter: 'limit' must "
+                                 "be between 0 and 5")
+                return (200, json.dumps([{"date": f"{y}-12-31"}
+                                         for y in range(2025, 2020, -1)]))
+            return self.default
+
+    routes = _routes_all_ok()
+    routes["FMP"] = LimitAware()
+    out = render_probe(probe_all("PYPL", transports=routes), "PYPL")
+    assert "5 records 2021..2025 (free-plan depth)" in out
+    assert "FMP statements OK" in out
+
+
 def test_probe_verdict_when_estimates_denied(keys):
     routes = _routes_all_ok()
     routes["FMP"].routes["analyst-estimates"] = (402, "Premium Endpoint")
