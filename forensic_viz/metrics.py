@@ -191,6 +191,9 @@ class DashboardData:
     # FIX-17c: provider recheck result (reconcile.AuditReport) — None when
     # no provider keys are configured; EDGAR numbers are never mutated
     audit_report: Optional[object] = None
+    # FIX-17d: company profile (profile.CompanyProfile) — display-only
+    # context, never feeds a calculation
+    profile: Optional[object] = None
 
     # Prices
     price_dates: List[dt.date] = field(default_factory=list)

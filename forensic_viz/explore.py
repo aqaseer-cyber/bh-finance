@@ -180,6 +180,64 @@ def _kpi_text(v, kind: str) -> str:
     return f"{v:,.2f}"
 
 
+def profile_card(d: DashboardData, dpi: int = 100,
+                 width_in: float = 10.0) -> Figure:
+    """FIX-17d: DVH-style company header — name, description, country,
+    website, employees, exchange, sector, SIC. Display-only context:
+    the FMP-sourced fields are aggregator-grade and NEVER feed a
+    calculation; the card says so."""
+    import textwrap
+    p = getattr(d, "profile", None)
+    fig = Figure(figsize=(max(4.0, width_in), 1.8), dpi=dpi)
+    fig.patch.set_facecolor(P.PAGE)
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    if p is None or not (p.name or p.description):
+        ax.text(0.01, 0.6, "Company profile unavailable — configure the "
+                           "FMP key (README 'Provider keys') for "
+                           "description, website and employees.",
+                fontsize=8.4, color=P.INK_MUTED, transform=ax.transAxes)
+        return fig
+    head = p.name or d.company
+    sub = " · ".join(x for x in (
+        d.ticker, p.exchange, p.sector, p.industry) if x)
+    ax.text(0.01, 0.97, head.replace("$", "\\$"), fontsize=13.0,
+            fontweight="bold", color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top")
+    if sub:
+        ax.text(0.01, 0.80, sub, fontsize=8.2, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+    desc = p.description.replace("$", "\\$")
+    if desc:
+        per_line = max(60, int(width_in * 13))
+        lines = textwrap.wrap(desc, width=per_line)
+        if len(lines) > 3:
+            lines = lines[:3]
+            lines[-1] = lines[-1][:per_line - 2].rstrip() + "…"
+        ax.text(0.01, 0.66, "\n".join(lines), fontsize=7.6,
+                color=P.INK_SECONDARY, transform=ax.transAxes,
+                va="top", linespacing=1.35)
+    facts = [
+        ("Country", p.country or "–"),
+        ("Employees", f"{p.employees:,}" if p.employees else "–"),
+        ("Website", p.website or "–"),
+        ("SIC", p.sic_code or "–"),
+        ("IPO", p.ipo_date or "–"),
+    ]
+    # website gets the wide slot; the offsets leave it room to breathe
+    xs = (0.01, 0.14, 0.27, 0.63, 0.75)
+    for k, (label, val) in enumerate(facts):
+        x = xs[k]
+        ax.text(x, 0.24, label, fontsize=6.8, color=P.INK_MUTED,
+                transform=ax.transAxes, va="top")
+        ax.text(x, 0.14, str(val).replace("$", "\\$"), fontsize=8.0,
+                color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
+    ax.text(0.01, 0.005, f"profile: {p.sources} — context only, feeds "
+                         "no calculation", fontsize=6.4,
+            color=P.INK_MUTED, transform=ax.transAxes, va="bottom")
+    return fig
+
+
 def overview_kpi_card(d: DashboardData, dpi: int = 100,
                       width_in: float = 10.0) -> Figure:
     """FIX-16d: the one-glance KPI strip (DVH-benchmark) — current market

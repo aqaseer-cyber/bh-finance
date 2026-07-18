@@ -79,7 +79,11 @@ PEG is a point, not a series. Explore never exports — the report pages
 stay static print artifacts.
 
 **Overview & market joins.** The **Overview** tab is the one-screen
-landing: a KPI strip (last close, market cap, P/E, EV/EBIT, net-debt/EBIT,
+landing — topped by the **company profile header (FIX-17d)**: name,
+a clipped description, country, website, employees, exchange, sector
+and SIC. Identity fields come from EDGAR; the context fields come from
+the FMP profile (aggregator grade) and the card says so — profile data
+is display-only and never feeds a calculation. Below it: a KPI strip (last close, market cap, P/E, EV/EBIT, net-debt/EBIT,
 **adj-FCF yield** (ex-SBC, house §2b), **owner's yield** — dividends +
 gross buybacks over market cap, issuance deliberately NOT netted and the
 label says so — ROIC, operating margin, revenue CAGR), the FV-vs-price

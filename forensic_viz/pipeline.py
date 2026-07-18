@@ -112,6 +112,14 @@ def build_dashboard_data(
                 f"{fmt_val(worst.ours, worst.unit)} vs {worst.source} "
                 f"{fmt_val(worst.theirs, worst.unit)}.")
 
+    # FIX-17d: company profile header — display-only context (EDGAR
+    # identity + FMP fields tagged aggregator); failures degrade silently
+    from .profile import fetch_profile
+    try:
+        data.profile = fetch_profile(data, cache=cache)
+    except Exception:
+        data.profile = None
+
     if data.is_financial_sector:
         data.health_notes.append(
             f"{data.track.title()} track (SIC {data.sic_code}): Standard-track "

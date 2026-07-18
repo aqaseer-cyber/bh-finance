@@ -144,6 +144,15 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       Analyze: no audit line appears anywhere and the pipeline is
       unaffected — the audit never blocks or replaces EDGAR numbers.
 
+## Company profile (FIX-17d)
+
+- [ ] Overview tab opens with the profile header: company name,
+      description (max 3 lines, ellipsized), country / employees /
+      website / SIC / IPO facts row, and the "context only, feeds no
+      calculation" provenance footnote naming FMP as display-only.
+- [ ] Without the FMP key the header degrades to the one-line pointer
+      (README 'Provider keys') and everything below renders unchanged.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -158,5 +167,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Overview & market joins | | |
 | Providers probe | | |
 | Data audit | | |
+| Company profile | | |
 
 Date / machine / scaling: ______________________
