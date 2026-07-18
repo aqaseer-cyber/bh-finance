@@ -98,6 +98,7 @@ class AuditReport:
     entries: List[AuditEntry] = field(default_factory=list)
     sources: List[str] = field(default_factory=list)
     error: str = ""
+    fetched_at: str = ""   # v3 R0: provenance timestamp (UTC ISO)
 
     @property
     def divergent(self) -> List[AuditEntry]:
@@ -297,4 +298,6 @@ def run_reconciliation(d, cache=None) -> AuditReport:
             errors.append(f"Finnhub: {str(exc)[:60]}")
 
     report.error = "; ".join(errors)
+    report.fetched_at = dt.datetime.now(dt.timezone.utc).isoformat(
+        timespec="seconds")
     return report

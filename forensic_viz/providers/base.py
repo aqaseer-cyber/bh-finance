@@ -49,12 +49,24 @@ def _default_transport(url: str, headers: dict, params: dict,
     return resp.status_code, resp.text
 
 
+BREAKER_THRESHOLD = 3   # consecutive failures before a provider opens
+
+
 class BaseClient:
     """Minimal JSON-over-HTTPS client. Subclasses set `name`,
-    `provenance`, the key property and auth headers."""
+    `provenance`, the key property and auth headers.
+
+    v3 R0 (charter §3): every provider carries a CIRCUIT BREAKER —
+    after `BREAKER_THRESHOLD` consecutive transport/HTTP failures the
+    provider is skipped for the rest of the session (status -2,
+    "circuit open") so one dead host can't slow every later stage;
+    any success closes it again. Callers already treat ProviderError
+    as a degrade-and-badge signal, so an open circuit surfaces as the
+    same honest gap."""
 
     name = "?"
     provenance = "aggregator"
+    _consecutive_failures = 0   # class-level: shared across instances
 
     def __init__(self, transport: Optional[Transport] = None,
                  timeout: Optional[float] = None):
@@ -71,20 +83,45 @@ class BaseClient:
     def _headers(self) -> dict:  # pragma: no cover - overridden
         return {}
 
+    @classmethod
+    def circuit_open(cls) -> bool:
+        return cls._consecutive_failures >= BREAKER_THRESHOLD
+
+    @classmethod
+    def reset_circuit(cls) -> None:
+        cls._consecutive_failures = 0
+
+    @classmethod
+    def _record(cls, ok: bool) -> None:
+        cls._consecutive_failures = 0 if ok \
+            else cls._consecutive_failures + 1
+
     def get_json(self, url: str, params: Optional[dict] = None):
         if not self.has_key():
             raise ProviderError(f"{self.name} API key not configured",
                                 status=0)
+        if self.circuit_open():
+            raise ProviderError(
+                f"{self.name} circuit open after "
+                f"{type(self)._consecutive_failures} consecutive "
+                "failures — skipped for this session", status=-2)
         try:
             status, body = self._transport(url, self._headers(),
                                            params or {}, self._timeout)
         except Exception as exc:
+            self._record(ok=False)
             raise ProviderError(f"transport: {exc}", status=-1)
         if status == 200:
             try:
-                return json.loads(body)
+                parsed = json.loads(body)
             except ValueError:
+                self._record(ok=False)
                 raise ProviderError("non-JSON response", status=200)
+            self._record(ok=True)
+            return parsed
+        # 4xx plan/authorization answers are the provider WORKING —
+        # only transport-class failures should trip the breaker
+        self._record(ok=status >= 200 and status < 500)
         raise ProviderError(str(body)[:120].replace("\n", " "),
                             status=status)
 

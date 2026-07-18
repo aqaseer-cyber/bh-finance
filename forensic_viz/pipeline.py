@@ -204,8 +204,17 @@ def build_dashboard_data(
             actual_fy_year=actual_fy)
         rows = fetch_estimates_rows(ticker, cache=cache)
         trends = fetch_recommendation_trends(ticker, cache=cache)
-        data.estimates_panel = ({"rows": rows or [], "trends": trends or []}
-                                if (rows or trends) else None)
+        if rows or trends:
+            import datetime as _dt
+            data.estimates_panel = {
+                "rows": rows or [], "trends": trends or [],
+                # v3 R0: per-leg provenance + fetch timestamp
+                "provider": {"rows": "FMP", "trends": "Finnhub"},
+                "fetched_at": _dt.datetime.now(
+                    _dt.timezone.utc).isoformat(timespec="seconds"),
+            }
+        else:
+            data.estimates_panel = None
     except Exception:
         data.analyst_estimates = None  # estimates are prefill sugar only
         data.estimates_panel = None

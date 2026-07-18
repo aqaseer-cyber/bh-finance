@@ -458,6 +458,21 @@ to `house_assumptions.toml` (gitignored — real values are never committed) and
 edit it, or point `HOUSE_ASSUMPTIONS_FILE` at a file elsewhere. When a house
 file loads, the report labels flip from "ASSUMPTION" to "house".
 
+## v3 service layer (charter R0)
+
+The v3 redesign ([docs/V3_CHARTER.md](docs/V3_CHARTER.md)) is underway.
+R0 ships `webui/server.py` — a FastAPI adapter over the frozen engine
+(localhost, bearer-token guarded, SSE progress): `/api/run/{ticker}`,
+`/api/data/{ticker}`, `/api/valuation`, `/api/sandbox`, `/api/ledger`,
+`/api/export/{kind}`. **No analytics live in the web layer** — every
+endpoint calls the existing engine functions and serializes their
+results (versioned schema, `webui/serialize.py`). Provider roles and
+precedence are now normative in
+[docs/PROVIDER_MATRIX.md](docs/PROVIDER_MATRIX.md), enforced by
+per-provider circuit breakers and provenance timestamps. The offline
+end-to-end proof: `python tools/smoke_api.py`. The Tk GUI remains the
+shipped UI until the R1/R2 gates pass.
+
 ## Data sources & methodology
 
 - **Fundamentals** — SEC EDGAR XBRL `companyfacts` API. Annual (10-K family)

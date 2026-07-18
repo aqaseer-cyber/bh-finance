@@ -17,6 +17,15 @@ FAKE_TII = "TIIKEYxxxxxxxxxxxxxxxxxxxxxxxx5678"
 FAKE_FNH = "FNHKEYxxxxxxxxxxxxxxxxxxxxxxxx9abc"
 
 
+@pytest.fixture(autouse=True)
+def _reset_breakers():
+    for c in (FMPClient, TiingoClient, FinnhubClient):
+        c.reset_circuit()
+    yield
+    for c in (FMPClient, TiingoClient, FinnhubClient):
+        c.reset_circuit()
+
+
 @pytest.fixture()
 def keys(monkeypatch):
     monkeypatch.setattr(config, "FMP_API_KEY", FAKE_FMP)
@@ -187,6 +196,39 @@ def test_probe_verdict_when_estimates_denied(keys):
     out = render_probe(probe_all("PYPL", transports=routes), "PYPL")
     assert "NOT served by the configured keys" in out
     assert "FMP Starter" in out
+
+
+def test_circuit_breaker_opens_after_consecutive_failures(keys):
+    """v3 R0 (charter §3): 3 consecutive transport failures open the
+    circuit — later calls short-circuit without touching the network;
+    a success closes it; plan/auth 4xx answers never trip it."""
+    from forensic_viz.providers.base import BREAKER_THRESHOLD
+
+    def dead(url, headers, params, timeout):
+        raise RuntimeError("connection refused")
+
+    for _ in range(BREAKER_THRESHOLD):
+        with pytest.raises(ProviderError) as e:
+            FMPClient(transport=dead).profile("X")
+        assert e.value.status == -1
+    rec = Recorder()
+    with pytest.raises(ProviderError) as e:
+        FMPClient(transport=rec).profile("X")
+    assert e.value.status == -2 and "circuit open" in str(e.value)
+    assert rec.calls == []                      # network never touched
+    # other providers are isolated
+    TiingoClient(transport=Recorder({"daily": (200, "{}")})).meta("X")
+    # a success closes the circuit again
+    FMPClient.reset_circuit()
+    ok = Recorder({"profile": (200, "[]")})
+    FMPClient(transport=ok).profile("X")
+    assert not FMPClient.circuit_open()
+    # 402/401 are the provider WORKING — they must not accumulate
+    for _ in range(BREAKER_THRESHOLD + 1):
+        with pytest.raises(ProviderError):
+            FMPClient(transport=Recorder(status=402,
+                                         body="premium")).profile("X")
+    assert not FMPClient.circuit_open()
 
 
 def test_key_tail_never_shows_more_than_four():

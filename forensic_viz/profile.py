@@ -28,6 +28,7 @@ class CompanyProfile:
     sic_code: str = ""
     ipo_date: str = ""
     sources: str = ""
+    fetched_at: str = ""   # v3 R0: provenance timestamp (UTC ISO)
 
 
 def _employees(raw) -> Optional[int]:
@@ -79,4 +80,8 @@ def fetch_profile(d, cache=None) -> CompanyProfile:
                 row = payload[0]
         except Exception:
             row = None
-    return build_profile(d, row)
+    import datetime as _dt
+    p = build_profile(d, row)
+    p.fetched_at = _dt.datetime.now(_dt.timezone.utc).isoformat(
+        timespec="seconds")
+    return p
