@@ -642,6 +642,43 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                                  pct_fmt=True,
                                  tol=config.SEGMENT_TIE_TOL)  # FIX-10d
 
+    # ------------------------------------------------ DATA AUDIT (FIX-17c)
+    rep = getattr(d, "audit_report", None)
+    if rep is not None and (rep.checked or rep.entries or rep.error):
+        from .reconcile import fmt_val
+        bad = P.DELTA_BAD.lstrip("#").upper()
+        ws.cell(row=r, column=1,
+                value="DATA AUDIT (provider recheck — EDGAR stays the "
+                      "displayed truth)")
+        for j in range(1, ltm_col + 1):
+            c = ws.cell(row=r, column=j)
+            c.fill = section_fill
+            c.font = Font(bold=True, color=forest, size=10)
+        r += 1
+        r = _write_note_row(ws, r, rep.summary())
+        if rep.entries:
+            for j, h in enumerate(("Item", "FY", "EDGAR", "Provider",
+                                   "Source", "Status"), start=1):
+                hc = ws.cell(row=r, column=j, value=h)
+                hc.font = Font(bold=True, color=forest, size=9)
+            r += 1
+            for e in rep.entries:
+                src = ("FMP (aggregator)" if e.source == "FMP"
+                       else "Finnhub as-reported (aggregator)")
+                status = ("DIVERGENT" if e.kind == "divergent"
+                          else "RESCUABLE (EDGAR empty)")
+                color = bad if e.kind == "divergent" else muted
+                row_vals = (e.item, e.fy, fmt_val(e.ours, e.unit),
+                            fmt_val(e.theirs, e.unit), src, status)
+                for j, v in enumerate(row_vals, start=1):
+                    c = ws.cell(row=r, column=j, value=v)
+                    c.font = Font(color=color, size=9)
+                r += 1
+        else:
+            r = _write_note_row(
+                ws, r, "No divergences, no rescuable cells — every "
+                       "compared item-year matches within tolerance.")
+
     # ---------------------------------------------------------- footnotes
     notes = [
         f"{d.company} ({d.ticker}) — consolidated financial model · "
@@ -683,6 +720,14 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             + " Years before the price window are blank; ratios mask on "
               "non-positive denominators. CAGR/avg column: geometric CAGR "
               "for value rows, period average for multiples and yields."))
+    if rep is not None and (rep.checked or rep.entries or rep.error):
+        notes.insert(-1, (
+            "DATA AUDIT: tolerance ±2% (floor $2M); provider values never "
+            "replace EDGAR numbers on this sheet. Finnhub compares values "
+            "as FIRST filed — a later restatement flags as a divergence "
+            "(signal, not error); a provider value of exactly 0 is "
+            "treated as absent. Filling rescuable cells into the series "
+            "(with recompute) is FIX-17c.2."))
     if seg_lines:
         src = getattr(seg, "source", "") or "latest filings"
         extra = getattr(seg, "status", "")

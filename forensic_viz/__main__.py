@@ -263,6 +263,9 @@ def main(argv=None) -> int:
         _report_error(str(exc))
         return 2
 
+    if getattr(data, "audit_report", None) is not None:
+        print(f"  {data.audit_report.summary()}")
+
     from .metrics import set_adjusted_ni
     if args.adjusted_ni is not None:
         set_adjusted_ni(data, args.adjusted_ni)

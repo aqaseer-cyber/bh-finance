@@ -87,6 +87,31 @@ def build_dashboard_data(
     # P/E, EV/EBIT, yields) — inputs already fetched, pure arithmetic
     from .market import compute_market_ratios
     compute_market_ratios(data)
+
+    # FIX-17c: provider recheck — EDGAR stays the displayed truth; the
+    # audit only annotates (divergences + rescuable empty cells). It
+    # NEVER blocks the pipeline: any failure degrades to a note.
+    if config.FMP_API_KEY or config.FINNHUB_API_KEY:
+        progress("Rechecking against providers (FMP / Finnhub)…")
+        from .reconcile import AuditReport, fmt_val, run_reconciliation
+        try:
+            data.audit_report = run_reconciliation(data, cache=cache)
+        except Exception as exc:  # defense in depth — audit is optional
+            data.audit_report = AuditReport(error=str(exc)[:120])
+        rep = data.audit_report
+        note = rep.summary()
+        if rep.checked or rep.entries:
+            note += " — full table in the model export."
+        data.health_notes.append(note)
+        if rep.divergent:
+            worst = max(
+                rep.divergent,
+                key=lambda e: abs((e.ours or 0.0) - e.theirs))
+            data.health_notes.append(
+                f"Largest divergence: {worst.item} {worst.fy} — EDGAR "
+                f"{fmt_val(worst.ours, worst.unit)} vs {worst.source} "
+                f"{fmt_val(worst.theirs, worst.unit)}.")
+
     if data.is_financial_sector:
         data.health_notes.append(
             f"{data.track.title()} track (SIC {data.sic_code}): Standard-track "

@@ -188,6 +188,9 @@ class DashboardData:
     tangible_book: List[Optional[float]] = field(default_factory=list)
     owners_yield: Optional[float] = None       # (divs + gross buybacks)/mcap
     adj_fcf_yield_now: Optional[float] = None  # latest FCF ex-SBC / mcap
+    # FIX-17c: provider recheck result (reconcile.AuditReport) — None when
+    # no provider keys are configured; EDGAR numbers are never mutated
+    audit_report: Optional[object] = None
 
     # Prices
     price_dates: List[dt.date] = field(default_factory=list)

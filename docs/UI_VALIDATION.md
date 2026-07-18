@@ -133,6 +133,17 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       only as `...tail4`, and the verdict lines state whether analyst
       estimates are served. Paste the full output back to the session.
 
+## Data audit (FIX-17c)
+
+- [ ] Analyze a keyed ticker (e.g. PYPL): the status line ends with
+      "Audit: N/M match, X divergent, Y rescuable", the Health checks
+      page carries the audit footnote (+ largest divergence when any),
+      and the financial-model export contains the DATA AUDIT block with
+      per-row EDGAR vs provider values and the tolerance footnote.
+- [ ] Remove the keys (temporarily unset the env vars), relaunch,
+      Analyze: no audit line appears anywhere and the pipeline is
+      unaffected — the audit never blocks or replaces EDGAR numbers.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -146,5 +157,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Explore | Pass | owner-run 2026-07-11, Windows @150% |
 | Overview & market joins | | |
 | Providers probe | | |
+| Data audit | | |
 
 Date / machine / scaling: ______________________

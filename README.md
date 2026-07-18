@@ -462,6 +462,20 @@ matrix plus verdict lines and shows keys only as `...tail4`:
 run_windows.bat --probe PYPL
 ```
 
+**Data audit (FIX-17c).** With keys configured, every Analyze rechecks
+the EDGAR series against FMP statements (recent five FYs) and Finnhub
+financials-as-reported (an independent parse of the same filings, all
+years). Outcomes per item-year: **match** (silent), **divergent**
+(flagged with both values — note Finnhub compares values as FIRST
+filed, so a later restatement flags as a divergence: signal, not
+error), **rescuable** (EDGAR left the cell empty but a provider has a
+value — surfaced with its source tag; filling it into the series with
+a recompute cascade is FIX-17c.2). Tolerance ±2% (floor $2M); a
+provider 0 is treated as absent. The summary rides the Health-checks
+footnotes and the GUI status line; the full table lands in the model
+export's **DATA AUDIT** block. Provider values never replace EDGAR
+numbers anywhere.
+
 ### SEC access requirements
 
 The SEC requires an identifying User-Agent; the default is set in

@@ -1209,6 +1209,11 @@ class App:
         self.notebook.tab(self.overview_tab, state=tk.NORMAL)
         note = ("  (price sources unavailable — fundamentals only)"
                 if data.price_error else "")
+        audit = getattr(data, "audit_report", None)
+        if audit is not None and (audit.checked or audit.entries):
+            note += (f"  Audit: {audit.matched}/{audit.checked} match, "
+                     f"{len(audit.divergent)} divergent, "
+                     f"{len(audit.rescuable)} rescuable.")
         self._set_busy(False, f"{data.company} — done.{note}")
 
     def _refresh_tabs(self, select: Optional[str] = None):
