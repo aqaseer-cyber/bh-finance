@@ -27,6 +27,11 @@
       <button class="primary" :disabled="store.running"
               @click="store.run()">Run</button>
       <span class="run-status">{{ store.status }}</span>
+      <span class="toggle-row" v-show="store.data">
+        <button @click="store.exportKind('model')">Workbook</button>
+        <button @click="store.exportKind('pdf')">PDF</button>
+        <button @click="store.exportKind('fill')">Fill shell</button>
+      </span>
     </header>
 
     <!-- ============================== Overview -->

@@ -21,8 +21,28 @@ from webui.server import create_app
 TOKEN = "test-token"
 
 
+def _with_prices(d):
+    """Render-ready weekly price fixture (moved from the deleted
+    test_explore in v3 R3): closes + drawdown + source."""
+    days, cur = [], dt.date(2025, 1, 3)
+    while cur <= dt.date(2026, 8, 7):
+        days.append(cur)
+        cur += dt.timedelta(days=7)
+    d.price_dates = days
+    d.price_closes = [100.0 + 0.5 * i for i in range(len(days))]
+    peak, d.drawdown = 0.0, []
+    for p in d.price_closes:
+        peak = max(peak, p)
+        d.drawdown.append(p / peak - 1.0)
+    d.max_drawdown = min(d.drawdown)
+    d.max_drawdown_date = d.price_dates[
+        d.drawdown.index(d.max_drawdown)]
+    d.price_source = "fixture"
+    d.total_return = d.price_closes[-1] / d.price_closes[0] - 1.0
+    return d
+
+
 def _testco():
-    from test_explore import _with_prices
     d = DashboardData(ticker="TESTCO", company="TESTCO Inc", subtitle="",
                       generated=dt.date(2026, 8, 10))
     d.sic_code = "3571"
@@ -178,7 +198,7 @@ def test_financials_endpoint_reuses_export_derivations(client):
 
 
 def test_sandbox_parity(client):
-    from forensic_viz.explore import sandbox_compute
+    from forensic_viz.sandbox import sandbox_compute
     body = {"base": 5e8, "wacc": 0.09, "g0": 0.05, "g_term": 0.02,
             "bridge": 6e8, "shares": 100e6, "sbc": 0.0,
             "ex_sbc": False, "price": 80.0}
@@ -201,9 +221,9 @@ def test_ledger_endpoints(client):
     assert h.status_code == 200
 
 
-def test_export_model_and_csv(client, tmp_path):
+def test_export_model_and_fill(client, tmp_path):
     _sse_events(client, "/api/run/TESTCO")
-    for kind, suffix in (("model", ".xlsx"), ("csv", ".csv")):
+    for kind, suffix in (("model", ".xlsx"), ("fill", ".xlsx")):
         r = client.post(f"/api/export/{kind}",
                         json={"ticker": "TESTCO",
                               "out_dir": str(tmp_path)})

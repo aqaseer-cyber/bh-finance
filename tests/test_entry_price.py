@@ -5,7 +5,7 @@ import datetime as dt
 
 import pytest
 
-from forensic_viz.explore import sandbox_compute
+from forensic_viz.sandbox import sandbox_compute
 from forensic_viz.metrics import DashboardData
 from forensic_viz.valuation import (
     HURDLE_RATE, CaseInputs, ValuationInputs, build_valuation, dcf_fcff,

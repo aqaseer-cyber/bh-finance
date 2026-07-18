@@ -64,33 +64,3 @@ def test_anchor_readout_names_fmp():
         details={"consensus": "FMP consensus (Rung 4)"})
     line = anchor_readout(a)
     assert "(FMP, n=32, Rung 4)" in line
-
-
-def test_estimates_card_render_paths():
-    from forensic_viz.explore import estimates_card
-    d = DashboardData(ticker="T", company="T", subtitle="",
-                      generated=dt.date(2026, 7, 18))
-    fig = estimates_card(d, dpi=80, width_in=8.0)
-    texts = [t.get_text() for ax in fig.axes for t in ax.texts]
-    assert any("configure the FMP key" in t for t in texts)
-
-    d.fundamentals = SimpleNamespace(
-        fy_ends=[dt.date(2024, 12, 31), dt.date(2025, 12, 31)],
-        series={"revenue": [31.8e9, 33.2e9]})
-    d.estimates_panel = {
-        "rows": ROWS,
-        "trends": [{"period": "2026-07-01", "strongBuy": 2, "buy": 11,
-                    "hold": 32, "sell": 4, "strongSell": 0}],
-    }
-    fig2 = estimates_card(d, dpi=80, width_in=8.0)
-    texts2 = [t.get_text() for ax in fig2.axes for t in ax.texts]
-    joined = " ".join(texts2)
-    assert "unaudited" in joined
-    # forward: FY2026 vs FY2025 actual
-    assert "FY2026" in joined and "FY2025 actual" in joined
-    # accuracy uses archived consensus vs actuals (FY2024 and FY2025)
-    assert "Street accuracy" in joined
-    assert f"FY2024 {31.8e9 / 31.4e9 - 1.0:+.1%}" in joined
-    assert f"FY2025 {33.2e9 / 33.5e9 - 1.0:+.1%}" in joined
-    assert "11 buy" in joined and "32 hold" in joined
-    assert "never enters FV" in joined

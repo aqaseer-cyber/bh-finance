@@ -241,7 +241,7 @@ def create_app(pipeline: Optional[Callable] = None,
 
     @app.post("/api/sandbox", dependencies=[Depends(auth)])
     async def sandbox(body: dict):
-        from forensic_viz.explore import sandbox_compute
+        from forensic_viz.sandbox import sandbox_compute
         try:
             out = sandbox_compute(
                 float(body["base"]), float(body["wacc"]),
@@ -270,21 +270,26 @@ def create_app(pipeline: Optional[Callable] = None,
 
     @app.post("/api/export/{kind}", dependencies=[Depends(auth)])
     async def export(kind: str, body: dict):
-        import tempfile
         from pathlib import Path
         d = _run(str(body.get("ticker", "")))
+        docs = Path.home() / "Documents"
         out_dir = Path(body.get("out_dir")
-                       or tempfile.mkdtemp(prefix="bhf_export_"))
+                       or (docs if docs.is_dir() else Path.cwd()))
         out_dir.mkdir(parents=True, exist_ok=True)
         stamp = d.generated.isoformat()
         if kind == "model":
             from forensic_viz.model_export import export_financial_model
             path = out_dir / f"{d.ticker}_financial_model_{stamp}.xlsx"
             export_financial_model(d, str(path))
-        elif kind == "csv":
-            from forensic_viz.export import export_fundamentals_csv
-            path = out_dir / f"{d.ticker}_fundamentals_{stamp}.csv"
-            export_fundamentals_csv(d, str(path))
+        elif kind == "fill":
+            # the forensic shell fill — the run's third artifact, on
+            # request (charter R3); res/verdict attach when computed
+            from forensic_viz.workbook import fill_workbook
+            held = app.state.valuations.get(d.ticker)
+            res_v = held if held is not None else (None, None)
+            path = out_dir / f"{d.ticker}_forensic_model_{stamp}.xlsx"
+            fill_workbook(d, str(path), res=res_v[0],
+                          verdict=res_v[1])
         elif kind == "pdf":
             from forensic_viz.dashboard import (
                 render_dashboard, render_health_report,

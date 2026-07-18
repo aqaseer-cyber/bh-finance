@@ -43,6 +43,18 @@ const store = window.PetiteVue.reactive({
     store.render();
   },
 
+  async exportKind(kind) {
+    if (!store.data) return;
+    store.status = "exporting " + kind + "…";
+    try {
+      const out = await api.post("/api/export/" + kind,
+                                 { ticker: store.data.ticker });
+      store.status = "wrote " + out.data.path;
+    } catch (e) {
+      store.status = "export FAILED: " + e.message;
+    }
+  },
+
   async run() {
     const t = (store.ticker || "").trim().toUpperCase();
     if (!t || store.running) return;

@@ -358,8 +358,36 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     total_border = Border(top=Side(style="thin", color="9AA79B"))
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Financial Model"
+    # v3 R3: THE ONE workbook — Cover · Model · IS · BS · CF · Segments
+    cover = wb.active
+    cover.title = "Cover"
+    cover.sheet_view.showGridLines = False
+    cover.column_dimensions["A"].width = 26
+    cover.column_dimensions["B"].width = 72
+    _c = cover.cell
+    _c(row=1, column=1, value=f"{d.company} ({d.ticker})").font = \
+        Font(bold=True, color=forest, size=16)
+    cover_rows = [
+        ("Generated", d.generated.isoformat()),
+        ("Fiscal window", (f"{fy_label(f.fy_ends[0])} – "
+                           f"{fy_label(f.fy_ends[-1])}"
+                           if f.fy_ends else "–")),
+        ("Source", "SEC EDGAR XBRL, as filed — latest amendment wins; "
+                   "prices " + (d.price_source or "unavailable")),
+        ("Contents", "Model (annual + quarterly + LTM) · "
+                     "Income Statement · Balance Sheet · Cash Flow · "
+                     "Segments — single format regime (FIX-12h)"),
+        ("Provenance", "every concept's XBRL tag audit is footnoted on "
+                       "the Model sheet; paid-provider data never "
+                       "enters this workbook"),
+        ("", "Not investment advice."),
+    ]
+    for k, (label, value) in enumerate(cover_rows, start=3):
+        _c(row=k, column=1, value=label).font = Font(
+            bold=True, color=forest, size=10)
+        _c(row=k, column=2, value=value).font = Font(color=ink, size=10)
+
+    ws = wb.create_sheet("Financial Model")
     ws.freeze_panes = "B2"
     ws.sheet_view.showGridLines = False
 

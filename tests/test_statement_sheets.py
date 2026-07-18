@@ -188,7 +188,8 @@ def test_statement_sheets_written_as_filed(tmp_path):
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
     wb = load_workbook(str(out))
-    assert wb.sheetnames[:4] == ["Financial Model", "Income Statement",
+    assert wb.sheetnames[:5] == ["Cover", "Financial Model",
+                                 "Income Statement",
                                  "Balance Sheet", "Cash Flow"]
 
     ws = wb["Income Statement"]
@@ -230,9 +231,10 @@ def test_degrades_to_model_note_when_statements_missing(tmp_path):
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
     wb = load_workbook(str(out))
-    assert wb.sheetnames == ["Financial Model"]         # no empty sheets
-    labels = [wb.active.cell(row=r, column=1).value
-              for r in range(1, wb.active.max_row + 1)]
+    assert wb.sheetnames == ["Cover", "Financial Model"]  # no empty sheets
+    ws = wb["Financial Model"]
+    labels = [ws.cell(row=r, column=1).value
+              for r in range(1, ws.max_row + 1)]
     note = next(str(v) for v in labels
                 if v and "As-filed statement sheets unavailable" in str(v))
     assert "SEC_EDGAR_USER_AGENT" in note

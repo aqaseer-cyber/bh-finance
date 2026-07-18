@@ -4,9 +4,6 @@ from forensic_viz.dashboard import (
     render_dashboard, render_health_report, render_valuation,
 )
 from forensic_viz.edgar import parse_companyfacts
-from forensic_viz.export import (
-    export_fundamentals_csv, export_prices_csv, export_valuation_csv,
-)
 from forensic_viz.metrics import (
     DashboardData, build_fundamental_metrics, build_price_metrics, compute_altman,
 )
@@ -68,17 +65,3 @@ def test_render_valuation_page(tmp_path, testco_facts, aapl_prices):
     fig = render_valuation(d, res, str(out))
     assert out.exists() and out.stat().st_size > 30_000
     assert len(fig.axes) >= 3  # header + field + table
-
-
-def test_csv_exports(tmp_path, testco_facts, aapl_prices):
-    d = _testco_data(testco_facts, aapl_prices)
-    fcsv, pcsv, vcsv = tmp_path / "f.csv", tmp_path / "p.csv", tmp_path / "v.csv"
-    export_fundamentals_csv(d, str(fcsv))
-    export_prices_csv(d, str(pcsv))
-    export_valuation_csv(_valuation(d), str(vcsv))
-    body = fcsv.read_text()
-    assert "revenue_usd" in body and "FY2025" in body and "xbrl_tag" in body
-    assert "sloan_ratio_house_variant" in body and "piotroski_f_score" in body
-    assert len(pcsv.read_text().splitlines()) == len(d.price_dates) + 2
-    vbody = vcsv.read_text()
-    assert "fv_per_share" in vbody and "Bear" in vbody and "Bull" in vbody

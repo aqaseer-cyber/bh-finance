@@ -2,8 +2,9 @@
 rem ============================================================
 rem  Forensic Stock Viz - one-click launcher for Windows
 rem  First run creates a local .venv and installs dependencies.
-rem  Double-click to open the GUI, or run from a terminal:
-rem      run_windows.bat AAPL --csv
+rem  Double-click to open the app (v3 web shell), or run a ticker
+rem  from a terminal for the two artifacts (A4 PDF + workbook):
+rem      run_windows.bat AAPL
 rem ============================================================
 setlocal
 cd /d "%~dp0"

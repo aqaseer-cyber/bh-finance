@@ -24,12 +24,10 @@ untouched, and a to-do list of the analyst cells with suggested sources
 2. Double-click **`run_windows.bat`**. The first run creates a local
    virtual environment and installs the dependencies; later runs start
    instantly.
-3. Type a ticker (e.g. `AAPL`), pick the **Years** window (3/5/7/10/15) and
-   **Track**, press **Analyze**. The report opens as tabs (Watchlist /
-   Overview / Dashboard / Unit economics / Health / Valuation / Verdict /
-   Explore);
-   **Save PDF (A4)…** / **Financial model…** / **Fill workbook…** produce
-   the deliverables.
+3. The **web shell** opens (v3 — WebView2 window, five screens:
+   Overview · Financials · Quality · Valuation · Watchlist). Type a
+   ticker, press **Run**; the top-bar **Workbook / PDF / Fill shell**
+   buttons produce the three artifacts (saved to Documents).
 
 **Watchlist & verdict ledger (§5.7).** Every computed verdict logs
 automatically to a local SQLite ledger (`ledger.db` next to the cache); the
@@ -155,10 +153,8 @@ financial-model workbook and the A4 PDF**.
 Command line (same launcher):
 
 ```bat
-run_windows.bat AAPL --model      :: one-sheet financial model XLSX (FY + quarters + LTM)
-run_windows.bat AAPL --csv        :: AAPL_10y_report_<date>.pdf (A4) + audit CSVs
+run_windows.bat AAPL              :: the two artifacts: A4 PDF + workbook
 run_windows.bat AAPL --years 5    :: 5-year window
-run_windows.bat AAPL --png        :: per-page PNGs instead of the PDF
 run_windows.bat MSFT --no-cache   :: bypass the local cache
 run_windows.bat WFC --track bank  :: override the Logic Track (auto = from SIC)
 run_windows.bat AAPL --adjusted-ni 105e9  :: fluff filter (non-GAAP NI, from the release)
@@ -485,9 +481,14 @@ build step). **R2 adds the Quality, Valuation and Watchlist screens**
 verdict + triggers, sortable ledger) and **executes the kill list**:
 the Tk Overview/Explore/sandbox tabs are deleted — their content
 lives on the web screens (`docs/R2_PHASE_REPORT.md` records the
-deletions and line counts). The Tk GUI (Watchlist + report pages +
-valuation dialog + exports) remains the DEFAULT until the R2 parity
-gate passes.
+deletions and line counts). **R3 consolidates**: the Tk GUI and
+`explore.py` are DELETED — the web shell is the app (`run_windows.bat`
+opens it), a ticker run yields exactly three artifacts (ONE workbook
+with a Cover sheet, ONE A4 PDF, the shell fill on request), the audit
+CSVs and PNG outputs are retired, and the matplotlib A4 pipeline stays
+as the PDF engine (decision recorded in
+[docs/R3_PHASE_REPORT.md](docs/R3_PHASE_REPORT.md) — pywebview has no
+stable print-to-PDF API).
 
 ## Data sources & methodology
 

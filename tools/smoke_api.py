@@ -68,7 +68,7 @@ def main() -> int:
     check("ledger", client.get("/api/ledger").status_code == 200)
 
     out = Path(tempfile.mkdtemp(prefix="bhf_smoke_"))
-    for kind in ("model", "csv", "pdf"):
+    for kind in ("model", "fill", "pdf"):
         r = client.post(f"/api/export/{kind}",
                         json={"ticker": "TESTCO", "out_dir": str(out)})
         path = Path(r.json()["data"]["path"])

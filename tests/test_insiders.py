@@ -115,29 +115,3 @@ def test_panel_summary_math():
     s = p.summary()
     assert "1 buys $0.0M" in s and "1 sells $0.0M" in s
     assert "net $+0.0M" in s
-
-
-def test_insider_card_render_paths():
-    from forensic_viz.explore import insider_card
-    d = DashboardData(ticker="T", company="T", subtitle="",
-                      generated=dt.date(2026, 7, 18))
-    # panel missing (placeholder UA) -> gate note
-    fig = insider_card(d, dpi=80, width_in=8.0)
-    texts = [t.get_text() for ax in fig.axes for t in ax.texts]
-    assert any("declared SEC User-Agent" in t for t in texts)
-    # empty panel -> honest empty note
-    d.insiders = InsiderPanel(window_months=12)
-    fig2 = insider_card(d, dpi=80, width_in=8.0)
-    texts2 = [t.get_text() for ax in fig2.axes for t in ax.texts]
-    assert any("no open-market Form 4" in t for t in texts2)
-    # rows render with the provenance footnote and capped note
-    d.insiders.rows = [InsiderTx(dt.date(2026, 6, 15), "Miller Jamie S",
-                                 "CFO", "P — Purchase", 6129, 41.53,
-                                 254537.37, 76904)]
-    d.insiders.note = "showing the 25 most recent of 40 Form 4s filed " \
-                      "in the window"
-    fig3 = insider_card(d, dpi=80, width_in=8.0)
-    texts3 = [t.get_text() for ax in fig3.axes for t in ax.texts]
-    assert any("Miller Jamie S" in t for t in texts3)
-    assert any("audited-filing" in t and "25 most recent" in t
-               for t in texts3)

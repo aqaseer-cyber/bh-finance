@@ -1,11 +1,12 @@
 """Command-line entry point.
 
-  python -m forensic_viz                     -> GUI
-  python -m forensic_viz AAPL                -> AAPL_10y_report_<date>.pdf (A4)
+  python -m forensic_viz                     -> the app (web shell)
+  python -m forensic_viz AAPL                -> the two artifacts: A4 PDF
+                                                report + financial-model
+                                                workbook (v3 R3: a run
+                                                yields exactly these, plus
+                                                the shell fill via --xlsx)
   python -m forensic_viz AAPL --years 5      -> 5-year window
-  python -m forensic_viz AAPL --model        -> one-sheet financial model XLSX
-                                                (annual + quarterly + LTM)
-  python -m forensic_viz AAPL --png --csv    -> per-page PNGs + audit CSVs
 
   Intrinsic value (Bear/Base/Bull). WACC auto-builds; for DCF, omitted cases
   seed from the growth-anchor ladder (Bull <- consensus, Base <- min of
@@ -112,22 +113,18 @@ def main(argv=None) -> int:
         description="Five-phase forensic stock report from SEC EDGAR XBRL + daily prices.",
     )
     parser.add_argument("ticker", nargs="?", help="US-listed ticker, e.g. AAPL")
-    parser.add_argument("-o", "--out", help="output path (.pdf, or base name with --png)")
+    parser.add_argument("-o", "--out", help="PDF output path")
     parser.add_argument("--years", type=int,
                         default=config.GUI_DEFAULT_YEARS,
                         choices=range(1, config.DISPLAY_YEARS + 1), metavar="N",
                         help=f"fiscal years to display, "
                              f"1–{config.DISPLAY_YEARS} (default "
                              f"{config.GUI_DEFAULT_YEARS})")
-    parser.add_argument("--png", action="store_true",
-                        help="write per-page PNGs instead of the A4 PDF")
     parser.add_argument("--model", nargs="?", const="", metavar="PATH",
-                        help="one-sheet three-statement financial model XLSX "
-                             "(annual + quarterly + LTM)")
-    parser.add_argument("--csv", action="store_true",
-                        help="raw audit-trail CSVs (fundamentals/prices/valuation "
-                             "with the XBRL tag per concept)")
-    parser.add_argument("--gui", action="store_true", help="launch the desktop app")
+                        help="financial-model workbook path override "
+                             "(the workbook is always produced)")
+    parser.add_argument("--gui", action="store_true",
+                        help="launch the app (alias of --web since v3 R3)")
     parser.add_argument("--no-cache", action="store_true", help="bypass the local cache")
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--track", choices=list(TRACKS), default="auto",
@@ -256,9 +253,15 @@ def main(argv=None) -> int:
         return 0
 
     if args.gui or not args.ticker:
-        from .gui import run_gui
-        run_gui()
-        return 0
+        # v3 R3: the web shell IS the app (the Tk GUI is deleted)
+        try:
+            from webui.shell import run_shell
+            return run_shell()
+        except ImportError as exc:
+            _report_error(
+                f"the app shell needs pywebview ({exc}) — install with "
+                "'pip install pywebview' (Windows) and retry")
+            return 2
 
     # FIX-12e: saved settings fill the UA gap on the CLI too (env still wins)
     config.apply_user_settings(config.load_user_settings())
@@ -300,9 +303,7 @@ def main(argv=None) -> int:
         render_dashboard, render_health_report, render_unit_economics,
         render_valuation, render_verdict,
     )
-    from .export import (
-        export_fundamentals_csv, export_pdf, export_prices_csv, export_valuation_csv,
-    )
+    from .export import export_pdf
     from .valuation import ValuationError
     from .verdict import build_verdict
 
@@ -333,23 +334,11 @@ def main(argv=None) -> int:
 
     stamp = data.generated.isoformat()
     years = data.display_years
-    if args.png:
-        out = args.out or f"{data.ticker}_{years}y_dashboard_{stamp}.png"
-        base = out[:-4] if out.lower().endswith(".png") else out
-        fig_main.savefig(out, dpi=args.dpi)
-        print(f"wrote {out}")
-        for fig, suffix in ((fig_unit, "_unit"), (fig_health, "_health"),
-                            (fig_val, "_valuation"), (fig_verdict, "_verdict")):
-            if fig is not None:
-                fig.savefig(base + suffix + ".png", dpi=args.dpi)
-                print(f"wrote {base}{suffix}.png")
-    else:
-        out = args.out or f"{data.ticker}_{years}y_report_{stamp}.pdf"
-        if not out.lower().endswith(".pdf"):
-            out += ".pdf"
-        base = out[:-4]
-        export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
-        print(f"wrote {out} (A4)")
+    out = args.out or f"{data.ticker}_{years}y_report_{stamp}.pdf"
+    if not out.lower().endswith(".pdf"):
+        out += ".pdf"
+    export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
+    print(f"wrote {out} (A4)")
 
     if data.price_error:
         print(f"note: price sources unavailable ({data.price_error}); "
@@ -375,24 +364,12 @@ def main(argv=None) -> int:
         except Exception:
             pass
 
-    if args.model is not None:
-        from .model_export import export_financial_model
-        model_path = args.model or f"{data.ticker}_financial_model_{stamp}.xlsx"
-        export_financial_model(data, model_path)
-        print(f"wrote {model_path} (annual + quarterly + LTM, one sheet)")
-
-    if args.csv:
-        fpath = base + "_fundamentals.csv"
-        export_fundamentals_csv(data, fpath)
-        print(f"wrote {fpath}")
-        if data.price_dates:
-            ppath = base + "_prices.csv"
-            export_prices_csv(data, ppath)
-            print(f"wrote {ppath}")
-        if res is not None:
-            vpath = base + "_valuation.csv"
-            export_valuation_csv(res, vpath)
-            print(f"wrote {vpath}")
+    # v3 R3: the workbook is the run's second artifact, always produced
+    from .model_export import export_financial_model
+    model_path = (args.model
+                  or f"{data.ticker}_financial_model_{stamp}.xlsx")
+    export_financial_model(data, model_path)
+    print(f"wrote {model_path} (Cover · Model · IS · BS · CF · Segments)")
 
     if args.xlsx is not None:
         from .workbook import fill_workbook
