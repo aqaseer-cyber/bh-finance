@@ -17,11 +17,15 @@ python -m pip install --quiet -r requirements.lock || (echo pip install -r requi
 python -m pip install --quiet pyinstaller || (echo pip install pyinstaller failed & pause & exit /b 1)
 
 pyinstaller --noconfirm --onefile --windowed --name ForensicStockViz --icon assets\app_icon.ico ^
-    --add-data "assets;assets" app.py || (
+    --add-data "assets;assets" --add-data "webui\static;webui/static" ^
+    --hidden-import webui.shell --hidden-import webui.server ^
+    --collect-submodules uvicorn --collect-submodules webview app.py || (
     echo PyInstaller GUI build failed. & pause & exit /b 1
 )
 pyinstaller --noconfirm --onefile --console --name forensic-viz-cli --icon assets\app_icon.ico ^
-    --add-data "assets;assets" app.py || (
+    --add-data "assets;assets" --add-data "webui\static;webui/static" ^
+    --hidden-import webui.shell --hidden-import webui.server ^
+    --collect-submodules uvicorn --collect-submodules webview app.py || (
     echo PyInstaller CLI build failed. & pause & exit /b 1
 )
 if not exist "dist\ForensicStockViz.exe" (

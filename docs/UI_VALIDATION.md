@@ -190,6 +190,29 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       cache folder now contains facts.db and deleting it only makes the
       next run slower, never wrong.
 
+## v3 R1 — web shell side-by-side (charter gate)
+
+- [ ] `run_windows.bat --web` opens the native window (WebView2): dark
+      forest nav, ONE off-white surface, cards white one step up — no
+      cream anywhere; crisp at 150% scaling with no blur (native
+      WebView rendering — the DPI problem class is gone).
+- [ ] Run a keyed ticker: SSE progress streams in the top bar; the
+      Overview screen fills — profile strip (name/SIC/price/day/52w),
+      price chart with the 1Y/3Y/5Y/Max range and Price/Drawdown
+      toggles INSIDE the card, verdict strip (from the ledger), KPI
+      row, estimates card (FMP badge), insider card (Form 4).
+- [ ] Hover tooltips work on the price chart (crosshair + values);
+      provenance badges reveal their source + fetch time on hover.
+- [ ] Financials screen: annual model table (sticky first column +
+      header, xbrl badges on hover), as-filed IS/BS/CF structure with
+      joined values where mapped (dash + R2 note otherwise), segments
+      sub-tables with synthesized cells in italic tan and ⚠ on
+      discontinuous members, data-audit line.
+- [ ] Side-by-side vs the Tk app on the same ticker: numbers agree
+      (same engine); note anything the web screens render worse.
+- [ ] Packaging proof: build_exe_windows.bat produces an exe that
+      launches BOTH shells (default Tk and --web).
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -208,5 +231,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Insiders & estimates | Pass | owner-run 2026-07-18 |
 | Chart interactivity | Pass | owner-run 2026-07-18 |
 | Speed | Pass | owner-run 2026-07-18 |
+| v3 R1 web shell | | |
 
 Date / machine / scaling: ______________________

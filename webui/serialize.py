@@ -60,7 +60,10 @@ def to_jsonable(obj: Any, _depth: int = 0) -> Any:
             out[key] = to_jsonable(v, _depth + 1)
         return out
     if isinstance(obj, (set, frozenset)):
-        return sorted(str(x) for x in obj)
+        # recurse (a segment synth-set holds (date, date) spans) and
+        # sort by string form for deterministic output
+        return sorted((to_jsonable(x, _depth + 1) for x in obj),
+                      key=str)
     if isinstance(obj, (list, tuple)):
         return [to_jsonable(x, _depth + 1) for x in obj]
     return str(obj)

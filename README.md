@@ -470,8 +470,18 @@ results (versioned schema, `webui/serialize.py`). Provider roles and
 precedence are now normative in
 [docs/PROVIDER_MATRIX.md](docs/PROVIDER_MATRIX.md), enforced by
 per-provider circuit breakers and provenance timestamps. The offline
-end-to-end proof: `python tools/smoke_api.py`. The Tk GUI remains the
-shipped UI until the R1/R2 gates pass.
+end-to-end proof: `python tools/smoke_api.py`.
+
+**R1 ships the web shell (preview):** `run_windows.bat --web` opens a
+native WebView2 window over the local service — the design-token UI
+(`webui/static/tokens.css`, Palette 07, card-only containers), the
+**Overview** screen (profile strip, price chart with range/drawdown
+toggles, verdict strip, KPI row, badged estimates + insider cards) and
+the **Financials** screen (annual model table, as-filed IS/BS/CF
+structure with joined values, segments with synth flags, data-audit
+line). Charts are vendored ECharts + lightweight-charts (no CDN, no
+build step). The Tk GUI remains the DEFAULT UI until the R2 parity
+gate passes.
 
 ## Data sources & methodology
 

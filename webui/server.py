@@ -37,11 +37,28 @@ def _default_pipeline(ticker: str, progress: Callable[[str], None]):
 
 def create_app(pipeline: Optional[Callable] = None,
                token: Optional[str] = None) -> FastAPI:
+    from pathlib import Path
+
+    from fastapi.responses import HTMLResponse
+    from fastapi.staticfiles import StaticFiles
+
     app = FastAPI(title="bh-finance service", docs_url=None,
                   redoc_url=None, openapi_url=None)
     app.state.runs = {}          # ticker -> DashboardData
     app.state.valuations = {}    # ticker -> (res, verdict)
     run_pipeline = pipeline or _default_pipeline
+
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir():   # R1 frontend (absent in minimal installs)
+        app.mount("/static", StaticFiles(directory=str(static_dir)),
+                  name="static")
+
+        @app.get("/", response_class=HTMLResponse)
+        async def index():
+            # the ONLY place the token reaches the page (charter §4:
+            # random bearer in the page bootstrap)
+            html = (static_dir / "index.html").read_text("utf-8")
+            return html.replace("%%TOKEN%%", token or "")
 
     async def auth(request: Request) -> None:
         if token is None:

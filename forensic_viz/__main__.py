@@ -179,7 +179,22 @@ def main(argv=None) -> int:
                         help="FIX-17a: live-test the configured provider "
                              "API keys (FMP/Tiingo/Finnhub) against the "
                              "given ticker (default PYPL) and exit")
+    parser.add_argument("--web", action="store_true",
+                        help="v3 R1: launch the web shell (pywebview + "
+                             "local FastAPI service); the Tk GUI stays "
+                             "the default until the R2 parity gate")
     args = parser.parse_args(argv)
+
+    if args.web:
+        try:
+            from webui.shell import run_shell
+            return run_shell()
+        except ImportError as exc:
+            _report_error(
+                f"web shell needs pywebview ({exc}) — install with "
+                "'pip install pywebview' (Windows) and retry, or run "
+                "without --web for the Tk GUI")
+            return 2
 
     if args.probe:
         # FIX-17a: live capability probe — settings fill key gaps first

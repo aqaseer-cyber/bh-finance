@@ -38,7 +38,7 @@ verdict, or workbook blue cell.
 - Disagreements beyond tolerance surface in the **Data audit**
   (`reconcile.py`), never silently averaged.
 
-## Deltas vs the charter table (for owner ratification)
+## Deltas vs the charter table (RATIFIED by owner, 2026-07-18)
 
 1. **Daily-price fallback**: charter lists `Stooq → Yahoo`; shipped
    chain is `Tiingo → Stooq` — the Yahoo chart scrape was retired in
