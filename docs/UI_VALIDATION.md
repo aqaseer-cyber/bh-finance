@@ -204,9 +204,9 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Overview & market joins | Pass | owner-run 2026-07-18 |
 | Providers probe | Pass | owner-run 2026-07-18 (matrix pasted back twice) |
 | Data audit | Pass | owner-run 2026-07-18 |
-| Company profile | Pass* | owner-run 2026-07-18 — *text overlap + no expand; fixed in FIX-17d.1, re-verify below |
+| Company profile | Pass | owner-run 2026-07-18; FIX-17d.1 fixes (no overlap, click-expand) re-verified same day |
 | Insiders & estimates | Pass | owner-run 2026-07-18 |
-| Chart interactivity | | |
-| Speed | | |
+| Chart interactivity | Pass | owner-run 2026-07-18 |
+| Speed | Pass | owner-run 2026-07-18 |
 
 Date / machine / scaling: ______________________
