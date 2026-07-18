@@ -125,6 +125,15 @@ years** on screen (`--years 15`; the default stays 10, and the export
 always shows every fetched year). **Tools → Refresh prices** refetches
 the price series only and recomputes everything price-dependent.
 
+**Chart interactivity (FIX-17g, native).** The Explore and Overview
+chart cards carry a **hover crosshair** — move the cursor and a dotted
+guide plus a readout box show the nearest date and each plotted
+series' value (masked stretches honestly read "–"). Explore cards add
+a compact **Home / Pan / Zoom toolbar** per card; there is deliberately
+**no save button** — Explore never exports (FIX-15 doctrine), the
+report pages and the model workbook stay the shareable artifacts.
+Everything is native matplotlib-in-Tk: no HTML, no browser.
+
 **DCF sandbox (native).** The Explore tab carries a **live DCF card** for
 Standard-track names: drag WACC / g₀ / terminal-g sliders (or edit the base
 FCFF, toggle ex-SBC) and FV, MoS, TV-share and the reverse-DCF implied g

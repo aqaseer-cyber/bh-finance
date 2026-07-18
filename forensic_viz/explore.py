@@ -180,43 +180,76 @@ def _kpi_text(v, kind: str) -> str:
     return f"{v:,.2f}"
 
 
+PROFILE_CLIP_LINES = 3
+
+
 def profile_card(d: DashboardData, dpi: int = 100,
-                 width_in: float = 10.0) -> Figure:
-    """FIX-17d: DVH-style company header — name, description, country,
-    website, employees, exchange, sector, SIC. Display-only context:
-    the FMP-sourced fields are aggregator-grade and NEVER feed a
-    calculation; the card says so."""
+                 width_in: float = 10.0,
+                 expanded: bool = False) -> Figure:
+    """FIX-17d(.1): DVH-style company header — name, description,
+    country, website, employees, exchange, sector, SIC. Display-only
+    context: the FMP-sourced fields are aggregator-grade and NEVER feed
+    a calculation; the card says so.
+
+    17d.1 owner feedback: the card is laid out top-down with a cursor
+    on a DYNAMIC figure height (no fixed positions -> nothing can
+    overlap), and the description is click-expandable in the GUI —
+    `expanded=True` renders every wrapped line; clipped renders
+    `PROFILE_CLIP_LINES` plus a click hint."""
     import textwrap
     p = getattr(d, "profile", None)
-    fig = Figure(figsize=(max(4.0, width_in), 1.8), dpi=dpi)
-    fig.patch.set_facecolor(P.PAGE)
-    ax = fig.add_subplot(111)
-    ax.set_axis_off()
+    width_in = max(4.0, width_in)
     if p is None or not (p.name or p.description):
+        fig = Figure(figsize=(width_in, 0.9), dpi=dpi)
+        fig.patch.set_facecolor(P.PAGE)
+        ax = fig.add_subplot(111)
+        ax.set_axis_off()
         ax.text(0.01, 0.6, "Company profile unavailable — configure the "
                            "FMP key (README 'Provider keys') for "
                            "description, website and employees.",
                 fontsize=8.4, color=P.INK_MUTED, transform=ax.transAxes)
         return fig
-    head = p.name or d.company
+
+    desc = p.description.replace("$", "\\$")
+    per_line = max(60, int(width_in * 13))
+    lines = textwrap.wrap(desc, width=per_line) if desc else []
+    clipped = len(lines) > PROFILE_CLIP_LINES
+    if clipped and not expanded:
+        lines = lines[:PROFILE_CLIP_LINES]
+        lines[-1] = lines[-1][:per_line - 2].rstrip() + "…"
+    hint = ""
+    if clipped:
+        hint = ("(click the card to collapse)" if expanded
+                else "(click the card for the full description)")
+
+    # top-down layout in inches — the figure grows with the content
+    LINE = 0.148
+    rows = []                       # (dy_in, text, style-kwargs)
+    rows.append((0.28, p.name or d.company, dict(
+        fontsize=13.0, fontweight="bold", color=P.INK_PRIMARY)))
     sub = " · ".join(x for x in (
         d.ticker, p.exchange, p.sector, p.industry) if x)
-    ax.text(0.01, 0.97, head.replace("$", "\\$"), fontsize=13.0,
-            fontweight="bold", color=P.INK_PRIMARY,
-            transform=ax.transAxes, va="top")
     if sub:
-        ax.text(0.01, 0.80, sub, fontsize=8.2, color=P.INK_SECONDARY,
-                transform=ax.transAxes, va="top")
-    desc = p.description.replace("$", "\\$")
-    if desc:
-        per_line = max(60, int(width_in * 13))
-        lines = textwrap.wrap(desc, width=per_line)
-        if len(lines) > 3:
-            lines = lines[:3]
-            lines[-1] = lines[-1][:per_line - 2].rstrip() + "…"
-        ax.text(0.01, 0.66, "\n".join(lines), fontsize=7.6,
-                color=P.INK_SECONDARY, transform=ax.transAxes,
-                va="top", linespacing=1.35)
+        rows.append((0.19, sub, dict(fontsize=8.2,
+                                     color=P.INK_SECONDARY)))
+    for ln in lines:
+        rows.append((LINE, ln, dict(fontsize=7.6,
+                                    color=P.INK_SECONDARY)))
+    if hint:
+        rows.append((0.16, hint, dict(fontsize=6.8, color=P.INK_MUTED,
+                                      fontstyle="italic")))
+    facts_h, foot_h, pad = 0.42, 0.18, 0.14
+    height = pad + sum(r[0] for r in rows) + facts_h + foot_h
+
+    fig = Figure(figsize=(width_in, height), dpi=dpi)
+    fig.patch.set_facecolor(P.PAGE)
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    y = 1.0 - (pad / 2) / height
+    for dy, text, style in rows:
+        ax.text(0.01, y, text.replace("$", "\\$") if "\\$" not in text
+                else text, transform=ax.transAxes, va="top", **style)
+        y -= dy / height
     facts = [
         ("Country", p.country or "–"),
         ("Employees", f"{p.employees:,}" if p.employees else "–"),
@@ -226,14 +259,16 @@ def profile_card(d: DashboardData, dpi: int = 100,
     ]
     # website gets the wide slot; the offsets leave it room to breathe
     xs = (0.01, 0.14, 0.27, 0.63, 0.75)
+    y -= 0.04 / height
+    y_vals = y - 0.14 / height
     for k, (label, val) in enumerate(facts):
-        x = xs[k]
-        ax.text(x, 0.24, label, fontsize=6.8, color=P.INK_MUTED,
+        ax.text(xs[k], y, label, fontsize=6.8, color=P.INK_MUTED,
                 transform=ax.transAxes, va="top")
-        ax.text(x, 0.14, str(val).replace("$", "\\$"), fontsize=8.0,
-                color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
-    ax.text(0.01, 0.005, f"profile: {p.sources} — context only, feeds "
-                         "no calculation", fontsize=6.4,
+        ax.text(xs[k], y_vals, str(val).replace("$", "\\$"),
+                fontsize=8.0, color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="top")
+    ax.text(0.01, 0.02, f"profile: {p.sources} — context only, feeds "
+                        "no calculation", fontsize=6.4,
             color=P.INK_MUTED, transform=ax.transAxes, va="bottom")
     return fig
 
@@ -524,6 +559,43 @@ def estimates_card(d: DashboardData, dpi: int = 100,
             "timing approximate).", fontsize=6.4, color=P.INK_MUTED,
             transform=ax.transAxes, va="bottom")
     return fig
+
+
+# ---------------------------------------------- FIX-17g hover readout
+
+def hover_readout(lines_data, x: float, is_date: bool = False) -> str:
+    """The crosshair text for a cursor at x: nearest point per plotted
+    line, honest '–' on masked (NaN) stretches. Pure — the Tk layer
+    only feeds it `Line2D` data and places the result.
+
+    lines_data: [(label, xs, ys)]; mpl-internal labels ('_child0') fall
+    back to a single unnamed 'value' line; at most 3 series render."""
+    import math
+    if not lines_data:
+        return ""
+    named = [(lab, xs, ys) for lab, xs, ys in lines_data
+             if lab and not str(lab).startswith("_")]
+    use = named if named else [
+        ("value", lines_data[0][1], lines_data[0][2])]
+    header = None
+    parts = []
+    for label, xs, ys in use[:3]:
+        n = len(xs)
+        if n < 2 or n != len(ys):
+            continue
+        idx = min(range(n), key=lambda i: abs(float(xs[i]) - x))
+        if header is None:
+            if is_date:
+                from matplotlib.dates import num2date
+                header = num2date(float(xs[idx])).date().isoformat()
+            else:
+                header = f"{float(xs[idx]):,.4g}"
+        v = ys[idx]
+        bad = v is None or (isinstance(v, float) and math.isnan(v))
+        parts.append(f"{label} –" if bad else f"{label} {float(v):,.2f}")
+    if header is None or not parts:
+        return ""
+    return header + "  ·  " + "  ·  ".join(parts)
 
 
 WACC_EXCEEDS_G = "n/a — WACC must exceed g"

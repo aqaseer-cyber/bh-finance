@@ -152,6 +152,10 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       calculation" provenance footnote naming FMP as display-only.
 - [ ] Without the FMP key the header degrades to the one-line pointer
       (README 'Provider keys') and everything below renders unchanged.
+- [ ] FIX-17d.1 re-verify: no text overlaps anywhere on the card at any
+      window width, the clipped description shows the "click the card
+      for the full description" hint, clicking expands to the full text
+      (cursor becomes a hand), clicking again collapses.
 
 ## Insiders & estimates (FIX-17e/f)
 
@@ -166,6 +170,17 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
       "consensus … (FMP, n=…, Rung 4)" instead of Yahoo, and the Bull
       seed matches the panel's next-FY growth. All cases still editable.
 
+## Chart interactivity (FIX-17g)
+
+- [ ] Hovering an Explore or Overview chart card shows the dotted
+      crosshair and a readout with date + per-series values; it reads
+      "–" over masked (gap) stretches and clears when the cursor
+      leaves the card.
+- [ ] Each Explore card's head row has Home / Pan / Zoom buttons that
+      work (box-zoom then Home restores) — and NO save button.
+- [ ] Wheel scrolling of the tab still works when the cursor is over a
+      chart (the crosshair must not swallow the wheel).
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -177,10 +192,11 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Dialogs & flow | | |
 | Model export | | |
 | Explore | Pass | owner-run 2026-07-11, Windows @150% |
-| Overview & market joins | | |
-| Providers probe | | |
-| Data audit | | |
-| Company profile | | |
-| Insiders & estimates | | |
+| Overview & market joins | Pass | owner-run 2026-07-18 |
+| Providers probe | Pass | owner-run 2026-07-18 (matrix pasted back twice) |
+| Data audit | Pass | owner-run 2026-07-18 |
+| Company profile | Pass* | owner-run 2026-07-18 — *text overlap + no expand; fixed in FIX-17d.1, re-verify below |
+| Insiders & estimates | Pass | owner-run 2026-07-18 |
+| Chart interactivity | | |
 
 Date / machine / scaling: ______________________

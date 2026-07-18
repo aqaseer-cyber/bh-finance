@@ -25,7 +25,9 @@ from typing import Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import (
+    FigureCanvasTkAgg, NavigationToolbar2Tk,
+)
 
 from . import config
 from . import palette as P
@@ -39,9 +41,9 @@ from .dashboard import (
 )
 from .edgar import EdgarError
 from .explore import (
-    PRICE_MODES, RATIO_MODES, REVENUE_MODES, estimates_card, insider_card,
-    overview_kpi_card, overview_valuation_card, price_card, profile_card,
-    ratio_card, revenue_card,
+    PRICE_MODES, RATIO_MODES, REVENUE_MODES, estimates_card, hover_readout,
+    insider_card, overview_kpi_card, overview_valuation_card, price_card,
+    profile_card, ratio_card, revenue_card,
 )
 from .export import export_pdf
 from .model_export import export_financial_model
@@ -283,6 +285,77 @@ class _ScrollTab(ttk.Frame):
         self._recenter()
 
 
+class _CardToolbar(NavigationToolbar2Tk):
+    """FIX-17g: Home / Pan / Zoom only — NO save button (Explore never
+    exports, the FIX-15 doctrine) and no coordinate message area (the
+    hover readout covers it)."""
+
+    toolitems = [t for t in NavigationToolbar2Tk.toolitems
+                 if t[0] in ("Home", "Pan", "Zoom")]
+
+    def set_message(self, s):
+        pass
+
+
+def _attach_hover(fig_canvas) -> None:
+    """FIX-17g: crosshair + nearest-value readout on the chart cards —
+    native matplotlib events on the embedded Tk canvas, no HTML."""
+    fig = fig_canvas.figure
+    state: dict = {}
+
+    def artists(ax):
+        if ax not in state:
+            vline = ax.axvline(ax.get_xlim()[0], color=P.INK_MUTED,
+                               linewidth=0.8, linestyle=":",
+                               visible=False, zorder=9, gid="hover17g")
+            txt = ax.text(0.99, 0.97, "", transform=ax.transAxes,
+                          ha="right", va="top", fontsize=7.2,
+                          color=P.INK_PRIMARY, zorder=10,
+                          bbox=dict(boxstyle="round,pad=0.3",
+                                    facecolor=P.PAGE,
+                                    edgecolor=P.INK_MUTED,
+                                    linewidth=0.5, alpha=0.92))
+            state[ax] = (vline, txt)
+        return state[ax]
+
+    def clear(_event=None):
+        dirty = False
+        for vline, txt in state.values():
+            if vline.get_visible() or txt.get_text():
+                vline.set_visible(False)
+                txt.set_text("")
+                dirty = True
+        if dirty:
+            fig_canvas.draw_idle()
+
+    def on_move(event):
+        ax = event.inaxes
+        if ax is None or event.xdata is None:
+            clear()
+            return
+        lines = [(ln.get_label(), ln.get_xdata(), ln.get_ydata())
+                 for ln in ax.get_lines()
+                 if ln.get_gid() != "hover17g"
+                 and len(ln.get_xdata()) > 3]
+        text = hover_readout(lines, float(event.xdata),
+                             is_date=ax.xaxis.converter is not None)
+        vline, txt = artists(ax)
+        for other_ax, (ov, ot) in state.items():
+            if other_ax is not ax:
+                ov.set_visible(False)
+                ot.set_text("")
+        if not text:
+            clear()
+            return
+        vline.set_xdata([event.xdata, event.xdata])
+        vline.set_visible(True)
+        txt.set_text(text)
+        fig_canvas.draw_idle()
+
+    fig_canvas.mpl_connect("motion_notify_event", on_move)
+    fig_canvas.mpl_connect("figure_leave_event", clear)
+
+
 class _OverviewTab(ttk.Frame):
     """FIX-16d: the one-screen landing — KPI strip, FV-vs-price with the
     entry ladder and exit cross-check, then the price/margins/P-E cards.
@@ -308,6 +381,7 @@ class _OverviewTab(ttk.Frame):
             holder = ttk.Frame(self.inner)
             holder.pack(fill=tk.X, padx=10, pady=(6, 0), anchor="w")
             self._holders.append({"holder": holder, "canvas": None})
+        self._profile_expanded = False  # FIX-17d.1 click-to-expand state
 
     def _geometry(self):
         dpi = int(min(getattr(self.app, "_display_dpi", 96) or 96, 180))
@@ -322,7 +396,8 @@ class _OverviewTab(ttk.Frame):
         dpi, width_in = self._geometry()
         res = self.app.valuation_res
         builders = (
-            lambda: profile_card(d, dpi=dpi, width_in=width_in),
+            lambda: profile_card(d, dpi=dpi, width_in=width_in,
+                                 expanded=self._profile_expanded),
             lambda: overview_kpi_card(d, dpi=dpi, width_in=width_in),
             lambda: overview_valuation_card(d, res, dpi=dpi,
                                             width_in=width_in),
@@ -334,13 +409,38 @@ class _OverviewTab(ttk.Frame):
                                  width_in=width_in),
             lambda: ratio_card(d, "P/E (TTM)", dpi=dpi, width_in=width_in),
         )
-        for slot, build in zip(self._holders, builders):
-            fig = build()
-            if slot["canvas"] is not None:
-                slot["canvas"].get_tk_widget().destroy()
-            slot["canvas"] = FigureCanvasTkAgg(fig, master=slot["holder"])
-            slot["canvas"].draw()
-            slot["canvas"].get_tk_widget().pack(anchor="w")
+        for k, build in enumerate(builders):
+            self._render_slot(
+                k, build(),
+                on_click=self._toggle_profile if k == 0 else None,
+                hover=k in (5, 6, 7))   # FIX-17g: the chart cards
+
+    def _render_slot(self, k: int, fig, on_click=None, hover=False):
+        slot = self._holders[k]
+        if slot["canvas"] is not None:
+            slot["canvas"].get_tk_widget().destroy()
+        slot["canvas"] = FigureCanvasTkAgg(fig, master=slot["holder"])
+        slot["canvas"].draw()
+        widget = slot["canvas"].get_tk_widget()
+        widget.pack(anchor="w")
+        if on_click is not None:
+            widget.bind("<Button-1>", lambda _e: on_click())
+            widget.configure(cursor="hand2")
+        if hover:
+            _attach_hover(slot["canvas"])
+        return slot["canvas"]
+
+    def _toggle_profile(self):
+        """FIX-17d.1: click the header card to expand/collapse the full
+        company description — only that slot re-renders."""
+        d = self.app.data
+        if d is None:
+            return
+        self._profile_expanded = not self._profile_expanded
+        dpi, width_in = self._geometry()
+        self._render_slot(0, profile_card(d, dpi=dpi, width_in=width_in,
+                                          expanded=self._profile_expanded),
+                          on_click=self._toggle_profile)
 
 
 class _SandboxCard(ttk.Frame):
@@ -566,10 +666,15 @@ class _ExploreTab(ttk.Frame):
             box = ttk.Combobox(head, state="readonly", width=18,
                                textvariable=var, values=list(modes))
             box.pack(side=tk.LEFT, padx=(12, 0))
+            # FIX-17g: per-card Home/Pan/Zoom toolbar lives in the head
+            # row (rebuilt with the canvas on every redraw)
+            tbar_holder = ttk.Frame(head)
+            tbar_holder.pack(side=tk.RIGHT)
             holder = ttk.Frame(self.inner)
             holder.pack(fill=tk.X, padx=10, anchor="w")
             card = {"var": var, "builder": builder, "holder": holder,
-                    "canvas": None}
+                    "canvas": None, "tbar_holder": tbar_holder,
+                    "toolbar": None}
             box.bind("<<ComboboxSelected>>",
                      lambda _e, c=card: self._redraw(c))
             self._cards.append(card)
@@ -590,11 +695,20 @@ class _ExploreTab(ttk.Frame):
         dpi, width_in = self._card_geometry()
         fig = card["builder"](d, card["var"].get(), dpi=dpi,
                               width_in=width_in)
+        if card["toolbar"] is not None:
+            card["toolbar"].destroy()
+            card["toolbar"] = None
         if card["canvas"] is not None:
             card["canvas"].get_tk_widget().destroy()
         card["canvas"] = FigureCanvasTkAgg(fig, master=card["holder"])
         card["canvas"].draw()
         card["canvas"].get_tk_widget().pack(anchor="w")
+        # FIX-17g: interactivity — zoom/pan toolbar + hover readout
+        card["toolbar"] = _CardToolbar(card["canvas"],
+                                       card["tbar_holder"],
+                                       pack_toolbar=False)
+        card["toolbar"].pack(side=tk.RIGHT)
+        _attach_hover(card["canvas"])
 
     def refresh(self):
         """Re-render every card (fresh data or a DPI/viewport change)."""
