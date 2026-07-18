@@ -29,6 +29,11 @@ FETCH_YEARS = DISPLAY_YEARS + 1
 
 PRICE_YEARS = 10
 
+# FIX-17e: insider panel — most recent Form 4 filings fetched from
+# Archives per analyze (each is one small immutable request, cached a
+# year); the panel notes when more exist inside the 12-month window.
+INSIDER_MAX_FILINGS = 25
+
 # FIX-17a: provider API keys — environment variable first, settings.json
 # (per-user app data, outside the repo) as fallback. Keys are NEVER
 # written into any file inside the repository, and are only ever

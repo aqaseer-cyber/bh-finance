@@ -96,6 +96,23 @@ multiples; sign-flips honestly print nothing). All of it joins series the
 app had already fetched and audited — the numbers carry the same
 provenance as everything else.
 
+**Insiders & analyst estimates (FIX-17e/f).** The Overview tab adds an
+**insider-transactions panel** parsed natively from EDGAR **Form 4**
+filings (audited-filing grade — the same table openinsider-style sites
+scrape, straight from the source): open-market P/S codes only
+(awards/exercises excluded as compensation mechanics), last 12 months,
+with a net-buying summary; the most recent
+`config.INSIDER_MAX_FILINGS` filings are fetched (each immutable,
+cached a year) and the panel says when more exist. Below it, the
+**analyst estimates panel** — forward consensus revenue vs the latest
+EDGAR actual, the street's PAST accuracy (actual vs FMP's archived
+consensus), and the Finnhub recommendation-trends strip — all labeled
+`consensus (FMP), unaudited` and display-only. The **growth-anchor
+consensus is re-sourced**: with the FMP key the valuation dialog's
+Bull seed comes from FMP's next-FY consensus grounded on the audited
+EDGAR actual (the readout says `(FMP, n=…)`); the Yahoo earningsTrend
+fetch survives only as the keyless fallback.
+
 **Entry-price discipline.** Every DCF prints the **Base-case implied
 annual return** of buying at P₀, a **±40% price ladder** (what each entry
 price earns), and the price at which the **15% hurdle** (labeled

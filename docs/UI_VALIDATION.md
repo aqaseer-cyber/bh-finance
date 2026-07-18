@@ -153,6 +153,19 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 - [ ] Without the FMP key the header degrades to the one-line pointer
       (README 'Provider keys') and everything below renders unchanged.
 
+## Insiders & estimates (FIX-17e/f)
+
+- [ ] Overview shows the Form 4 insider panel: dated open-market rows
+      (purchases in green), the 12m net-buying summary, and the
+      "audited-filing … awards/exercises excluded" footnote. With a
+      placeholder SEC UA it degrades to the gate note instead.
+- [ ] The estimates panel shows forward revenue vs the latest EDGAR
+      actual, the "Street accuracy" line, the ratings strip, and the
+      "consensus (FMP), unaudited … never enters FV" labels.
+- [ ] Intrinsic value dialog: the anchors line now reads
+      "consensus … (FMP, n=…, Rung 4)" instead of Yahoo, and the Bull
+      seed matches the panel's next-FY growth. All cases still editable.
+
 ## Sign-off
 
 | Check block | Pass/Fail | Notes |
@@ -168,5 +181,6 @@ Analyze a real ticker (AAPL) and a segment filer (MELI).
 | Providers probe | | |
 | Data audit | | |
 | Company profile | | |
+| Insiders & estimates | | |
 
 Date / machine / scaling: ______________________

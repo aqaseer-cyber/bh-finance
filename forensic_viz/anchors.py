@@ -289,7 +289,9 @@ def anchor_readout(a: GrowthAnchors) -> str:
         return ""
     parts = []
     if a.consensus is not None:
-        src = "Yahoo" if "Yahoo" in (a.details.get("consensus") or "") else "consensus"
+        detail = a.details.get("consensus") or ""
+        src = ("FMP" if "FMP" in detail
+               else "Yahoo" if "Yahoo" in detail else "consensus")
         meta = [src] + ([f"n={a.n_analysts}"] if a.n_analysts else []) + ["Rung 4"]
         parts.append(f"consensus {a.consensus:+.1%} ({', '.join(meta)})")
     if a.hist_cagr is not None:

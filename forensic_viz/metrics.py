@@ -194,6 +194,13 @@ class DashboardData:
     # FIX-17d: company profile (profile.CompanyProfile) — display-only
     # context, never feeds a calculation
     profile: Optional[object] = None
+    # FIX-17e: insider transactions (insiders.InsiderPanel) — EDGAR Form 4
+    insiders: Optional[object] = None
+    # FIX-17f: estimates panel substrate {"rows": FMP annual analyst
+    # estimates, "trends": Finnhub recommendation trends} — display-only,
+    # unaudited; the Bull-seed anchor is the ONLY estimate that reaches
+    # the valuation dialog, and it stays editable
+    estimates_panel: Optional[dict] = None
 
     # Prices
     price_dates: List[dt.date] = field(default_factory=list)

@@ -190,10 +190,37 @@ def build_dashboard_data(
 
     progress("Fetching analyst growth estimates…")
     try:
-        from .estimates import fetch_growth_estimates
-        data.analyst_estimates = fetch_growth_estimates(ticker, cache=cache)
+        from .estimates import (
+            fetch_estimates_rows, fetch_growth_estimates,
+            fetch_recommendation_trends,
+        )
+        # FIX-17f: FMP-first, grounded on the latest EDGAR actual
+        rev = fundamentals.series.get("revenue") or []
+        actual_rev = next((v for v in reversed(rev) if v), None)
+        actual_fy = (fundamentals.fy_ends[-1].year
+                     if fundamentals.fy_ends else None)
+        data.analyst_estimates = fetch_growth_estimates(
+            ticker, cache=cache, actual_rev=actual_rev,
+            actual_fy_year=actual_fy)
+        rows = fetch_estimates_rows(ticker, cache=cache)
+        trends = fetch_recommendation_trends(ticker, cache=cache)
+        data.estimates_panel = ({"rows": rows or [], "trends": trends or []}
+                                if (rows or trends) else None)
     except Exception:
         data.analyst_estimates = None  # estimates are prefill sugar only
+        data.estimates_panel = None
+
+    # FIX-17e: insider transactions (Form 4, Archives-gated like segments)
+    progress("Fetching insider transactions (Form 4)…")
+    try:
+        from .insiders import fetch_insider_panel
+        data.insiders = fetch_insider_panel(fundamentals, cache=cache,
+                                            today=data.generated)
+    except EdgarError as exc:
+        data.insiders = None
+        data.health_notes.append(f"Insider panel unavailable: {exc}")
+    except Exception:
+        data.insiders = None
 
     parts = [fundamentals.exchange_ticker or ticker]
     if fundamentals.sic_description:

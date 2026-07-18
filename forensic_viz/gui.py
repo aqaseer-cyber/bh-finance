@@ -39,9 +39,9 @@ from .dashboard import (
 )
 from .edgar import EdgarError
 from .explore import (
-    PRICE_MODES, RATIO_MODES, REVENUE_MODES, overview_kpi_card,
-    overview_valuation_card, price_card, profile_card, ratio_card,
-    revenue_card,
+    PRICE_MODES, RATIO_MODES, REVENUE_MODES, estimates_card, insider_card,
+    overview_kpi_card, overview_valuation_card, price_card, profile_card,
+    ratio_card, revenue_card,
 )
 from .export import export_pdf
 from .model_export import export_financial_model
@@ -302,7 +302,9 @@ class _OverviewTab(ttk.Frame):
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
         self._holders = []
-        for _ in range(6):   # FIX-17d: profile header + the five cards
+        # FIX-17d/e/f: profile header, KPI strip, valuation, estimates,
+        # insiders, then the three chart cards
+        for _ in range(8):
             holder = ttk.Frame(self.inner)
             holder.pack(fill=tk.X, padx=10, pady=(6, 0), anchor="w")
             self._holders.append({"holder": holder, "canvas": None})
@@ -324,6 +326,8 @@ class _OverviewTab(ttk.Frame):
             lambda: overview_kpi_card(d, dpi=dpi, width_in=width_in),
             lambda: overview_valuation_card(d, res, dpi=dpi,
                                             width_in=width_in),
+            lambda: estimates_card(d, dpi=dpi, width_in=width_in),
+            lambda: insider_card(d, dpi=dpi, width_in=width_in),
             lambda: price_card(d, "Both (stacked)", dpi=dpi,
                                width_in=width_in),
             lambda: revenue_card(d, "All margins", dpi=dpi,

@@ -368,6 +368,164 @@ def overview_valuation_card(d: DashboardData, res, dpi: int = 100,
     return fig
 
 
+def insider_card(d: DashboardData, dpi: int = 100,
+                 width_in: float = 10.0) -> Figure:
+    """FIX-17e: open-market insider transactions parsed natively from
+    EDGAR Form 4 (audited-filing grade — same table DVH scrapes via
+    openinsider, straight from the source). Max 12 rows on screen."""
+    panel = getattr(d, "insiders", None)
+    fig = Figure(figsize=(max(4.0, width_in), 2.7), dpi=dpi)
+    fig.patch.set_facecolor(P.PAGE)
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    ax.text(0.01, 0.985, "Insider transactions (Form 4, open-market P/S "
+                         "only)", fontsize=10.5, fontweight="bold",
+            color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
+    if panel is None:
+        ax.text(0.01, 0.80, "unavailable — needs a declared SEC "
+                            "User-Agent (Settings…), same gate as the "
+                            "segment fetch", fontsize=8.0,
+                color=P.INK_MUTED, transform=ax.transAxes, va="top")
+        return fig
+    ax.text(0.99, 0.985, panel.summary().replace("$", "\\$"),
+            fontsize=8.2, color=P.INK_SECONDARY, transform=ax.transAxes,
+            va="top", ha="right")
+    rows = panel.rows[:12]
+    if not rows:
+        ax.text(0.01, 0.80, "no open-market Form 4 transactions in the "
+                            f"last {panel.window_months} months",
+                fontsize=8.4, color=P.INK_MUTED, transform=ax.transAxes,
+                va="top")
+        return fig
+    cols = ((0.01, "Date"), (0.115, "Insider"), (0.335, "Title"),
+            (0.565, "Type"), (0.685, "Price"), (0.775, "Qty"),
+            (0.885, "Value"))
+    y = 0.865
+    for x, label in cols:
+        ax.text(x, y, label, fontsize=7.0, color=P.INK_MUTED,
+                transform=ax.transAxes, va="top")
+    y -= 0.068
+    for t in rows:
+        # purchases render in the house positive green; sales stay ink
+        color = P.DELTA_GOOD if t.shares > 0 else P.INK_PRIMARY
+        vals = (t.date.isoformat(), t.name[:24], t.title[:26],
+                t.code.split(" — ")[-1],
+                f"{t.price:,.2f}" if t.price is not None else "–",
+                f"{t.shares:+,.0f}",
+                f"\\${t.value / 1e3:+,.0f}K" if t.value is not None
+                else "–")
+        for (x, _), v in zip(cols, vals):
+            ax.text(x, y, str(v), fontsize=7.2, color=color,
+                    transform=ax.transAxes, va="top")
+        y -= 0.062
+    foot = ("SEC EDGAR Form 4 (audited-filing) · awards/exercises/gifts "
+            "excluded — compensation mechanics, not conviction")
+    if panel.note:
+        foot += f" · {panel.note}"
+    ax.text(0.01, 0.005, foot, fontsize=6.4, color=P.INK_MUTED,
+            transform=ax.transAxes, va="bottom")
+    return fig
+
+
+def _latest_actuals_by_year(d: DashboardData) -> dict:
+    f = getattr(d, "fundamentals", None)
+    if f is None:
+        return {}
+    rev = f.series.get("revenue") or []
+    return {fe.year: rev[i] if i < len(rev) else None
+            for i, fe in enumerate(f.fy_ends)}
+
+
+def estimates_card(d: DashboardData, dpi: int = 100,
+                   width_in: float = 10.0) -> Figure:
+    """FIX-17f: consensus panel — forward revenue estimates vs the EDGAR
+    actual base, the street's PAST accuracy (actual vs archived
+    consensus), and the recommendation-trends strip. Display-only and
+    labeled unaudited; the Bull-seed anchor in the valuation dialog is
+    the only estimate that ever reaches a calculation, and it stays
+    editable."""
+    panel = getattr(d, "estimates_panel", None)
+    fig = Figure(figsize=(max(4.0, width_in), 1.9), dpi=dpi)
+    fig.patch.set_facecolor(P.PAGE)
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    ax.text(0.01, 0.97, "Analyst estimates — consensus (FMP), unaudited",
+            fontsize=10.5, fontweight="bold", color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top")
+    if not panel:
+        ax.text(0.01, 0.74, "unavailable — configure the FMP key "
+                            "(README 'Provider keys')", fontsize=8.0,
+                color=P.INK_MUTED, transform=ax.transAxes, va="top")
+        return fig
+    actuals = _latest_actuals_by_year(d)
+    latest_fy = max((y for y, v in actuals.items() if v), default=None)
+    rows = {}
+    for row in panel.get("rows") or []:
+        try:
+            rows[int(str(row.get("date"))[:4])] = row
+        except (TypeError, ValueError):
+            continue
+
+    def _avg(row):
+        for k in ("revenueAvg", "estimatedRevenueAvg"):
+            if row.get(k) is not None:
+                try:
+                    return float(row[k])
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    y = 0.74
+    if latest_fy and actuals.get(latest_fy):
+        base = actuals[latest_fy]
+        fwd = []
+        for yr in (latest_fy + 1, latest_fy + 2, latest_fy + 3):
+            row = rows.get(yr)
+            avg = _avg(row) if row else None
+            if avg and avg > 0:
+                yrs = yr - latest_fy
+                g = (avg / base) ** (1.0 / yrs) - 1.0
+                fwd.append(f"FY{yr} \\${avg / 1e9:,.1f}B "
+                           f"({g:+.1%}/yr)")
+        if fwd:
+            ax.text(0.01, y, "Forward revenue vs FY"
+                    f"{latest_fy} actual \\${base / 1e9:,.1f}B:  "
+                    + "  ·  ".join(fwd), fontsize=8.2,
+                    color=P.INK_PRIMARY, transform=ax.transAxes,
+                    va="top")
+            y -= 0.17
+        acc = []
+        for yr in sorted(rows):
+            if yr > (latest_fy or 0) or not actuals.get(yr):
+                continue
+            est = _avg(rows[yr])
+            if est and est > 0:
+                acc.append(f"FY{yr} {actuals[yr] / est - 1.0:+.1%}")
+        if acc:
+            ax.text(0.01, y, "Street accuracy (actual vs archived "
+                            "consensus): " + " · ".join(acc[-4:]),
+                    fontsize=8.0, color=P.INK_SECONDARY,
+                    transform=ax.transAxes, va="top")
+            y -= 0.17
+    trends = panel.get("trends") or []
+    if trends:
+        t = trends[0]
+        ax.text(0.01, y, f"Street ratings ({str(t.get('period', ''))[:7]}): "
+                f"{t.get('strongBuy', 0)} strong buy · {t.get('buy', 0)} "
+                f"buy · {t.get('hold', 0)} hold · {t.get('sell', 0)} sell "
+                f"· {t.get('strongSell', 0)} strong sell   "
+                "[Finnhub, free tier]", fontsize=8.0,
+                color=P.INK_SECONDARY, transform=ax.transAxes, va="top")
+        y -= 0.17
+    ax.text(0.01, 0.005, "display-only; never enters FV. The Bull seed "
+            "in the valuation dialog uses the same consensus mean — "
+            "grounded on the EDGAR actual, always editable. Accuracy "
+            "compares actuals with FMP's archived consensus (archive "
+            "timing approximate).", fontsize=6.4, color=P.INK_MUTED,
+            transform=ax.transAxes, va="bottom")
+    return fig
+
+
 WACC_EXCEEDS_G = "n/a — WACC must exceed g"
 
 
