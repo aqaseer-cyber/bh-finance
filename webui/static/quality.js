@@ -13,8 +13,14 @@
     const el = document.getElementById(id);
     if (!el) return null;
     if (!charts[id]) charts[id] = echarts.init(el, "bhf");
+    else if (charts[id].getWidth() < el.clientWidth - 4)
+      charts[id].resize();   // was initialized while hidden — recover
     return charts[id];
   }
+
+  window.addEventListener("resize", () => {
+    for (const c of Object.values(charts)) c.resize();
+  });
 
   function years(d) {
     return (d.fy_labels || []).map((l) => String(l).replace("FY", ""));

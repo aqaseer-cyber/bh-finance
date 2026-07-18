@@ -94,20 +94,23 @@ const store = window.PetiteVue.reactive({
   },
 
   render() {
-    // the watchlist reads the ledger — it renders without a run
-    if (store.screen === "watchlist" && window.renderWatchlist) {
-      window.renderWatchlist();
-      return;
-    }
-    if (!store.data) return;
-    if (store.screen === "overview" && window.renderOverview)
-      window.renderOverview(store.data, store.ledgerRow);
-    if (store.screen === "financials" && window.renderFinancials)
-      window.renderFinancials(store.data);
-    if (store.screen === "quality" && window.renderQuality)
-      window.renderQuality(store.data);
-    if (store.screen === "valuation" && window.renderValuation)
-      window.renderValuation(store.data);
+    // defer one frame so the v-show switch has applied — charts must
+    // measure a VISIBLE container or they fall back to a tiny canvas
+    requestAnimationFrame(() => {
+      if (store.screen === "watchlist" && window.renderWatchlist) {
+        window.renderWatchlist();
+        return;
+      }
+      if (!store.data) return;
+      if (store.screen === "overview" && window.renderOverview)
+        window.renderOverview(store.data, store.ledgerRow);
+      if (store.screen === "financials" && window.renderFinancials)
+        window.renderFinancials(store.data);
+      if (store.screen === "quality" && window.renderQuality)
+        window.renderQuality(store.data);
+      if (store.screen === "valuation" && window.renderValuation)
+        window.renderValuation(store.data);
+    });
   },
 });
 

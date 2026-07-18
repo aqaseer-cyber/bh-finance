@@ -56,9 +56,15 @@
     }
   }
 
+  window.addEventListener("resize", () => {
+    if (ffChart) ffChart.resize();
+  });
+
   function footballField(res) {
     const el = $("val-field");
     if (!ffChart) ffChart = echarts.init(el, "bhf");
+    else if (ffChart.getWidth() < el.clientWidth - 4)
+      ffChart.resize();   // initialized while hidden — recover
     const cases = (res.cases || []).filter((c) => c.fv_ps != null);
     ffChart.setOption({
       tooltip: { trigger: "axis" },

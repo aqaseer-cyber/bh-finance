@@ -37,8 +37,9 @@
       borderColor: v("--gridline"),
       textStyle: { color: v("--ink"), fontSize: 12 },
     },
-    grid: { top: 28, right: 16, bottom: 28, left: 56,
-            containLabel: false, borderWidth: 0 },
+    // top clears the legend row; containLabel keeps axis labels inside
+    grid: { top: 40, right: 12, bottom: 24, left: 8,
+            containLabel: true, borderWidth: 0 },
     line: { symbol: "none", lineStyle: { width: 1.6 } },
     bar: { itemStyle: { borderRadius: [2, 2, 0, 0] } },
   };
