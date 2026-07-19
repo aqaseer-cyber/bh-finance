@@ -3,7 +3,7 @@ import datetime as dt
 
 import pytest
 
-from forensic_viz.dashboard import render_dashboard, render_health_report
+from forensic_viz.dashboard import render_business, render_quality
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.estimates import parse_earnings_trend
 from forensic_viz.export import A4_PT, export_pdf
@@ -31,16 +31,13 @@ def test_pdf_pages_are_a4(tmp_path, testco_facts):
     from pypdf import PdfReader
     d = _data(testco_facts)
     out = tmp_path / "report.pdf"
-    export_pdf([render_dashboard(d), render_health_report(d)], str(out))
+    export_pdf([render_business(d), render_quality(d)], str(out))
     reader = PdfReader(str(out))
     assert len(reader.pages) == 2
-    # FIX-12c: every page an exact A4 sheet, orientation chosen per page —
-    # the tall dashboard is portrait, the landscape-height health page flips
-    dash_page, health_page = reader.pages
-    assert float(dash_page.mediabox.width) == pytest.approx(A4_PT[0], abs=0.5)
-    assert float(dash_page.mediabox.height) == pytest.approx(A4_PT[1], abs=0.5)
-    assert float(health_page.mediabox.width) == pytest.approx(A4_PT[1], abs=0.5)
-    assert float(health_page.mediabox.height) == pytest.approx(A4_PT[0], abs=0.5)
+    # v3 R3b: the report is A4 portrait throughout
+    for page in reader.pages:
+        assert float(page.mediabox.width) == pytest.approx(A4_PT[0], abs=0.5)
+        assert float(page.mediabox.height) == pytest.approx(A4_PT[1], abs=0.5)
 
 
 def test_parse_earnings_trend_growths():

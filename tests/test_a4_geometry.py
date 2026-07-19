@@ -4,8 +4,7 @@ import datetime as dt
 import pytest
 
 from forensic_viz.dashboard import (
-    A4_ASPECT, A4L_H, A4P_H, FIG_W, render_dashboard, render_health_report,
-    render_unit_economics,
+    A4_ASPECT, A4L_H, A4P_H, FIG_W, render_report,
 )
 from forensic_viz.export import A4_PT, export_pdf, page_size_for
 
@@ -38,7 +37,8 @@ def test_fill_check_tool_on_synthetic_pdf(tmp_path):
     assert page_fill(FIG_W, 7.9) >= 0.85  # landscape now rescues it
 
 
-def test_pages_render_at_a4_heights(testco_facts):
+def test_report_pages_all_portrait_a4(testco_facts):
+    """v3 R3b: A4 portrait THROUGHOUT — every section, appendix included."""
     from forensic_viz.edgar import parse_companyfacts
     from forensic_viz.metrics import (
         DashboardData, apply_track, build_fundamental_metrics,
@@ -48,8 +48,9 @@ def test_pages_render_at_a4_heights(testco_facts):
     d.sic_code = "3571"
     apply_track(d, "auto")
     build_fundamental_metrics(parse_companyfacts(testco_facts, "T"), d)
-    assert render_dashboard(d).get_size_inches()[1] == pytest.approx(A4P_H)
-    assert render_unit_economics(d).get_size_inches()[1] == \
-        pytest.approx(A4L_H)
-    assert render_health_report(d).get_size_inches()[1] == \
-        pytest.approx(A4L_H)
+    figs = render_report(d)
+    assert len(figs) >= 6
+    for fig in figs:
+        w, h = fig.get_size_inches()
+        assert w == pytest.approx(FIG_W)
+        assert h == pytest.approx(A4P_H)

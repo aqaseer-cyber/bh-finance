@@ -97,3 +97,55 @@ tested offline (`tests/test_r3a.py`), goldens byte-identical.
 
 Gate: suite 326/0 (22 new), goldens byte-identical, frozen-engine
 edits confined to the seams a1–a6 name.
+
+---
+
+# R3b — the report (six A4-portrait sections)
+
+`render_report` (dashboard.py) is now the single assembly every caller
+uses — CLI and `/api/export/pdf` both. A4 portrait THROUGHOUT.
+
+- **P1 Decision Dashboard** — base-quality box (red-keyed, ABOVE the
+  rating; unchallenged is still declared), rating/FV/MoS/stressed tiles,
+  coherence gate, Bear→Bull field vs P₀, the entry-price ladder drawn as
+  a curve, thesis/terminal risk (or the red-lined DRAFT box), open
+  triggers, **delta vs prior run** off the verdict-history table, and
+  the run identity footer (`Run id · inputs hash · providers`, new
+  `forensic_viz/runid.py` — provider NAMES only, never key material).
+- **P2 Expectations & Valuation** — the **expectations bridge** (market-
+  implied g vs the three anchors vs the case g₀ seeds, GDP cap drawn),
+  case table, sensitivity grid, stress bars, exit cross-check
+  `trimmed (raw)` with the mandatory >20% divergence note, and ONE
+  assumptions-and-bridge table (its per-case rows are dead — the
+  Valuation/Verdict duplication is killed).
+- **P3 Business & Segments** — multi-segment filers get the segment
+  band (stacked revenue + mix shift + per-segment growth/margin + tie &
+  provenance); single-segment filers get revenue + YoY; then the
+  track's unit-economics panels. The report's ONLY revenue charts.
+- **P4 Quality & Forensics** — Piotroski, Sloan, accruals, Altman
+  (suppressed with a note for financial-signature filers — principle
+  7 via the a1 gate), SBC now % revenue AND % FCF with the a3 stale
+  guard, R&D audit, FCF vs ex-SBC, earnings quality.
+- **P5 Capital & Balance Sheet** — dilution path, buybacks vs SBC
+  (coverage multiple labeled), debt vs cash + maturity-posture line,
+  capex intensity vs 5y median with the FIX-14b flag DRAWN.
+- **P6 Appendix** — data audit (incl. RESTATED), full tag map, rescue
+  log, segment status, warnings register; content flows onto as many
+  pages as it needs (untruncated by construction), monospace tables.
+
+Killed: the price/drawdown page (the shell owns interactive prices),
+the margins panel, the warnings-callout 6-entry cap and every
+`[:N] + ellipsis` truncation (zero-ellipsis gate is a test), the
+landscape pages, the five old page renderers.
+
+Wiring: `/api/valuation` now records the verdict to the ledger (the
+web flow finally feeds verdict history — the CLI always had) and
+captures the predecessor row for P1's delta line. DRAFT watermark on
+every page while thesis/terminal-risk are missing (principle 6).
+
+Gate status: offline — suite 338/0 (12 new in tests/test_r3b.py),
+smoke 10/10, fill tool (now portrait-per-page) 100%, goldens
+byte-identical, engine modules untouched. Owner-run — regenerate the
+MELI and PYPL reports and review against the section list; the MELI
+Decision Dashboard must show the base-quality challenge above the Buy;
+zero ellipses on extracted text.

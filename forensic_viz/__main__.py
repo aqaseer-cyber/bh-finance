@@ -299,18 +299,12 @@ def main(argv=None) -> int:
     if args.sbc_override is not None:
         data.sbc_override = args.sbc_override
 
-    from .dashboard import (
-        render_dashboard, render_health_report, render_unit_economics,
-        render_valuation, render_verdict,
-    )
+    from .dashboard import render_report
     from .export import export_pdf
     from .valuation import ValuationError
     from .verdict import build_verdict
 
-    fig_main = render_dashboard(data, dpi=args.dpi)
-    fig_unit = render_unit_economics(data, dpi=args.dpi)
-    fig_health = render_health_report(data, dpi=args.dpi)
-    fig_val = fig_verdict = res = verdict = None
+    res = verdict = None
     if args.value:
         try:
             res = _build_valuation_result(data, args)
@@ -319,25 +313,30 @@ def main(argv=None) -> int:
             verdict = build_verdict(data, res._inputs, res,
                                     rating=data.rating,
                                     optionality=data.optionality)
-            fig_val = render_valuation(data, res, dpi=args.dpi)
-            try:  # verdict trigger box (§5.7) — the ledger never blocks a render
-                from .ledger import Ledger
-                open_trigs = [t["trigger_text"]
-                              for t in Ledger().open_triggers(data.ticker)]
-            except Exception:
-                open_trigs = None
-            fig_verdict = render_verdict(data, res, verdict, dpi=args.dpi,
-                                         open_triggers=open_trigs)
         except ValuationError as exc:
             _report_error(str(exc))
             return 2
+    # v3 R3b: triggers + the prior run (delta line, P1) — read BEFORE the
+    # upsert below, so "prior" is genuinely the predecessor; the ledger
+    # never blocks a render
+    open_trigs = prior = None
+    try:
+        from .ledger import Ledger
+        led = Ledger()
+        open_trigs = [t["trigger_text"]
+                      for t in led.open_triggers(data.ticker)]
+        prior = next((h for h in reversed(led.history(data.ticker))
+                      if h.get("fv_avg") is not None), None)
+    except Exception:
+        pass
 
     stamp = data.generated.isoformat()
     years = data.display_years
     out = args.out or f"{data.ticker}_{years}y_report_{stamp}.pdf"
     if not out.lower().endswith(".pdf"):
         out += ".pdf"
-    export_pdf([fig_main, fig_unit, fig_health, fig_val, fig_verdict], out)
+    export_pdf(render_report(data, res, verdict, open_triggers=open_trigs,
+                             prior=prior, dpi=args.dpi), out)
     print(f"wrote {out} (A4)")
 
     if data.price_error:

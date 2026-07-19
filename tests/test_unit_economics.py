@@ -4,7 +4,7 @@ import datetime as dt
 
 import pytest
 
-from forensic_viz.dashboard import render_unit_economics
+from forensic_viz.dashboard import render_business
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import (
     DashboardData, apply_track, build_fundamental_metrics,
@@ -84,13 +84,13 @@ def test_insurance_loss_and_combined_ratio(testco_facts):
     assert d.combined_ratio[-1] == pytest.approx((0.60 + 0.27) / 0.9)
 
 
-def test_render_unit_economics_all_tracks(tmp_path, testco_facts):
+def test_render_business_page_all_tracks(tmp_path, testco_facts):
     for track in ("standard", "bank", "insurance", "reit", "sotp"):
         d = _metrics(testco_facts, track=track)
         d.thesis = "A thesis sentence."
         d.terminal_risk = "A terminal risk sentence."
         out = tmp_path / f"unit_{track}.png"
-        fig = render_unit_economics(d, str(out))
+        fig = render_business(d, str(out))
         assert out.exists() and out.stat().st_size > 30_000
         assert len(fig.axes) >= 5  # header + four panels
 
@@ -112,7 +112,7 @@ def test_ccc_panel_degrades_to_operating_cycle(testco_facts):
     d = _metrics(testco_facts)
     d.dpo = [None] * len(d.fy_labels)
     d.ccc = [None] * len(d.fy_labels)
-    fig = render_unit_economics(d)
+    fig = render_business(d)
     texts = [t.get_text() for ax in fig.axes for t in ax.texts]
     texts += [t.get_text() for t in fig.texts]
     joined = " ".join(texts)
@@ -127,7 +127,7 @@ def test_ccc_placeholder_only_when_no_legs_at_all(testco_facts):
     d = _metrics(testco_facts)
     for name in ("dsi", "dso", "dpo", "ccc"):
         setattr(d, name, [None] * len(d.fy_labels))
-    fig = render_unit_economics(d)
+    fig = render_business(d)
     joined = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
     joined += " ".join(t.get_text() for t in fig.texts)
     assert "Needs the working-capital legs" in joined

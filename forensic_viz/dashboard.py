@@ -1,17 +1,25 @@
-"""Dashboard renderer: one PNG-quality matplotlib figure per ticker.
+"""THE report — v3 R3b (docs/V3_R3_EXPORT_DESIGN.md): six A4-portrait
+sections, decision-first, rendered by `render_report`:
 
-Layout (portrait):
-  header  — company identity + KPI tile row
-  price   — split-adjusted daily close (line + wash)
-  drawdown— % below rolling peak
-  grid    — revenue | margins
-            earnings quality (NI vs CFO vs FCF) | accruals ratio
-            diluted shares | debt vs cash
-  footer  — methodology + XBRL tag audit trail
+  P1  Decision Dashboard — base-quality box above the rating, FV band vs
+      P₀, MoS base & stressed, entry-price ladder, thesis/terminal risk
+      (or DRAFT), open triggers, delta vs prior run, run identity
+  P2  Expectations & Valuation — the expectations bridge, case table,
+      sensitivity, stress, exit cross-check `trimmed (raw)`, ONE
+      assumptions-and-bridge table
+  P3  Business & Segments — segment stack + mix (multi-segment) or the
+      unit-economics page alone; the report's ONLY revenue charts
+  P4  Quality & Forensics — Piotroski, Sloan, Altman (principle-7
+      suppression), SBC %rev+%FCF, accruals, R&D audit, FCF vs ex-SBC
+  P5  Capital & Balance Sheet — buybacks vs SBC, dilution, debt/cash,
+      capex intensity vs 5y median (FIX-14b flag drawn)
+  P6  Appendix — data audit, tag map, rescue log, segment status,
+      warnings register: full tables, untruncated by construction
 
-Design rules honoured: single y-axis per panel (never dual-axis), categorical
-hues assigned in fixed slot order per panel, thin marks with rounded data-ends,
-hairline solid gridlines, selective direct labels, legends for >= 2 series.
+Empty thesis/terminal-risk waters every page with DRAFT (principle 6);
+ellipses in a deliverable are a defect (principle 5). Design rules
+honoured: single y-axis per panel, categorical hues in fixed slot order,
+thin marks with rounded data-ends, hairline gridlines, direct labels.
 """
 from __future__ import annotations
 
@@ -207,43 +215,6 @@ def _panel_revenue(ax, fig, d: DashboardData):
             _cap_label(ax, i, v, fmt_money(v), above=v >= 0, fig=fig)
 
 
-def _panel_margins(ax, fig, d: DashboardData):
-    _panel_title(ax, "Margins", "gross / operating / net, % of revenue")
-    series = [d.gross_margin, d.operating_margin, d.net_margin]
-    names = ["Gross", "Operating", "Net"]
-    keep = [(s, n, P.SERIES[k]) for k, (s, n) in enumerate(zip(series, names))
-            if any(v is not None for v in s)]
-    if not keep:
-        _panel_note(ax, "Margin inputs not reported in XBRL")
-        return
-    flat = [v for s, _, _ in keep for v in s if v is not None]
-    lo, hi = min(flat + [0]), max(flat + [0])
-    span = (hi - lo) or 0.1
-    ax.set_xlim(-0.5, len(d.fy_labels) - 0.5)
-    ax.set_ylim(lo - 0.06 * span, hi + 0.3 * span)
-    ax.set_xticks(range(len(d.fy_labels)))
-    ax.set_xticklabels(d.fy_labels)
-    _pct_axis(ax)
-    label_slots = []
-    for s, name, color in keep:
-        xs = [i for i, v in enumerate(s) if v is not None]
-        ys = [v for v in s if v is not None]
-        ax.plot(xs, ys, color=color, linewidth=1.6, solid_capstyle="round",
-                solid_joinstyle="round", zorder=3)
-        ax.plot(xs[-1], ys[-1], "o", color=color, markersize=5.6,
-                markeredgecolor=P.SURFACE, markeredgewidth=1.2, zorder=4)
-        label_slots.append([xs[-1], ys[-1], f"{name} {fmt_pct(ys[-1])}"])
-    # dodge end labels that would overprint when two margins finish close together
-    min_gap = _px_to_y(ax, fig, 15)
-    label_slots.sort(key=lambda t: t[1])
-    for j in range(1, len(label_slots)):
-        if label_slots[j][1] - label_slots[j - 1][1] < min_gap:
-            label_slots[j][1] = label_slots[j - 1][1] + min_gap
-    for x, y, text in label_slots:
-        _cap_label(ax, x, y, text, above=True, fig=fig, size=7.2)
-    _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
-
-
 def _panel_earnings_quality(ax, fig, d: DashboardData):
     _panel_title(ax, "Earnings quality", "net income vs operating cash flow vs free cash flow")
     series = [d.net_income, d.cfo, d.fcf]
@@ -333,84 +304,7 @@ def _panel_debt_cash(ax, fig, d: DashboardData):
     _legend(ax, [_series_swatch(c) for _, _, c in keep], [n for _, n, _ in keep])
 
 
-def _panel_price(ax, fig, d: DashboardData):
-    sub = f"daily close, split-adjusted · {d.price_source}"
-    if d.total_return is not None:
-        sub += f" · {_price_span(d)}y total price return {fmt_pct(d.total_return, signed=True)}"
-    _panel_title(ax, f"{d.ticker} share price", sub)
-    ax.plot(d.price_dates, d.price_closes, color=P.SERIES[0], linewidth=1.4,
-            solid_capstyle="round", zorder=3)
-    lo = min(d.price_closes)
-    ax.set_ylim(lo * 0.92, max(d.price_closes) * 1.06)
-    ax.fill_between(d.price_dates, d.price_closes, ax.get_ylim()[0],
-                    color=P.SERIES[0], alpha=0.10, zorder=2)
-    ax.set_xlim(d.price_dates[0], d.price_dates[-1])
-    ax.xaxis.set_major_locator(mdates.YearLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
-    ax.plot(d.price_dates[-1], d.price_closes[-1], "o", color=P.SERIES[0],
-            markersize=5.6, markeredgecolor=P.SURFACE, markeredgewidth=1.2, zorder=4)
-    label = ax.annotate(f"${d.price_closes[-1]:,.2f}",
-                        xy=(d.price_dates[-1], d.price_closes[-1]),
-                        xytext=(-4, 9), textcoords="offset points", ha="right",
-                        fontsize=8.2, color=P.INK_PRIMARY, fontweight="bold",
-                        zorder=5)
-    label.set_path_effects(
-        [path_effects.withStroke(linewidth=2.5, foreground=P.SURFACE)])
-
-
-def _panel_drawdown(ax, fig, d: DashboardData):
-    _panel_title(ax, "Drawdown", f"% below rolling {_price_span(d)}y peak")
-    ax.plot(d.price_dates, d.drawdown, color=P.NEGATIVE, linewidth=1.2, zorder=3)
-    ax.fill_between(d.price_dates, d.drawdown, 0, color=P.NEGATIVE, alpha=0.10,
-                    zorder=2)
-    ax.set_xlim(d.price_dates[0], d.price_dates[-1])
-    worst = d.max_drawdown or 0.0
-    ax.set_ylim(worst * 1.35 if worst < 0 else -0.05, 0.001)
-    ax.xaxis.set_major_locator(mdates.YearLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-    _pct_axis(ax)
-    if d.max_drawdown is not None and d.max_drawdown_date is not None:
-        ax.plot(d.max_drawdown_date, d.max_drawdown, "o", color=P.NEGATIVE,
-                markersize=5.6, markeredgecolor=P.SURFACE, markeredgewidth=1.2,
-                zorder=4)
-        ax.annotate(f"max {fmt_pct(d.max_drawdown)}",
-                    xy=(d.max_drawdown_date, d.max_drawdown),
-                    xytext=(6, -2), textcoords="offset points",
-                    fontsize=7.6, color=P.INK_SECONDARY, va="top", zorder=5)
-
-
 # ---------------------------------------------------------------- header/kpi
-
-def _kpi_tiles(ax, d: DashboardData):
-    ax.set_axis_off()
-    last_label = d.fy_labels[-1] if d.fy_labels else "latest FY"
-    fy = f"{_fy_span(d)}y"
-    py = f"{_price_span(d)}y"
-    tiles = []
-    if d.last_close is not None:
-        tiles.append(("Last close", f"${d.last_close:,.2f}",
-                      f"{fmt_pct(d.total_return, signed=True)} {py}",
-                      (d.total_return or 0) >= 0))
-    if d.revenue and d.revenue[-1] is not None:
-        tiles.append((f"Revenue ({last_label})", fmt_money(d.revenue[-1]),
-                      f"{fmt_pct(d.revenue_cagr, signed=True)}/yr {fy}" if d.revenue_cagr is not None else "",
-                      (d.revenue_cagr or 0) >= 0))
-    if d.net_margin and d.net_margin[-1] is not None:
-        delta = (f"{d.net_margin_delta_pp:+.1f}pp vs {d.fy_labels[0]}"
-                 if d.net_margin_delta_pp is not None else "")
-        tiles.append((f"Net margin ({last_label})", fmt_pct(d.net_margin[-1]),
-                      delta, (d.net_margin_delta_pp or 0) >= 0))
-    if d.fcf and d.fcf[-1] is not None:
-        tiles.append((f"Free cash flow ({last_label})", fmt_money(d.fcf[-1]),
-                      f"{fmt_pct(d.fcf_cagr, signed=True)}/yr {fy}" if d.fcf_cagr is not None else "",
-                      (d.fcf_cagr or 0) >= 0))
-    if d.share_change is not None and d.diluted_shares[-1] is not None:
-        tiles.append(("Diluted shares", fmt_count(d.diluted_shares[-1]),
-                      f"{fmt_pct(d.share_change, signed=True)} {fy}",
-                      d.share_change <= 0))  # falling share count = good
-    _draw_kpi_row(ax, tiles)
 
 
 def _draw_kpi_row(ax, tiles):
@@ -772,87 +666,6 @@ def _unit_kpis(ax, d: DashboardData):
     _draw_kpi_row(ax, tiles[:6])
 
 
-def render_unit_economics(d: DashboardData, out_path: Optional[str] = None,
-                          dpi: int = DPI) -> Figure:
-    """Page 2 — Phase-2 unit economics: the track-specific marginal unit."""
-    import textwrap
-
-    matplotlib.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": P.FONT_STACK,
-        "text.color": P.INK_PRIMARY,
-        "figure.facecolor": P.SURFACE,
-        "savefig.facecolor": P.SURFACE,
-    })
-    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
-    fig.patch.set_facecolor(P.SURFACE)
-    gs = fig.add_gridspec(
-        4, 2, height_ratios=[1.12, 0.55, 1.9, 1.9],
-        left=0.055, right=0.965, top=0.965, bottom=0.065,
-        hspace=0.55, wspace=0.16,
-    )
-
-    ax_header = fig.add_subplot(gs[0, :])
-    ax_header.set_axis_off()
-    ax_header.text(0, 1.03, f"{d.company} — unit economics",
-                   fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
-                   transform=ax_header.transAxes, va="top")
-    sub = f"Phase-2 marginal unit · {d.ticker} · {d.track.title()} track"
-    if d.fy_labels:
-        sub += f" · fiscal years {d.fy_labels[0]}–{d.fy_labels[-1]}"
-    ax_header.text(0, 0.86, sub, fontsize=9, color=P.INK_SECONDARY,
-                   transform=ax_header.transAxes, va="top")
-    ax_header.text(1.0, 1.03, f"Generated {d.generated.isoformat()} · SEC EDGAR XBRL",
-                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
-                   va="top", ha="right")
-    if d.demo:
-        ax_header.text(1.0, 0.86, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
-                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
-                       transform=ax_header.transAxes, va="top", ha="right")
-    _unit_kpis(ax_header, d)
-
-    # Thesis + terminal risk (§2.3/2.4) — analyst judgment, printed verbatim,
-    # in their own band so long text never collides with the panels below.
-    ax_notes = fig.add_subplot(gs[1, :])
-    ax_notes.set_axis_off()
-    y = 0.92
-    if d.thesis:
-        text = textwrap.fill("Thesis (§2.4): " + d.thesis, width=175)
-        ax_notes.text(0, y, text, fontsize=7.8, color=P.INK_SECONDARY,
-                      transform=ax_notes.transAxes, va="top", linespacing=1.4)
-        y -= 0.30 * (text.count("\n") + 1) + 0.08
-    if d.terminal_risk:
-        text = textwrap.fill("Terminal risk (§2.3, anchors the Phase-5 rating): "
-                             + d.terminal_risk, width=175)
-        ax_notes.text(0, y, text, fontsize=7.8, color=P.DELTA_BAD,
-                      transform=ax_notes.transAxes, va="top", linespacing=1.4)
-    if not d.thesis and not d.terminal_risk:
-        ax_notes.text(0, y, "Thesis & terminal risk: analyst input (§2.3–2.4) — "
-                            "add via Analyst inputs… (GUI) or --thesis / "
-                            "--terminal-risk (CLI); the terminal risk anchors "
-                            "the Phase-5 rating.",
-                      fontsize=7.8, color=P.INK_MUTED,
-                      transform=ax_notes.transAxes, va="top")
-
-    panel_fns = _UNIT_PANELS.get(d.track, _UNIT_PANELS["standard"])
-    slots = (gs[2, 0], gs[2, 1], gs[3, 0], gs[3, 1])
-    for fn, spec in zip(panel_fns, slots):
-        ax = fig.add_subplot(spec)
-        _style_axes(ax)
-        if not d.fy_labels:
-            _panel_note(ax, "No annual fundamentals available")
-            continue
-        fn(ax, fig, d)
-
-    _footer(fig, d, "Working-capital days on average balances (§2.2). LTV/CAC "
-                    "and take rates need customer/GMV disclosures — not in "
-                    "XBRL (analyst input).")
-
-    if out_path:
-        fig.savefig(out_path, dpi=dpi)
-    return fig
-
-
 # ----------------------------------------------------- health report (page 2)
 
 def _zone_label(ax, x: float, y: float, text: str):
@@ -982,8 +795,19 @@ def _panel_credit_reserves(ax, fig, d: DashboardData):
 
 
 def _panel_altman(ax, fig, d: DashboardData):
+    # R3b principle 7: a financial-signature filer (a1 — finance SIC or a
+    # material receivable book) gets the suppression note, never a
+    # manufacturer-calibrated Z presented as if it applied
+    from .anchors import assess_base_quality
+
     _panel_title(ax, "Altman Z-score",
                  "original 1968 model (Standard-Mfg); MVE = FY-end close × diluted shares")
+    if assess_base_quality(d).financial_signature:
+        _panel_note(ax, "Altman Standard-Mfg suppressed — financial-signature\n"
+                        "filer (credit float on the balance sheet); the 1968\n"
+                        "coefficients were fit on manufacturers and mislead\n"
+                        "here (design principle 7)")
+        return
     pts = [(i, v) for i, v in enumerate(d.altman_z) if v is not None]
     if not pts:
         note = "Z inputs missing (needs current assets/liabilities, retained\n" \
@@ -1016,15 +840,26 @@ def _panel_altman(ax, fig, d: DashboardData):
 
 
 def _panel_sbc(ax, fig, d: DashboardData):
-    sub = "bar = % of revenue · label = $ amount"
-    if d.sbc_pct_fcf_latest is not None:
+    """R3b P4: SBC as % of revenue (bars) AND % of FCF (line) — the two
+    denominators the design demands; the a3 stale guard replaces any
+    relic 'latest' figure with the staleness note."""
+    from .kpi import stale_note
+
+    sub = "bar = % of revenue · line = % of FCF · label = $ amount"
+    stale = stale_note(d.sbc, d.fy_labels)
+    if stale:
+        sub += f" · {stale}"
+    elif d.sbc_pct_fcf_latest is not None:
         sub += f" · latest = {fmt_pct(d.sbc_pct_fcf_latest)} of FCF"
     _panel_title(ax, "Stock-based compensation", sub)
     vals = [v for v in d.sbc_pct_revenue if v is not None]
     if not vals:
         _panel_note(ax, "SBC not reported in XBRL")
         return
-    _category_panel_setup(ax, fig, d.fy_labels, vals)
+    pct_fcf = [s / f if s is not None and f is not None and f > 0 else None
+               for s, f in zip(d.sbc, d.fcf)]
+    _category_panel_setup(ax, fig, d.fy_labels,
+                          vals + [v for v in pct_fcf if v is not None])
     _pct_axis(ax, decimals=1)
     width, _ = _bar_geometry(ax, fig, 1)
     for i, (pct, usd) in enumerate(zip(d.sbc_pct_revenue, d.sbc)):
@@ -1032,6 +867,15 @@ def _panel_sbc(ax, fig, d: DashboardData):
             continue
         _rounded_bar(ax, fig, i, pct, width, P.SERIES[0])
         _cap_label(ax, i, pct, fmt_money(usd), above=pct >= 0, fig=fig, size=6.6)
+    xs = [i for i, v in enumerate(pct_fcf) if v is not None]
+    if xs:
+        ys = [pct_fcf[i] for i in xs]
+        ax.plot(xs, ys, color=P.BROWN, linewidth=1.4,
+                solid_capstyle="round", zorder=4)
+        _cap_label(ax, xs[-1], ys[-1], f"{fmt_pct(ys[-1])} of FCF",
+                   above=True, fig=fig, size=6.6, color=P.BROWN)
+        _legend(ax, [_series_swatch(P.SERIES[0]), _series_swatch(P.BROWN)],
+                ["% of revenue", "% of FCF"])
 
 
 def _panel_rnd_audit(ax, fig, d: DashboardData):
@@ -1057,8 +901,13 @@ def _panel_rnd_audit(ax, fig, d: DashboardData):
 
 
 def _panel_fcf_ex_sbc(ax, fig, d: DashboardData):
-    _panel_title(ax, "FCF vs FCF ex-SBC",
-                 "house §2b basis: SBC treated as a real cost of the franchise")
+    from .kpi import stale_note
+
+    sub = "house §2b basis: SBC treated as a real cost of the franchise"
+    stale = stale_note(d.fcf_ex_sbc, d.fy_labels)
+    if stale:  # a3: the adjusted series died early — say so, on the chart
+        sub += f" · ex-SBC {stale}"
+    _panel_title(ax, "FCF vs FCF ex-SBC", sub)
     series = [d.fcf, d.fcf_ex_sbc]
     names = ["FCF", "FCF ex-SBC"]
     keep = [(s, nm, P.SERIES[k]) for k, (s, nm) in enumerate(zip(series, names))
@@ -1110,84 +959,6 @@ def _health_kpis(ax, d: DashboardData):
     if fcf_ex is not None:
         tiles.append(("FCF ex-SBC", fmt_money(fcf_ex), "latest FY", fcf_ex > 0))
     _draw_kpi_row(ax, tiles)
-
-
-def render_health_report(d: DashboardData, out_path: Optional[str] = None,
-                         dpi: int = DPI) -> Figure:
-    """Page 2 — Phase-3 forensic health checks (quality scorecard)."""
-    matplotlib.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": P.FONT_STACK,
-        "text.color": P.INK_PRIMARY,
-        "figure.facecolor": P.SURFACE,
-        "savefig.facecolor": P.SURFACE,
-    })
-    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
-    fig.patch.set_facecolor(P.SURFACE)
-    gs = fig.add_gridspec(
-        4, 2, height_ratios=[1.35, 1.9, 1.9, 1.9],
-        left=0.055, right=0.965, top=0.97, bottom=0.10,
-        hspace=0.55, wspace=0.16,
-    )
-
-    ax_header = fig.add_subplot(gs[0, :])
-    ax_header.set_axis_off()
-    ax_header.text(0, 1.04, f"{d.company} — forensic health checks",
-                   fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
-                   transform=ax_header.transAxes, va="top")
-    sub = f"Phase-3 quality scorecard · {d.ticker} · {d.track.title()} track"
-    if d.fy_labels:
-        sub += f" · fiscal years {d.fy_labels[0]}–{d.fy_labels[-1]}"
-    if d.sic_code:
-        sub += f" · SIC {d.sic_code}"
-    ax_header.text(0, 0.80, sub, fontsize=9, color=P.INK_SECONDARY,
-                   transform=ax_header.transAxes, va="top")
-    ax_header.text(1.0, 1.04, f"Generated {d.generated.isoformat()} · SEC EDGAR XBRL",
-                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
-                   va="top", ha="right")
-    if d.demo:
-        ax_header.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
-                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
-                       transform=ax_header.transAxes, va="top", ha="right")
-    _health_kpis(ax_header, d)
-
-    # Track-aware panel selection (master §3.2/3.3): financial tracks swap
-    # Altman for the solvency panel; banks swap the R&D audit for the
-    # credit-reserve audit.
-    slot_a = _panel_solvency if d.is_financial_sector else _panel_altman
-    slot_b = _panel_credit_reserves if d.track == "bank" else _panel_rnd_audit
-    panels = [
-        (_panel_sloan, gs[1, 0]), (_panel_piotroski, gs[1, 1]),
-        (slot_a, gs[2, 0]), (_panel_sbc, gs[2, 1]),
-        (slot_b, gs[3, 0]), (_panel_fcf_ex_sbc, gs[3, 1]),
-    ]
-    for fn, spec in panels:
-        ax = fig.add_subplot(spec)
-        _style_axes(ax)
-        if not d.fy_labels:
-            _panel_note(ax, "No annual fundamentals available")
-            continue
-        fn(ax, fig, d)
-
-    # FIX-12c: two-column footnotes so the block fits landscape-A4 height;
-    # long notes are clipped for display — the CSV carries them in full
-    def _clip(s: str, n: int = 112) -> str:
-        return s if len(s) <= n else s[:n - 1] + "…"
-
-    notes = list(d.health_notes) + [
-        "Adjustment Burden (master §3.1) needs non-GAAP figures from the "
-        "earnings release — not in XBRL; analyst input."]
-    xcols, y = (0.055, 0.515), 0.062
-    for i, note in enumerate(notes):
-        fig.text(xcols[i % 2], y, _clip(note), fontsize=6.6,
-                 color=P.INK_MUTED, va="bottom")
-        if i % 2 == 1:
-            y -= 0.016
-    _footer(fig, d)
-
-    if out_path:
-        fig.savefig(out_path, dpi=dpi)
-    return fig
 
 
 # -------------------------------------------------- valuation report (page 3)
@@ -1261,144 +1032,8 @@ def _valuation_table(ax, res):
         for x, text, color, weight in cells:
             ax.text(x, y, text, fontsize=9, color=color, fontweight=weight,
                     transform=ax.transAxes, va="top")
-    # Reverse-DCF sanity frame (§4.D) — mandatory read on every DCF name
-    if res.implied_g is not None:
-        over = res.implied_g > 0.035
-        line = (f"Reverse DCF (§4.D): market EV {fmt_money(res.market_ev)} at "
-                f"{'WACC' if res.method == 'dcf' else 'r'} "
-                f"{fmt_pct(res.discount_rate)} implies g ≈ "
-                f"{fmt_pct(res.implied_g)} on the same base — "
-                + ("above the 3.5% GDP cap: the market is paying for optionality"
-                   if over else "inside the 3.5% GDP cap"))
-        ax.text(0.0, 0.06, line, fontsize=8.4,
-                color=P.DELTA_BAD if over else P.INK_SECONDARY,
-                transform=ax.transAxes, va="top")
-    # FIX-16c entry-price ladder: what buying at each price earns under
-    # the Base-case fade, plus the price that buys the hurdle (ASSUMPTION)
-    if getattr(res, "irr_ladder", None):
-        # \$ throughout — paired bare $ signs open a mathtext span (FIX-12d)
-        rungs = " ".join(
-            f"\\${p:,.0f}→{fmt_pct(r, decimals=0)}" if r is not None
-            else f"\\${p:,.0f}→n/a"
-            for p, r in res.irr_ladder[::2])
-        line2 = (f"Entry price (Base case): implied annual return "
-                 f"{fmt_pct(res.implied_return_now)} at P₀ · {rungs}")
-        if res.hurdle_price is not None:
-            line2 += (f" · {fmt_pct(res.hurdle_rate, decimals=0)} hurdle "
-                      f"buys at ≤ \\${res.hurdle_price:,.2f} (ASSUMPTION)")
-        ax.text(0.0, 0.005, line2, fontsize=7.6, color=P.INK_SECONDARY,
-                transform=ax.transAxes, va="top")
-
-
-def _warnings_callout(ax, res):
-    """FIX-12d: bordered 'Warnings & assumptions' box — the valuation page's
-    caveats, capped at 6 entries / 6 wrapped lines; the CSV carries the rest."""
-    import textwrap
-
-    ax.set_axis_off()
-    ax.add_patch(Rectangle((0.0, 0.0), 1.0, 1.0, transform=ax.transAxes,
-                           facecolor=P.PAGE, edgecolor=P.BASELINE,
-                           linewidth=1.0, zorder=1))
-    ax.text(0.012, 0.90, "Warnings & assumptions", fontsize=9.2,
-            fontweight="bold", color=P.INK_PRIMARY,
-            transform=ax.transAxes, va="top", zorder=3)
-    warns = list(res.warnings) + [f"{c.name}: {w}" for c in res.cases
-                                  for w in c.warnings]
-    if not warns:
-        ax.text(0.012, 0.62, "none — every input tagged; the CSV export "
-                             "carries the full audit trail",
-                fontsize=7.4, color=P.INK_MUTED, transform=ax.transAxes,
-                va="top", zorder=3)
-        return
-    shown, budget = [], 6
-    for w in warns:
-        wrapped = textwrap.fill("⚠ " + w, width=185)
-        n = wrapped.count("\n") + 1
-        if len(shown) >= 6 or n > budget:
-            break
-        shown.append(wrapped)
-        budget -= n
-    y = 0.68
-    for wrapped in shown:
-        ax.text(0.012, y, wrapped, fontsize=7.2, color=P.DELTA_BAD,
-                transform=ax.transAxes, va="top", linespacing=1.25, zorder=3)
-        y -= 0.095 * (wrapped.count("\n") + 1) + 0.015
-    more = len(warns) - len(shown)
-    if more > 0:
-        ax.text(0.012, y, f"+{more} more — see the CSV audit trail",
-                fontsize=7.2, color=P.INK_SECONDARY, transform=ax.transAxes,
-                va="top", zorder=3)
-
-
-def render_valuation(d: DashboardData, res, out_path: Optional[str] = None,
-                     dpi: int = DPI) -> Figure:
-    """Page 3 — Bear/Base/Bull intrinsic value and margin of safety."""
-    matplotlib.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": P.FONT_STACK,
-        "text.color": P.INK_PRIMARY,
-        "figure.facecolor": P.SURFACE,
-        "savefig.facecolor": P.SURFACE,
-    })
-    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
-    fig.patch.set_facecolor(P.SURFACE)
-    gs = fig.add_gridspec(
-        4, 1, height_ratios=[1.35, 1.75, 1.05, 1.0],
-        left=0.055, right=0.965, top=0.955, bottom=0.085, hspace=0.5,
-    )
-
-    ax_header = fig.add_subplot(gs[0])
-    ax_header.set_axis_off()
-    ax_header.text(0, 1.04, f"{d.company} — intrinsic value",
-                   fontsize=17.5, fontweight="bold", color=P.INK_PRIMARY,
-                   transform=ax_header.transAxes, va="top")
-    sub = f"{res.method_label} · {res.basis_label}"
-    if res.discount_rate is not None:
-        rate_name = "WACC" if res.method == "dcf" else "r_e"
-        sub += f" · {rate_name} {fmt_pct(res.discount_rate)}"
-    ax_header.text(0, 0.80, sub, fontsize=9, color=P.INK_SECONDARY,
-                   transform=ax_header.transAxes, va="top")
-    ax_header.text(1.0, 1.04, f"Generated {d.generated.isoformat()}",
-                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
-                   va="top", ha="right")
-    if d.demo:
-        ax_header.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
-                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
-                       transform=ax_header.transAxes, va="top", ha="right")
-    tiles = [("Current price (P₀)", f"${res.price:,.2f}",
-              f"as of {res.price_date.isoformat()}" if res.price_date else "",
-              True)]
-    for c in res.cases:
-        if c.fv_ps is not None:
-            tiles.append((f"{c.name} FV", f"${c.fv_ps:,.2f}",
-                          f"{fmt_pct(c.mos, signed=True)} MoS", c.mos >= 0))
-    if res.implied_g is not None:
-        tiles.append(("Reverse-DCF implied g", fmt_pct(res.implied_g),
-                      "vs 3.5% GDP cap", res.implied_g <= 0.035))
-    _draw_kpi_row(ax_header, tiles)
-
-    ax_field = fig.add_subplot(gs[1])
-    _style_axes(ax_field, y_grid=False)
-    _field_panel(ax_field, fig, res)
-
-    ax_table = fig.add_subplot(gs[2])
-    _valuation_table(ax_table, res)
-
-    ax_warn = fig.add_subplot(gs[3])
-    _warnings_callout(ax_warn, res)
-
-    extra = []
-    if res.rate_build:
-        extra.append("Rate build (§4.0): " + res.rate_build)
-    extra.append(
-        "Equity bridge (FCFF_DCF!B31): net debt + minority interest + preferred "
-        "− non-operating investments; MI/preferred from XBRL (0 when untagged), "
-        "non-op investments analyst input. All outputs code-computed.")
-    _footer(fig, d, extra)
-
-    if out_path:
-        fig.savefig(out_path, dpi=dpi)
-    return fig
+    # R3b: the reverse-DCF read lives on the expectations bridge (P2) and
+    # the entry-price ladder is its own P1 panel — no duplicates here
 
 
 # ----------------------------------------------------- verdict page (page 5)
@@ -1631,23 +1266,14 @@ def _panel_sensitivity(ax, res, v):
 def _panel_assumptions(ax, d: DashboardData, res, v):
     """FIX-12d row-3 left: per-case assumptions, discount rate, per-track
     bases and the equity-bridge legs — the whole model on one panel."""
+    import textwrap
+
     ax.set_axis_off()
-    sub = f"{v.track_a_label}  ·  {v.track_b_label}"
-    if len(sub) > 112:
-        sub = sub[:109] + "…"
+    # R3b: the ONE assumptions-and-bridge table — the per-case rows live in
+    # the case table above it, NEVER here again (the Valuation/Verdict
+    # duplication the design kills); a long track label wraps, not clips
+    sub = textwrap.fill(f"{v.track_a_label}  ·  {v.track_b_label}", width=118)
     _panel_title(ax, "Assumptions & bridge (§4.0)", sub)
-    for label, x in (("Case", 0.0), ("Assumptions", 0.15), ("TV share", 0.84)):
-        ax.text(x, 0.90, label, fontsize=7.6, color=P.INK_SECONDARY,
-                transform=ax.transAxes, va="top")
-    for r, c in enumerate(res.cases):
-        y = 0.76 - r * 0.145
-        ax.text(0.0, y, c.name, fontsize=8.2, fontweight="bold",
-                color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
-        ax.text(0.15, y, c.assumptions, fontsize=8.2, color=P.INK_PRIMARY,
-                transform=ax.transAxes, va="top")
-        ax.text(0.84, y, fmt_pct(c.tv_share) if c.tv_share is not None else "–",
-                fontsize=8.2, color=P.INK_PRIMARY,
-                transform=ax.transAxes, va="top")
     if res.method == "dcf":
         base_a, base_b = _dcf_track_bases(res, v)
         rate_line = (f"WACC {fmt_pct(res.discount_rate)} · base A "
@@ -1659,21 +1285,27 @@ def _panel_assumptions(ax, d: DashboardData, res, v):
         rate_line = "AFFO per share and target yields are analyst-supplied (§4.C)"
     else:
         rate_line = "external model — values carried from the analyst's SOTP"
-    ax.text(0.0, 0.28, rate_line, fontsize=8.2, color=P.INK_PRIMARY,
+    ax.text(0.0, 0.56, rate_line, fontsize=8.4, color=P.INK_PRIMARY,
             transform=ax.transAxes, va="top")
     if res.method == "dcf":
         mi = _latest(d.minority_interest) or 0.0
         pref = _latest(d.preferred_equity) or 0.0
         nonop = d.non_op_investments or 0.0
         bridge = res.bridge if res.bridge is not None else (res.net_debt or 0.0)
-        bridge_line = (f"Bridge (EV→equity): net debt "
-                       f"{fmt_money(res.net_debt or 0.0)} + MI {fmt_money(mi)} "
-                       f"+ preferred {fmt_money(pref)} − non-op "
-                       f"{fmt_money(nonop)} = {fmt_money(bridge)}")
+        bridge_line = _tex(
+            f"Bridge (EV→equity): net debt "
+            f"{fmt_money(res.net_debt or 0.0)} + MI {fmt_money(mi)} "
+            f"+ preferred {fmt_money(pref)} − non-op "
+            f"{fmt_money(nonop)} = {fmt_money(bridge)}")
     else:
         bridge_line = "No EV→equity bridge — this method values equity directly."
-    ax.text(0.0, 0.12, bridge_line, fontsize=8.2, color=P.INK_SECONDARY,
+    ax.text(0.0, 0.34, bridge_line, fontsize=8.4, color=P.INK_SECONDARY,
             transform=ax.transAxes, va="top")
+    if v.optionality:
+        ax.text(0.0, 0.12, textwrap.fill(
+            f"Named optionality (§4.D): {v.optionality}", width=150),
+            fontsize=8.2, color=P.INK_SECONDARY, transform=ax.transAxes,
+            va="top")
 
 
 def _panel_triggers(ax, d: DashboardData, v, open_triggers):
@@ -1701,6 +1333,9 @@ def _panel_triggers(ax, d: DashboardData, v, open_triggers):
         entries.append((f"Terminal risk (§2.3): {d.terminal_risk}",
                         P.DELTA_BAD, "normal"))
     for note in v.notes:
+        # R3b: the exit cross-check has its own P2 panel — never twice
+        if note.startswith("5y exit cross-check"):
+            continue
         entries.append((f"Note: {note}", P.INK_MUTED, "normal"))
     if open_triggers:
         entries.append(("Open triggers:", P.INK_PRIMARY, "bold"))
@@ -1725,85 +1360,16 @@ def _panel_triggers(ax, d: DashboardData, v, open_triggers):
                 va="top")
 
 
-def render_verdict(d: DashboardData, res, v, out_path: Optional[str] = None,
-                   dpi: int = DPI,
-                   open_triggers: Optional[Sequence[str]] = None) -> Figure:
-    """Page 5 — Phase-5 decision dashboard (FIX-12d): stress bars, sensitivity
-    grid, assumptions & bridge, triggers & rating gate."""
-    matplotlib.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": P.FONT_STACK,
-        "text.color": P.INK_PRIMARY,
-        "figure.facecolor": P.SURFACE,
-        "savefig.facecolor": P.SURFACE,
-    })
-    fig = Figure(figsize=(FIG_W, A4L_H), dpi=dpi)
-    fig.patch.set_facecolor(P.SURFACE)
-    gs = fig.add_gridspec(
-        3, 2, height_ratios=[1.30, 1.75, 1.45], width_ratios=[1.0, 1.0],
-        left=0.055, right=0.965, top=0.95, bottom=0.10,
-        hspace=0.62, wspace=0.16,
-    )
-
-    ax_header = fig.add_subplot(gs[0, :])
-    ax_header.set_axis_off()
-    ax_header.text(0, 1.04, f"{d.company} — verdict", fontsize=17.5,
-                   fontweight="bold", color=P.INK_PRIMARY,
-                   transform=ax_header.transAxes, va="top")
-    ax_header.text(0, 0.80, f"Phase-5 stress & rating gate · {d.ticker} · "
-                            f"{d.track.title()} track · {res.method_label}",
-                   fontsize=9, color=P.INK_SECONDARY,
-                   transform=ax_header.transAxes, va="top")
-    ax_header.text(1.0, 1.04, f"Generated {d.generated.isoformat()}",
-                   fontsize=8, color=P.INK_MUTED, transform=ax_header.transAxes,
-                   va="top", ha="right")
-    if d.demo:
-        ax_header.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
-                       fontsize=9, fontweight="bold", color=P.DELTA_BAD,
-                       transform=ax_header.transAxes, va="top", ha="right")
-    tiles = []
-    if v.fv_a is not None:
-        tiles.append(("Track A FV", f"${v.fv_a:,.2f}", "skeptic", True))
-    if v.fv_b is not None:
-        tiles.append(("Track B FV", f"${v.fv_b:,.2f}", "institutional", True))
-    if v.fv_avg is not None:
-        tiles.append(("FV average", f"${v.fv_avg:,.2f}",
-                      f"{fmt_pct(v.mos, signed=True)} MoS", (v.mos or 0) >= 0))
-    if v.stressed_mos is not None:
-        tiles.append(("Stressed MoS", fmt_pct(v.stressed_mos, signed=True),
-                      v.shock_label.split("(")[0].strip(), v.stressed_mos >= 0))
-    gate_ok = v.coherence.startswith("ok")
-    tiles.append(("Rating", v.rating or "—",
-                  v.coherence if not gate_ok else "coherent with MoS", gate_ok))
-    _draw_kpi_row(ax_header, tiles[:6])
-
-    ax_stress = fig.add_subplot(gs[1, 0])
-    _style_axes(ax_stress)
-    _panel_stress(ax_stress, fig, res, v)
-
-    ax_sens = fig.add_subplot(gs[1, 1])
-    _panel_sensitivity(ax_sens, res, v)
-
-    ax_assume = fig.add_subplot(gs[2, 0])
-    _panel_assumptions(ax_assume, d, res, v)
-
-    ax_trig = fig.add_subplot(gs[2, 1])
-    _panel_triggers(ax_trig, d, v, open_triggers)
-
-    _footer(fig, d, "FV_avg = average(Track A, Track B); coherence gate "
-                    "mirrors the workbook (Control!B67): MoS < −15% with "
-                    "Hold/Buy → CHECK unless the §4.D optionality is named. "
-                    "Sizing (§5.6) stays with the analyst.")
-
-    if out_path:
-        fig.savefig(out_path, dpi=dpi)
-    return fig
-
-
 # ------------------------------------------------------------------- public
 
-def render_dashboard(d: DashboardData, out_path: Optional[str] = None,
-                     dpi: int = DPI) -> Figure:
+
+def _tex(s: str) -> str:
+    """Escape $ for matplotlib text — two bare $ in one string open a
+    mathtext span and silently italicize everything between them."""
+    return str(s).replace("$", "\\$")
+
+
+def _rc():
     matplotlib.rcParams.update({
         "font.family": "sans-serif",
         "font.sans-serif": P.FONT_STACK,
@@ -1812,57 +1378,1129 @@ def render_dashboard(d: DashboardData, out_path: Optional[str] = None,
         "figure.facecolor": P.SURFACE,
         "savefig.facecolor": P.SURFACE,
     })
-    fig = Figure(figsize=(FIG_W, A4P_H), dpi=dpi)
-    fig.patch.set_facecolor(P.SURFACE)
-    gs = fig.add_gridspec(
-        6, 2,
-        height_ratios=[1.5, 2.5, 1.1, 1.9, 1.9, 1.9],
-        left=0.055, right=0.965, top=0.98, bottom=0.06,
-        hspace=0.72, wspace=0.16,
-    )
 
-    ax_header = fig.add_subplot(gs[0, :])
-    _header(fig, ax_header, d)
-    _kpi_tiles(ax_header, d)
 
-    ax_price = fig.add_subplot(gs[1, :])
-    ax_dd = fig.add_subplot(gs[2, :])
-    if d.price_dates:
-        _style_axes(ax_price)
-        _panel_price(ax_price, fig, d)
-        _style_axes(ax_dd)
-        _panel_drawdown(ax_dd, fig, d)
-    else:
-        for ax, what in ((ax_price, "price history"), (ax_dd, "drawdown")):
-            _style_axes(ax, y_grid=False)
-            note = f"No {what} available"
-            if d.price_error:
-                note += f"\n({d.price_error})"
-            _panel_note(ax, note)
+def _is_draft(d: DashboardData) -> bool:
+    """Principle 6: no thesis or no terminal risk -> the report is a DRAFT."""
+    return not (d.thesis and d.terminal_risk)
 
-    panels = [
-        (_panel_revenue, gs[3, 0]), (_panel_margins, gs[3, 1]),
-        (_panel_earnings_quality, gs[4, 0]), (_panel_accruals, gs[4, 1]),
-        (_panel_shares, gs[5, 0]), (_panel_debt_cash, gs[5, 1]),
-    ]
-    for fn, spec in panels:
-        ax = fig.add_subplot(spec)
-        _style_axes(ax)
-        if not d.fy_labels:
-            _panel_note(ax, "No annual fundamentals available")
-            continue
-        fn(ax, fig, d)
 
-    extra = ["FCF = operating cash flow − capex.  Accruals ratio = "
-             "(net income − CFO) / average total assets; sustained readings "
-             "above +10% flag earnings running ahead of cash."]
-    if d.tags_used:
-        shown = ", ".join(f"{k}={v}" for k, v in sorted(d.tags_used.items()))
-        if len(shown) > 210:
-            shown = shown[:207] + "…"
-        extra.append("XBRL tags: " + shown)
+def _watermark(fig):
+    fig.text(0.5, 0.5, "DRAFT", fontsize=118, fontweight="bold",
+             color=P.BASELINE, alpha=0.16, rotation=36,
+             ha="center", va="center", zorder=0)
+
+
+def _finish(fig, d: DashboardData, extra="", out_path=None, dpi=DPI):
     _footer(fig, d, extra)
-
+    if _is_draft(d):
+        _watermark(fig)
     if out_path:
         fig.savefig(out_path, dpi=dpi)
     return fig
+
+
+def _new_page(dpi: int):
+    _rc()
+    fig = Figure(figsize=(FIG_W, A4P_H), dpi=dpi)
+    fig.patch.set_facecolor(P.SURFACE)
+    return fig
+
+
+def _page_header(fig, ax, d: DashboardData, page_title: str):
+    ax.set_axis_off()
+    ax.text(0, 1.10, f"{d.company} — {page_title}", fontsize=17.5,
+            fontweight="bold", color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top")
+    sub = f"{d.ticker} · {d.track.title()} track"
+    if d.fy_labels:
+        sub += f" · fiscal years {d.fy_labels[0]}-{d.fy_labels[-1]}"
+    ax.text(0, 0.56, sub, fontsize=9, color=P.INK_SECONDARY,
+            transform=ax.transAxes, va="top")
+    ax.text(1.0, 1.04, f"Generated {d.generated.isoformat()} · SEC EDGAR XBRL",
+            fontsize=8, color=P.INK_MUTED, transform=ax.transAxes,
+            va="top", ha="right")
+    if d.demo:
+        ax.text(1.0, 0.80, "DEMO DATA — SYNTHETIC COMPANY, NOT A REAL FILER",
+                fontsize=9, fontweight="bold", color=P.DELTA_BAD,
+                transform=ax.transAxes, va="top", ha="right")
+
+
+# ------------------------------------------------ P1 — Decision Dashboard
+
+def _panel_base_quality(ax, d: DashboardData):
+    """The base-quality gate (R3a a1) — ABOVE the rating, red-keyed when
+    challenged: a report challenges its own base before presenting a
+    verdict on it (principle 3)."""
+    import textwrap
+
+    from .anchors import assess_base_quality
+
+    ax.set_axis_off()
+    q = assess_base_quality(d)
+    if q.challenged:
+        ax.add_patch(Rectangle((0.0, 0.02), 1.0, 0.96, transform=ax.transAxes,
+                               facecolor=P.SURFACE, edgecolor=P.NEGATIVE,
+                               linewidth=1.6, zorder=1))
+        ax.text(0.012, 0.88, "BASE QUALITY — CHALLENGED", fontsize=9.6,
+                fontweight="bold", color=P.NEGATIVE,
+                transform=ax.transAxes, va="top", zorder=3)
+        ax.text(0.012, 0.60, textwrap.fill(q.text, width=150), fontsize=8.2,
+                color=P.INK_PRIMARY, transform=ax.transAxes, va="top",
+                linespacing=1.35, zorder=3)
+    else:
+        acc = (fmt_pct(q.accruals_median_3y, signed=True)
+               if q.accruals_median_3y is not None else "n/a")
+        ratio = (f"{q.cfo_ni_ratio:.1f}x"
+                 if q.cfo_ni_ratio is not None else "n/a")
+        ax.text(0, 0.80, "Base quality: unchallenged", fontsize=9.2,
+                fontweight="bold", color=P.INK_PRIMARY,
+                transform=ax.transAxes, va="top")
+        ax.text(0, 0.44, f"3y median accruals {acc} · CFO/NI {ratio} · "
+                         "no financial signature — the Standard-track base "
+                         "carries no known distortion",
+                fontsize=8.2, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+
+
+def _delta_vs_prior(v, prior) -> tuple:
+    """(text, color) for the P1 delta line — a report that doesn't know
+    its predecessor invites anchoring."""
+    if v is None or v.fv_avg is None:
+        return ("Delta vs prior run: n/a — no FV on this run", P.INK_MUTED)
+    if not prior or prior.get("fv_avg") is None:
+        return ("Delta vs prior run: first recorded run — no predecessor "
+                "on the ledger", P.INK_MUTED)
+    prev = float(prior["fv_avg"])
+    when = str(prior.get("recorded_at", ""))[:10] or "unknown date"
+    if prev <= 0:
+        return (f"Delta vs prior run: prior FV_avg non-positive on {when}",
+                P.INK_MUTED)
+    delta = v.fv_avg / prev - 1.0
+    return ((f"FV_avg \\${v.fv_avg:,.2f} vs \\${prev:,.2f} on {when} · "
+             f"Δ{delta:+.1%}"),
+            P.INK_SECONDARY if abs(delta) < 0.10 else P.DELTA_BAD)
+
+
+def _panel_rating(ax, d: DashboardData, v, prior):
+    """P1 rating strip — tiles, coherence gate and the delta-vs-prior
+    line, all drawn inside the axes (nothing bleeds into the next row)."""
+    import textwrap
+
+    ax.set_axis_off()
+    if v is None:
+        ax.text(0, 0.92, "No valuation attached", fontsize=15,
+                fontweight="bold", color=P.INK_MUTED,
+                transform=ax.transAxes, va="top")
+        ax.text(0, 0.52, "Run Intrinsic value (Valuation screen or --value) "
+                         "to print the rating, FV band, MoS and ladder.",
+                fontsize=8.6, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+        return
+    gate_ok = v.coherence.startswith("ok")
+    tiles = [("Rating", v.rating or "—",
+              "coherent with MoS" if gate_ok else v.coherence, gate_ok)]
+    if v.fv_avg is not None:
+        tiles.append(("FV average", f"${v.fv_avg:,.2f}",
+                      "average(Track A, Track B)", True))
+    if v.mos is not None:
+        tiles.append(("MoS at P₀", fmt_pct(v.mos, signed=True),
+                      "base", v.mos >= 0))
+    if v.stressed_mos is not None:
+        tiles.append(("Stressed MoS", fmt_pct(v.stressed_mos, signed=True),
+                      v.shock_label.split("(")[0].strip(),
+                      v.stressed_mos >= 0))
+    n = len(tiles)
+    for i, (label, value, delta, good) in enumerate(tiles):
+        x0 = i / n
+        ax.text(x0, 0.97, label, fontsize=8.2, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top")
+        ax.text(x0, 0.83, value, fontsize=15.5, fontweight="bold",
+                color=P.INK_PRIMARY, transform=ax.transAxes, va="top")
+        if delta:
+            ax.text(x0, 0.56, delta, fontsize=8.2,
+                    color=P.DELTA_GOOD if good else P.DELTA_BAD,
+                    transform=ax.transAxes, va="top")
+        if i:
+            ax.axvline(x0 - 0.018, ymin=0.55, ymax=0.98, color=P.GRIDLINE,
+                       linewidth=0.8)
+    gate_bad = v.coherence.startswith("CHECK")
+    gate = textwrap.fill(f"Gate: {v.coherence} — {v.coherence_detail}",
+                         width=165)
+    ax.text(0, 0.36, gate, fontsize=8.0, linespacing=1.3,
+            color=P.DELTA_BAD if gate_bad else P.INK_SECONDARY,
+            fontweight="bold" if gate_bad else "normal",
+            transform=ax.transAxes, va="top")
+    text, color = _delta_vs_prior(v, prior)
+    ax.text(0, 0.02, text, fontsize=8.0, color=color,
+            transform=ax.transAxes, va="bottom")
+
+
+def _panel_ladder(ax, fig, res):
+    """P1: the entry-price ladder as a drawn curve — what buying at each
+    price earns under the Base-case fade (FIX-16c arithmetic)."""
+    _panel_title(ax, "Entry-price ladder (Base case)",
+                 "implied annual return buying at each price · "
+                 "vertical line = P₀ · dashed = hurdle (ASSUMPTION)")
+    ladder = [(p, r) for p, r in (getattr(res, "irr_ladder", None) or [])
+              if r is not None]
+    if not ladder:
+        _panel_note(ax, "ladder unavailable — needs a Base-case DCF with "
+                        "a positive base")
+        return
+    xs, ys = [p for p, _ in ladder], [r for _, r in ladder]
+    ax.set_xlim(min(xs) * 0.98, max(xs) * 1.02)
+    lo, hi = min(ys), max(ys)
+    span = (hi - lo) or 0.02
+    ax.set_ylim(lo - 0.30 * span, hi + 0.35 * span)
+    _pct_axis(ax, decimals=1)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax.plot(xs, ys, color=P.SERIES[0], linewidth=1.7,
+            solid_capstyle="round", zorder=3)
+    ax.axvline(res.price, color=P.INK_SECONDARY, linewidth=1.2, zorder=2)
+    if res.implied_return_now is not None:
+        ax.plot(res.price, res.implied_return_now, "o", color=P.SERIES[0],
+                markersize=6.4, markeredgecolor=P.SURFACE,
+                markeredgewidth=1.3, zorder=4)
+        _cap_label(ax, res.price, res.implied_return_now,
+                   f"P₀ {fmt_pct(res.implied_return_now)}/yr", above=True,
+                   fig=fig)
+    if res.hurdle_rate is not None:
+        ax.axhline(res.hurdle_rate, color=P.INK_MUTED, linewidth=0.8,
+                   linestyle=(0, (4, 3)), zorder=2)
+        _zone_label(ax, min(xs) * 0.985,
+                    res.hurdle_rate + _px_to_y(ax, fig, 2),
+                    f"hurdle {fmt_pct(res.hurdle_rate, decimals=0)}")
+    if res.hurdle_price is not None:
+        _cap_label(ax, res.hurdle_price, res.hurdle_rate or 0.0,
+                   f"buys at ≤ ${res.hurdle_price:,.2f}", above=False,
+                   fig=fig, size=6.8)
+
+
+def _panel_thesis(ax, d: DashboardData):
+    """P1: thesis + terminal risk verbatim — or the red-lined DRAFT box
+    that makes the absence impossible to ignore (principle 6)."""
+    import textwrap
+
+    ax.set_axis_off()
+    if _is_draft(d):
+        ax.add_patch(Rectangle((0.0, 0.04), 1.0, 0.92, transform=ax.transAxes,
+                               facecolor=P.SURFACE, edgecolor=P.NEGATIVE,
+                               linewidth=1.8, zorder=1))
+        missing = [name for name, val in (("thesis", d.thesis),
+                                          ("terminal risk", d.terminal_risk))
+                   if not val]
+        ax.text(0.012, 0.82, "DRAFT — analyst inputs missing: "
+                + " and ".join(missing), fontsize=10,
+                fontweight="bold", color=P.NEGATIVE,
+                transform=ax.transAxes, va="top", zorder=3)
+        ax.text(0.012, 0.46,
+                "The thesis (§2.4) and terminal risk (§2.3) anchor the "
+                "Phase-5 rating. Until both are entered (--thesis / "
+                "--terminal-risk or the Valuation screen) every page of "
+                "this report carries the DRAFT watermark.",
+                fontsize=8.2, color=P.INK_PRIMARY, transform=ax.transAxes,
+                va="top", linespacing=1.35, zorder=3)
+        y = 0.46 - 0.30
+    else:
+        y = 0.90
+    if d.thesis:
+        text = textwrap.fill("Thesis (§2.4): " + d.thesis, width=150)
+        ax.text(0.012, y, text, fontsize=8.2, color=P.INK_SECONDARY,
+                transform=ax.transAxes, va="top", linespacing=1.35, zorder=3)
+        y -= 0.17 * (text.count("\n") + 1) + 0.06
+    if d.terminal_risk:
+        text = textwrap.fill("Terminal risk (§2.3, anchors the rating): "
+                             + d.terminal_risk, width=150)
+        ax.text(0.012, y, text, fontsize=8.2, color=P.DELTA_BAD,
+                transform=ax.transAxes, va="top", linespacing=1.35, zorder=3)
+
+
+def _panel_no_verdict(ax, what: str):
+    ax.set_axis_off()
+    _panel_note(ax, f"{what} unavailable — no valuation attached to this run")
+
+
+def render_decision(d: DashboardData, res=None, v=None,
+                    open_triggers: Optional[Sequence[str]] = None,
+                    prior: Optional[dict] = None,
+                    out_path: Optional[str] = None,
+                    dpi: int = DPI) -> Figure:
+    """P1 — everything an IC needs on one page (design R3b)."""
+    from .runid import provider_set, run_identity
+
+    fig = _new_page(dpi)
+    gs = fig.add_gridspec(
+        7, 1, height_ratios=[0.62, 0.72, 1.35, 2.30, 1.75, 1.30, 2.40],
+        left=0.055, right=0.965, top=0.975, bottom=0.065, hspace=0.55,
+    )
+    ax = fig.add_subplot(gs[0])
+    _page_header(fig, ax, d, "decision dashboard")
+
+    _panel_base_quality(fig.add_subplot(gs[1]), d)
+    _panel_rating(fig.add_subplot(gs[2]), d, v, prior)
+
+    ax_field = fig.add_subplot(gs[3])
+    _style_axes(ax_field, y_grid=False)
+    if res is not None and any(c.fv_ps is not None for c in res.cases):
+        _field_panel(ax_field, fig, res)
+    else:
+        _panel_no_verdict(ax_field, "Intrinsic value vs price")
+
+    ax_ladder = fig.add_subplot(gs[4])
+    _style_axes(ax_ladder)
+    if res is not None:
+        _panel_ladder(ax_ladder, fig, res)
+    else:
+        _panel_no_verdict(ax_ladder, "Entry-price ladder")
+
+    _panel_thesis(fig.add_subplot(gs[5]), d)
+
+    ax_trig = fig.add_subplot(gs[6])
+    if v is not None:
+        _panel_triggers(ax_trig, d, v, open_triggers)
+    else:
+        ax_trig.set_axis_off()
+        _panel_title(ax_trig, "Triggers & rating gate (§5.3 · §5.7)", "")
+        entries = list(open_triggers or [])
+        if entries:
+            y = 0.80
+            for t in entries[:14]:
+                ax_trig.text(0, y, "•  " + str(t), fontsize=7.6,
+                             color=P.INK_SECONDARY,
+                             transform=ax_trig.transAxes, va="top")
+                y -= 0.065
+        else:
+            _panel_note(ax_trig, "No open triggers — add via the watchlist "
+                                 "or --ledger")
+
+    rid, ihash = run_identity(d, res)
+    extra = [f"Run {rid} · inputs {ihash} · providers: {provider_set(d)}",
+             "FV_avg = average(Track A, Track B); the coherence gate mirrors "
+             "the workbook (Control!B67). Sizing (§5.6) stays with the "
+             "analyst."]
+    return _finish(fig, d, extra, out_path, dpi)
+
+
+# ------------------------------------------ P2 — Expectations & Valuation
+
+def _panel_bridge(ax, fig, d: DashboardData, res):
+    """The expectations bridge — the report's argument on one horizontal
+    growth scale: what the market pays for, what the anchors support, and
+    what the cases assume."""
+    from .anchors import build_growth_anchors
+
+    _panel_title(ax, "Expectations bridge",
+                 "market-implied g (reverse DCF) vs the three anchors vs "
+                 "the case g₀ seeds · dashed = GDP cap")
+    a = build_growth_anchors(d)
+    rows = []  # (y, label) — bottom-up
+    marks = []  # (g, text, color, row_y)
+    if res is not None and res.implied_g is not None:
+        over = res.implied_g > config.GDP_CAP
+        marks.append((res.implied_g,
+                      f"market implies {fmt_pct(res.implied_g)}",
+                      P.NEGATIVE if over else P.INK_PRIMARY, 0.0))
+        rows.append((0.0, "Market pays for"))
+    anchor_marks = [
+        (a.consensus, "consensus"
+         + (f" (n={a.n_analysts})" if a.n_analysts else ""), P.SERIES[1]),
+        (a.hist_cagr, "5y revenue CAGR", P.SERIES[3]),
+        (a.fundamental, "ROIC × reinvestment", P.SERIES[5]),
+    ]
+    if any(g is not None for g, _, _ in anchor_marks):
+        rows.append((1.0, "Anchors (§4)"))
+        for g, label, color in anchor_marks:
+            if g is not None:
+                marks.append((g, f"{label} {fmt_pct(g)}", color, 1.0))
+    inputs = getattr(res, "_inputs", None) if res is not None else None
+    if inputs is not None:
+        seeds = [(name, c.g0) for name, c in inputs.cases.items()
+                 if c.g0 is not None]
+        if seeds:
+            rows.append((2.0, "Case seeds g₀"))
+            for name, g0 in seeds:
+                marks.append((g0, f"{name} {fmt_pct(g0)}", P.SERIES[0], 2.0))
+    if not marks:
+        _panel_note(ax, "no growth marks available — needs anchors or a "
+                        "computed valuation")
+        return
+    gs_ = [g for g, _, _, _ in marks] + [config.GDP_CAP, 0.0]
+    lo, hi = min(gs_), max(gs_)
+    pad = (hi - lo) * 0.18 or 0.01
+    ax.set_xlim(lo - pad, hi + pad)
+    ax.set_ylim(-0.7, 2.7)
+    ax.set_yticks([y for y, _ in rows])
+    ax.set_yticklabels([label for _, label in rows], fontsize=8.2)
+    ax.grid(axis="x", color=P.GRIDLINE, linewidth=0.8)
+    ax.grid(axis="y", visible=False)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=7))
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda v, _: f"{v * 100:.0f}%"))
+    ax.axvline(config.GDP_CAP, color=P.INK_MUTED, linewidth=0.9,
+               linestyle=(0, (4, 3)), zorder=2)
+    _zone_label(ax, config.GDP_CAP, 2.52,
+                f"GDP cap {fmt_pct(config.GDP_CAP)}")
+    for k, (g, text, color, row_y) in enumerate(marks):
+        ax.plot(g, row_y, "o", color=color, markersize=7.0,
+                markeredgecolor=P.SURFACE, markeredgewidth=1.3, zorder=4)
+        above = (k % 2 == 0)
+        t = ax.text(g, row_y + (0.24 if above else -0.24), text,
+                    fontsize=7.4, color=color, ha="center",
+                    va="bottom" if above else "top", zorder=5)
+        t.set_path_effects(
+            [path_effects.withStroke(linewidth=2.2, foreground=P.SURFACE)])
+
+
+def _panel_exit_check(ax, res, v):
+    """P2: the 5y exit cross-check, `trimmed (raw)` — with the mandatory
+    a2 divergence note when either frame sits >20% from FV_avg."""
+    ax.set_axis_off()
+    _panel_title(ax, "5y exit cross-check (companion — never in FV_avg)",
+                 "Base-fade EBIT₅ × historical EV/EBIT − bridge, "
+                 "discounted at the valuation rate")
+    ec = getattr(res, "exit_check", None) if res is not None else None
+    if not ec:
+        _panel_note(ax, "unavailable — needs reported EBIT and ≥3 years "
+                        "of FY-end EV/EBIT")
+        return
+    mt, mr = ec.get("multiple_trimmed"), ec["multiple"]
+    ft, fr = ec.get("fv_today_trimmed"), ec.get("fv_today")
+    rt, rr = ec.get("return_5y_trimmed"), ec.get("return_5y")
+    def _ps(x):
+        return f"\\${x:,.2f}/sh" if x is not None else "n/a"
+    line = (f"EV/EBIT {mt:.1f}x trimmed ({mr:.1f}x raw median) ⇒ FV today "
+            f"{_ps(ft)} trimmed ({_ps(fr)} raw)"
+            if mt is not None else
+            f"EV/EBIT {mr:.1f}x raw median ⇒ FV today {_ps(fr)}")
+    if rt is not None or rr is not None:
+        line += (f" · ≈ {fmt_pct(rt) if rt is not None else 'n/a'}/yr trimmed"
+                 f" ({fmt_pct(rr) if rr is not None else 'n/a'} raw) "
+                 "buying at P₀ (price-only)")
+    ax.text(0, 0.52, line, fontsize=8.4, color=P.INK_PRIMARY,
+            transform=ax.transAxes, va="top")
+    fv_avg = v.fv_avg if v is not None else None
+    if fv_avg:
+        worst = None
+        for leg in (ft, fr):
+            if leg is not None:
+                dev = leg / fv_avg - 1.0
+                if worst is None or abs(dev) > abs(worst):
+                    worst = dev
+        if worst is not None and abs(worst) > 0.20:
+            ax.text(0, 0.16,
+                    f"Divergence: the exit frame sits {worst:+.0%} vs "
+                    f"FV_avg — the multiple regime and the DCF disagree; "
+                    "reconcile before sizing (a2 mandatory note).",
+                    fontsize=8.4, fontweight="bold", color=P.DELTA_BAD,
+                    transform=ax.transAxes, va="top")
+
+
+def render_expectations(d: DashboardData, res=None, v=None,
+                        out_path: Optional[str] = None,
+                        dpi: int = DPI) -> Figure:
+    """P2 — the expectations bridge IS the argument; evidence follows."""
+    fig = _new_page(dpi)
+    if res is None:
+        gs = fig.add_gridspec(2, 1, height_ratios=[0.9, 9.0],
+                              left=0.055, right=0.965, top=0.975,
+                              bottom=0.065)
+        ax = fig.add_subplot(gs[0])
+        _page_header(fig, ax, d, "expectations & valuation")
+        ax2 = fig.add_subplot(gs[1])
+        ax2.set_axis_off()
+        _panel_note(ax2, "No valuation attached — the expectations bridge, "
+                         "case table, sensitivity and stress need a computed "
+                         "valuation.\nRun Intrinsic value (Valuation screen "
+                         "or --value).")
+        return _finish(fig, d, "", out_path, dpi)
+    gs = fig.add_gridspec(
+        6, 2, height_ratios=[0.90, 1.95, 1.50, 2.30, 0.85, 1.10],
+        left=0.055, right=0.965, top=0.975, bottom=0.065,
+        hspace=0.58, wspace=0.16,
+    )
+    ax = fig.add_subplot(gs[0, :])
+    _page_header(fig, ax, d, "expectations & valuation")
+    sub = f"{res.method_label} · {res.basis_label}"
+    if res.discount_rate is not None:
+        sub += (f" · {'WACC' if res.method == 'dcf' else 'r_e'} "
+                f"{fmt_pct(res.discount_rate)}")
+    ax.text(0, 0.10, sub, fontsize=9, color=P.INK_SECONDARY,
+            transform=ax.transAxes, va="top")
+
+    ax_bridge = fig.add_subplot(gs[1, :])
+    _style_axes(ax_bridge, y_grid=False)
+    _panel_bridge(ax_bridge, fig, d, res)
+
+    _valuation_table(fig.add_subplot(gs[2, :]), res)
+
+    ax_sens = fig.add_subplot(gs[3, 0])
+    if v is not None:
+        _panel_sensitivity(ax_sens, res, v)
+    else:
+        ax_sens.set_axis_off()
+        _panel_no_verdict(ax_sens, "Sensitivity")
+    ax_stress = fig.add_subplot(gs[3, 1])
+    _style_axes(ax_stress)
+    if v is not None:
+        _panel_stress(ax_stress, fig, res, v)
+    else:
+        _panel_no_verdict(ax_stress, "Stress test")
+
+    _panel_exit_check(fig.add_subplot(gs[4, :]), res, v)
+
+    ax_assume = fig.add_subplot(gs[5, :])
+    if v is not None:
+        _panel_assumptions(ax_assume, d, res, v)
+    else:
+        ax_assume.set_axis_off()
+        _panel_no_verdict(ax_assume, "Assumptions & bridge")
+
+    extra = []
+    if res.rate_build:
+        extra.append("Rate build (§4.0): " + res.rate_build)
+    if res.implied_g is not None:
+        extra.append(
+            f"Reverse DCF (§4.D): market EV {fmt_money(res.market_ev)} at "
+            f"{fmt_pct(res.discount_rate)} implies g ≈ "
+            f"{fmt_pct(res.implied_g)} on the same base — drawn on the "
+            "bridge above.")
+    extra.append(
+        "Equity bridge: net debt + minority interest + preferred − "
+        "non-operating investments; MI/preferred from XBRL (0 when "
+        "untagged).")
+    return _finish(fig, d, extra, out_path, dpi)
+
+
+# -------------------------------------------- P3 — Business & Segments
+
+def _segment_revenue_lines(d: DashboardData):
+    """Revenue lines on the primary axis with their annual (year, value)
+    points — the P3 stack's data. [] when no dimensional data."""
+    seg = getattr(d, "segments", None)
+    if seg is None or not seg.lines:
+        return []
+    axis = seg.axes()[0]
+    out = []
+    for ln in seg.lines:
+        if ln.axis != axis or ln.group != "Revenue":
+            continue
+        pts = {e.isoformat()[:4]: v for s, e, v in ln.entries
+               if 330 <= (e - s).days <= 400}
+        if pts:
+            out.append((ln.member, pts, ln))
+    return out
+
+
+def _panel_segment_stack(ax, fig, d: DashboardData):
+    seg = d.segments
+    axis = seg.axes()[0]
+    _panel_title(ax, f"Segment revenue — by {axis}",
+                 "stacked as filed (dimensional XBRL) · the report's "
+                 "revenue chart")
+    lines = _segment_revenue_lines(d)
+    if not lines:
+        _panel_note(ax, "no annual segment revenue spans parsed")
+        return
+    years = sorted({y for _, pts, _ in lines for y in pts})[-8:]
+    # >6 members: top-5 by latest value + an honest 'All other' sum
+    lines = sorted(lines, key=lambda t: -(t[2].latest() or 0.0))
+    shown, other = lines[:5], lines[5:]
+    series = [(m, [pts.get(y) for y in years]) for m, pts, _ in shown]
+    if other:
+        series.append((f"All other ({len(other)})",
+                       [sum(p.get(y) or 0.0 for _, p, _ in other) or None
+                        for y in years]))
+    totals = [sum(v or 0.0 for _, vals in series for v in [vals[i]])
+              for i in range(len(years))]
+    ax.set_xlim(-0.5, len(years) - 0.5)
+    ax.set_ylim(0, (max(totals) or 1.0) * 1.22)
+    ax.set_xticks(range(len(years)))
+    ax.set_xticklabels([f"FY{y}" for y in years])
+    _money_axis(ax)
+    bottoms = [0.0] * len(years)
+    width = 0.62
+    for k, (name, vals) in enumerate(series):
+        color = P.SERIES[k % len(P.SERIES)]
+        for i, val in enumerate(vals):
+            if val is None:
+                continue
+            ax.bar(i, val, width=width, bottom=bottoms[i], color=color,
+                   edgecolor=P.SURFACE, linewidth=0.6, zorder=3)
+            bottoms[i] += val
+    for i, tot in enumerate(totals):
+        if tot:
+            _cap_label(ax, i, bottoms[i], fmt_money(tot), above=True,
+                       fig=fig, size=6.6)
+    _legend(ax, [_series_swatch(P.SERIES[k % len(P.SERIES)])
+                 for k in range(len(series))], [n for n, _ in series])
+
+
+def _panel_segment_mix(ax, fig, d: DashboardData):
+    _panel_title(ax, "Mix shift", "share of segment-sum revenue per year")
+    lines = _segment_revenue_lines(d)
+    if not lines:
+        _panel_note(ax, "no annual segment revenue spans parsed")
+        return
+    years = sorted({y for _, pts, _ in lines for y in pts})[-8:]
+    totals = {y: sum(pts.get(y) or 0.0 for _, pts, _ in lines)
+              for y in years}
+    lines = sorted(lines, key=lambda t: -(t[2].latest() or 0.0))[:6]
+    ax.set_xlim(-0.5, len(years) - 0.5)
+    shares_flat = []
+    series = []
+    for m, pts, _ in lines:
+        shares = [(pts.get(y) / totals[y])
+                  if pts.get(y) is not None and totals[y] else None
+                  for y in years]
+        series.append((m, shares))
+        shares_flat += [s for s in shares if s is not None]
+    ax.set_ylim(0, (max(shares_flat) if shares_flat else 1.0) * 1.30)
+    ax.set_xticks(range(len(years)))
+    ax.set_xticklabels([f"FY{y}" for y in years])
+    _pct_axis(ax)
+    for k, (name, shares) in enumerate(series):
+        xs = [i for i, s in enumerate(shares) if s is not None]
+        ys = [s for s in shares if s is not None]
+        if not xs:
+            continue
+        color = P.SERIES[k % len(P.SERIES)]
+        ax.plot(xs, ys, color=color, linewidth=1.5,
+                solid_capstyle="round", zorder=3)
+        _cap_label(ax, xs[-1], ys[-1], f"{name} {fmt_pct(ys[-1])}",
+                   above=(k % 2 == 0), fig=fig, size=6.4, color=color)
+
+
+def _panel_segment_econ(ax, fig, d: DashboardData):
+    """Per-segment latest YoY growth; direct-contribution margin labeled
+    where the filer discloses segment operating income."""
+    seg = d.segments
+    axis = seg.axes()[0]
+    _panel_title(ax, "Per-segment growth (latest FY)",
+                 "bar = revenue YoY · label adds direct margin where filed")
+    lines = _segment_revenue_lines(d)
+    if not lines:
+        _panel_note(ax, "no annual segment revenue spans parsed")
+        return
+    op_by_member = {}
+    for ln in seg.lines:
+        if ln.axis == axis and ln.group == "Operating income":
+            pts = {e.isoformat()[:4]: v for s, e, v in ln.entries
+                   if 330 <= (e - s).days <= 400}
+            op_by_member[ln.member] = pts
+    rows = []
+    for m, pts, _ in sorted(lines, key=lambda t: -(t[2].latest() or 0.0))[:6]:
+        ys = sorted(pts)
+        if len(ys) < 2 or not pts[ys[-2]]:
+            continue
+        growth = pts[ys[-1]] / pts[ys[-2]] - 1.0
+        margin = None
+        op = op_by_member.get(m, {}).get(ys[-1])
+        if op is not None and pts[ys[-1]]:
+            margin = op / pts[ys[-1]]
+        rows.append((m, growth, margin))
+    if not rows:
+        _panel_note(ax, "fewer than two annual spans per member — growth "
+                        "not computable")
+        return
+    ax.set_ylim(-0.6, len(rows) - 0.4)
+    vals = [g for _, g, _ in rows]
+    lo, hi = min(vals + [0.0]), max(vals + [0.0])
+    pad = (hi - lo) * 0.35 or 0.05
+    ax.set_xlim(lo - pad, hi + pad * 2.2)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([m for m, _, _ in rows], fontsize=7.8)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda v, _: f"{v * 100:+.0f}%"))
+    ax.grid(axis="x", color=P.GRIDLINE, linewidth=0.8)
+    ax.grid(axis="y", visible=False)
+    ax.axvline(0, color=P.BASELINE, linewidth=0.9, zorder=2)
+    for i, (m, g, margin) in enumerate(rows):
+        color = P.SERIES[0] if g >= 0 else P.NEGATIVE
+        ax.barh(i, g, height=0.52, color=color, zorder=3)
+        label = fmt_pct(g, signed=True)
+        if margin is not None:
+            label += f" · margin {fmt_pct(margin)}"
+        ax.text(g + (pad * 0.08 if g >= 0 else -pad * 0.08), i, " " + label,
+                fontsize=7.2, color=P.INK_PRIMARY, va="center",
+                ha="left" if g >= 0 else "right", zorder=4)
+
+
+def _panel_segment_status(ax, d: DashboardData):
+    """The tie row + recast/break count — full logs live in the Appendix."""
+    import textwrap
+
+    ax.set_axis_off()
+    seg = d.segments
+    _panel_title(ax, "Segment tie & provenance",
+                 getattr(seg, "source", "") or "latest filings")
+    lines = _segment_revenue_lines(d)
+    entries = []
+    cons = {e.isoformat()[:4]: v for e, v in
+            zip(getattr(getattr(d, "fundamentals", None), "fy_ends", []) or [],
+                (getattr(getattr(d, "fundamentals", None), "series", {})
+                 or {}).get("revenue", []) or []) if v is not None}
+    if lines and cons:
+        years = sorted({y for _, pts, _ in lines for y in pts} & set(cons))
+        if years:
+            y = years[-1]
+            sums = sum(pts.get(y) or 0.0 for _, pts, _ in lines)
+            gap = sums / cons[y] - 1.0 if cons[y] else None
+            if gap is not None:
+                ok = abs(gap) <= config.SEGMENT_TIE_TOL
+                entries.append((
+                    f"Tie FY{y}: Σ segments {_tex(fmt_money(sums))} vs "
+                    f"consolidated {_tex(fmt_money(cons[y]))} — gap "
+                    f"{fmt_pct(gap, signed=True)} "
+                    + ("(within tolerance)" if ok else "(BREACH — check "
+                       "eliminations/other)"),
+                    P.INK_PRIMARY if ok else P.DELTA_BAD))
+    recasts = list(getattr(seg, "recast_log", None) or [])
+    breaks = list(getattr(seg, "breaks", None) or [])
+    if recasts:
+        entries.append((f"{len(recasts)} restated segment value(s) across "
+                        "filings — full log in the Appendix", P.DELTA_BAD))
+    if breaks:
+        entries.append((f"{len(breaks)} membership break(s) — a recast is "
+                        "never auto-spliced; full log in the Appendix",
+                        P.DELTA_BAD))
+    if getattr(seg, "status", ""):
+        entries.append((str(seg.status), P.INK_MUTED))
+    if not entries:
+        entries.append(("segment lines parsed clean — no ties, recasts or "
+                        "breaks to report", P.INK_MUTED))
+    y = 0.74
+    for text, color in entries:
+        wrapped = textwrap.fill(text, width=76)
+        ax.text(0, y, wrapped, fontsize=7.6, color=color,
+                transform=ax.transAxes, va="top", linespacing=1.3)
+        y -= 0.115 * (wrapped.count("\n") + 1) + 0.04
+
+
+def render_business(d: DashboardData, out_path: Optional[str] = None,
+                    dpi: int = DPI) -> Figure:
+    """P3 — segments (multi-segment filers) + the track's unit economics;
+    the ONLY place a revenue chart appears (design R3b)."""
+    fig = _new_page(dpi)
+    seg = getattr(d, "segments", None)
+    multi = seg is not None and seg.n_segments >= 2
+    panel_fns = list(_UNIT_PANELS.get(d.track, _UNIT_PANELS["standard"]))
+    if multi:
+        # the segment band replaces the note panel; dedupe accordingly
+        panel_fns = [f for f in panel_fns if f is not _panel_segment_note]
+        while len(panel_fns) < 4:
+            pad = next(f for f in (_panel_rev_yoy, _panel_ccc,
+                                   _panel_wc_cycle, _panel_roic)
+                       if f not in panel_fns)
+            panel_fns.append(pad)
+        gs = fig.add_gridspec(
+            5, 2, height_ratios=[1.05, 1.95, 1.95, 1.95, 1.95],
+            left=0.055, right=0.965, top=0.975, bottom=0.065,
+            hspace=0.55, wspace=0.16,
+        )
+        band = [(_panel_segment_stack, gs[1, 0]),
+                (_panel_segment_mix, gs[1, 1]),
+                (_panel_segment_econ, gs[2, 0]),
+                (_panel_segment_status, gs[2, 1])]
+        unit_slots = (gs[3, 0], gs[3, 1], gs[4, 0], gs[4, 1])
+    else:
+        gs = fig.add_gridspec(
+            4, 2, height_ratios=[1.05, 1.95, 1.95, 1.95],
+            left=0.055, right=0.965, top=0.975, bottom=0.065,
+            hspace=0.55, wspace=0.16,
+        )
+        band = [(_panel_revenue, gs[1, 0]), (_panel_rev_yoy, gs[1, 1])]
+        panel_fns = [f for f in panel_fns
+                     if f not in (_panel_rev_yoy, _panel_segment_note)]
+        while len(panel_fns) < 4:
+            pad = next(f for f in (_panel_marginal_unit, _panel_ccc,
+                                   _panel_wc_cycle, _panel_roic, _panel_roe)
+                       if f not in panel_fns)
+            panel_fns.append(pad)
+        unit_slots = (gs[2, 0], gs[2, 1], gs[3, 0], gs[3, 1])
+
+    ax = fig.add_subplot(gs[0, :])
+    _page_header(fig, ax, d, "business & segments")
+    _unit_kpis(ax, d)
+
+    seg_fns = (_panel_segment_stack, _panel_segment_mix, _panel_segment_econ)
+    for fn, spec in band:
+        ax_p = fig.add_subplot(spec)
+        if fn is _panel_segment_status:
+            fn(ax_p, d)
+            continue
+        _style_axes(ax_p)
+        if not d.fy_labels and fn not in seg_fns:
+            _panel_note(ax_p, "No annual fundamentals available")
+            continue
+        fn(ax_p, fig, d)
+    for fn, spec in zip(panel_fns, unit_slots):
+        ax_p = fig.add_subplot(spec)
+        _style_axes(ax_p)
+        if not d.fy_labels:
+            _panel_note(ax_p, "No annual fundamentals available")
+            continue
+        fn(ax_p, fig, d)
+
+    return _finish(
+        fig, d,
+        "Working-capital days on average balances (§2.2). Segment history "
+        "depth = as reported in the fetched filings; recast boundaries are "
+        "never auto-spliced (Appendix carries the full logs).",
+        out_path, dpi)
+
+
+# ------------------------------------------- P4 — Quality & Forensics
+
+def render_quality(d: DashboardData, out_path: Optional[str] = None,
+                   dpi: int = DPI) -> Figure:
+    """P4 — the forensic scorecard; each chart exactly once."""
+    fig = _new_page(dpi)
+    gs = fig.add_gridspec(
+        5, 2, height_ratios=[1.15, 1.9, 1.9, 1.9, 1.9],
+        left=0.055, right=0.965, top=0.975, bottom=0.065,
+        hspace=0.55, wspace=0.16,
+    )
+    ax = fig.add_subplot(gs[0, :])
+    _page_header(fig, ax, d, "quality & forensics")
+    _health_kpis(ax, d)
+
+    slot_a = _panel_solvency if d.is_financial_sector else _panel_altman
+    slot_b = _panel_credit_reserves if d.track == "bank" else _panel_rnd_audit
+    panels = [
+        (_panel_sloan, gs[1, 0]), (_panel_piotroski, gs[1, 1]),
+        (_panel_accruals, gs[2, 0]), (slot_a, gs[2, 1]),
+        (_panel_sbc, gs[3, 0]), (slot_b, gs[3, 1]),
+        (_panel_fcf_ex_sbc, gs[4, 0]), (_panel_earnings_quality, gs[4, 1]),
+    ]
+    for fn, spec in panels:
+        ax_p = fig.add_subplot(spec)
+        _style_axes(ax_p)
+        if not d.fy_labels:
+            _panel_note(ax_p, "No annual fundamentals available")
+            continue
+        fn(ax_p, fig, d)
+
+    return _finish(
+        fig, d,
+        ["Accruals ratio = (net income − CFO) / average total assets; "
+         "sustained readings above +10% flag earnings running ahead of "
+         "cash. Adjustment Burden (§3.1) needs non-GAAP figures from the "
+         "earnings release — analyst input.",
+         "The full warnings register (untruncated) is in the Appendix."],
+        out_path, dpi)
+
+
+# --------------------------------------- P5 — Capital & Balance Sheet
+
+def _panel_buybacks_sbc(ax, fig, d: DashboardData):
+    """Gross buybacks vs SBC per FY — the net shareholder return on comp."""
+    from .anchors import _series
+
+    _panel_title(ax, "Buybacks vs SBC",
+                 "gross repurchases vs stock comp — how much of the "
+                 "buyback just mops up issuance")
+    bb = _series(d, "buybacks")
+    n = len(d.fy_labels)
+    bb = ([None] * (n - len(bb)) + list(bb))[-n:] if bb else [None] * n
+    sbc = list(d.sbc or [None] * n)
+    keep = [(s, name, color) for s, name, color in
+            ((bb, "Buybacks (gross)", P.SERIES[0]),
+             (sbc, "SBC", P.SERIES[1]))
+            if any(v is not None for v in s)]
+    flat = [abs(v) for s, _, _ in keep for v in s if v is not None]
+    if not flat:
+        _panel_note(ax, "Buybacks / SBC not reported in XBRL")
+        return
+    absd = [[abs(v) if v is not None else None for v in s]
+            for s, _, _ in keep]
+    _category_panel_setup(ax, fig, d.fy_labels, flat)
+    _money_axis(ax)
+    _draw_bar_series(ax, fig, absd, [c for _, _, c in keep])
+    _legend(ax, [_series_swatch(c) for _, _, c in keep],
+            [nm for _, nm, _ in keep])
+    b_last = next((v for v in reversed(bb) if v is not None), None)
+    s_last = next((v for v in reversed(sbc) if v is not None), None)
+    if b_last is not None and s_last is not None and s_last:
+        ax.set_title(f"latest: buybacks cover {abs(b_last) / s_last:,.1f}x "
+                     "the SBC issued", loc="right", fontsize=7.0,
+                     color=P.INK_MUTED, pad=2)
+
+
+def _panel_capex_intensity(ax, fig, d: DashboardData):
+    """Capex/revenue vs its 5y median — the FIX-14b peak/trough flag
+    drawn, not just noted."""
+    from .anchors import CAPEX_DEVIATION, capex_intensity, _series, _at
+
+    _panel_title(ax, "Capex intensity",
+                 "capex / revenue · dashed = 5y median · flag when the "
+                 f"latest sits ±{CAPEX_DEVIATION:.0%} off it (FIX-14b)")
+    capex_s, rev_s = _series(d, "capex"), _series(d, "revenue")
+    n = len(d.fy_labels)
+    vals = []
+    for i in range(-n, 0):
+        c, r = _at(capex_s, i), _at(rev_s, i)
+        vals.append(c / r if c is not None and r else None)
+    pts = [v for v in vals if v is not None]
+    if not pts:
+        _panel_note(ax, "Capex / revenue not reported in XBRL")
+        return
+    pair = capex_intensity(d)
+    _lines_panel_setup(ax, pts + ([pair[0]] if pair else []),
+                       n, d.fy_labels)
+    _pct_axis(ax, decimals=1)
+    xs = [i for i, v in enumerate(vals) if v is not None]
+    ys = [v for v in vals if v is not None]
+    ax.plot(xs, ys, color=P.SERIES[0], linewidth=1.6,
+            solid_capstyle="round", zorder=3)
+    _cap_label(ax, xs[-1], ys[-1], fmt_pct(ys[-1]), above=True, fig=fig)
+    if pair:
+        med, latest = pair
+        ax.axhline(med, color=P.INK_MUTED, linewidth=0.8,
+                   linestyle=(0, (4, 3)), zorder=2)
+        _zone_label(ax, -0.48, med + _px_to_y(ax, fig, 2),
+                    f"5y median {fmt_pct(med)}")
+        if med and abs(latest / med - 1.0) > CAPEX_DEVIATION:
+            ax.plot(xs[-1], ys[-1], "o", color=P.NEGATIVE, markersize=7.4,
+                    markeredgecolor=P.SURFACE, markeredgewidth=1.3,
+                    zorder=5)
+            _cap_label(ax, xs[-1], ys[-1],
+                       f"peak/trough year ({latest / med - 1.0:+.0%} vs "
+                       "median) — normalize the base", above=False,
+                       fig=fig, size=6.8, color=P.NEGATIVE)
+
+
+def render_capital(d: DashboardData, out_path: Optional[str] = None,
+                   dpi: int = DPI) -> Figure:
+    """P5 — what management does with the cash."""
+    fig = _new_page(dpi)
+    gs = fig.add_gridspec(
+        3, 2, height_ratios=[1.05, 2.35, 2.35],
+        left=0.055, right=0.965, top=0.975, bottom=0.065,
+        hspace=0.55, wspace=0.16,
+    )
+    ax = fig.add_subplot(gs[0, :])
+    _page_header(fig, ax, d, "capital & balance sheet")
+    tiles = []
+    if d.share_change is not None:
+        direction = "buyback" if d.share_change < 0 else "dilution"
+        tiles.append(("Share count", fmt_pct(d.share_change, signed=True),
+                      f"{direction} over the window", d.share_change <= 0))
+    if d.owners_yield is not None:
+        tiles.append(("Owner's yield", fmt_pct(d.owners_yield),
+                      "divs + gross buybacks / mcap", True))
+    net_debt = None
+    debt_now = _latest(d.total_debt)
+    cash_now = _latest(d.cash)
+    if debt_now is not None and cash_now is not None:
+        net_debt = debt_now - cash_now
+        tiles.append(("Net debt", fmt_money(net_debt), "debt − cash",
+                      net_debt <= 0))
+    _draw_kpi_row(ax, tiles)
+
+    panels = [
+        (_panel_shares, gs[1, 0]), (_panel_buybacks_sbc, gs[1, 1]),
+        (_panel_debt_cash, gs[2, 0]), (_panel_capex_intensity, gs[2, 1]),
+    ]
+    for fn, spec in panels:
+        ax_p = fig.add_subplot(spec)
+        _style_axes(ax_p)
+        if not d.fy_labels:
+            _panel_note(ax_p, "No annual fundamentals available")
+            continue
+        fn(ax_p, fig, d)
+
+    f = getattr(d, "fundamentals", None)
+    maturity = ""
+    if f is not None:
+        cur = next((v for v in reversed(f.series.get("lt_debt_current")
+                                        or []) if v is not None), None)
+        noncur = next((v for v in reversed(f.series.get("lt_debt_noncurrent")
+                                           or []) if v is not None), None)
+        if cur is not None and noncur is not None:
+            maturity = (f"Maturity posture: LT debt current "
+                        f"{_tex(fmt_money(cur))} vs noncurrent "
+                        f"{_tex(fmt_money(noncur))} at the latest FY end.")
+    return _finish(
+        fig, d,
+        [ln for ln in
+         (maturity,
+          "Buybacks are gross repurchases as filed (issuance NOT netted); "
+          "the dilution panel carries the net share-count path.") if ln],
+        out_path, dpi)
+
+
+# ------------------------------------------------------ P6 — Appendix
+
+_APX_LINES_PER_PAGE = 96
+_APX_WRAP = 148
+
+
+def _appendix_sections(d: DashboardData, res=None, v=None):
+    """(title, [(text, color, bold)]) — FULL content, never truncated."""
+    from .reconcile import fmt_val
+
+    sections = []
+
+    rep = getattr(d, "audit_report", None)
+    rows = []
+    if rep is None:
+        rows.append(("provider recheck off — no FMP/Finnhub keys "
+                     "configured for this run", P.INK_MUTED, False))
+    else:
+        rows.append((rep.summary(), P.INK_PRIMARY, True))
+        if rep.entries:
+            rows.append((f"{'Item':<22}{'FY':<8}{'EDGAR':>14}"
+                         f"{'Provider':>14}   {'Source':<10}Status",
+                         P.INK_SECONDARY, True))
+            status = {"divergent": "DIVERGENT",
+                      "restated": "RESTATED (EDGAR carries the recast; "
+                                  "provider carries the original)",
+                      "rescuable": "RESCUABLE (EDGAR empty)"}
+            for e in rep.entries:
+                rows.append((
+                    f"{e.item:<22}{e.fy:<8}{fmt_val(e.ours, e.unit):>14}"
+                    f"{fmt_val(e.theirs, e.unit):>14}   {e.source:<10}"
+                    + status.get(e.kind, e.kind),
+                    P.DELTA_BAD if e.kind == "divergent" else P.INK_MUTED,
+                    False))
+        else:
+            rows.append(("every compared item-year matches within "
+                         "tolerance", P.INK_MUTED, False))
+    sections.append(("Data audit — EDGAR vs providers (match / restated / "
+                     "divergent / rescuable)", rows))
+
+    rows = []
+    tags = getattr(d, "tags_used", None) or {}
+    if tags:
+        for concept in sorted(tags):
+            rows.append((f"{concept}: {tags[concept]}", P.INK_MUTED, False))
+    else:
+        rows.append(("no tag audit available", P.INK_MUTED, False))
+    sections.append(("XBRL tag map — concept: winning tag (coverage; "
+                     "gap fills; amendments)", rows))
+
+    rows = []
+    f = getattr(d, "fundamentals", None)
+    for note in (getattr(f, "selection_notes", None) or []):
+        rows.append((str(note), P.INK_MUTED, False))
+    if getattr(d, "statements_note", ""):
+        rows.append((f"Statements: {d.statements_note}", P.INK_MUTED, False))
+    if getattr(d, "price_error", ""):
+        rows.append((f"Prices: {d.price_error}", P.DELTA_BAD, False))
+    if not rows:
+        rows.append(("no substitutions or rescues this run", P.INK_MUTED,
+                     False))
+    sections.append(("Gap-rescue & selection log", rows))
+
+    rows = []
+    seg = getattr(d, "segments", None)
+    if seg is None or not seg.lines:
+        rows.append(("no dimensional segment data parsed", P.INK_MUTED,
+                     False))
+    else:
+        rows.append((f"source: {seg.source}", P.INK_MUTED, False))
+        if seg.status:
+            rows.append((f"status: {seg.status}", P.INK_MUTED, False))
+        for label, count in (seg.coverage or []):
+            rows.append((f"coverage: {label} — {count} facts", P.INK_MUTED,
+                         False))
+        for r in (seg.recast_log or []):
+            rows.append((f"recast: {r}", P.DELTA_BAD, False))
+        for b in (seg.breaks or []):
+            rows.append((f"break: {b}", P.DELTA_BAD, False))
+    sections.append(("Segments — status as diagnosed", rows))
+
+    rows = []
+    for note in (d.health_notes or []):
+        rows.append((str(note), P.INK_PRIMARY, False))
+    if res is not None:
+        for w in res.warnings:
+            rows.append((f"valuation: {w}", P.DELTA_BAD, False))
+        for c in res.cases:
+            for w in c.warnings:
+                rows.append((f"{c.name}: {w}", P.DELTA_BAD, False))
+    if v is not None:
+        for note in v.notes:
+            rows.append((f"verdict: {note}", P.INK_MUTED, False))
+    if not rows:
+        rows.append(("no warnings this run", P.INK_MUTED, False))
+    sections.append(("Warnings register", rows))
+    return sections
+
+
+def render_appendix(d: DashboardData, res=None, v=None,
+                    dpi: int = DPI) -> List[Figure]:
+    """P6 — formatted tables, untruncated by construction: content flows
+    onto as many appendix pages as it needs (principle 5)."""
+    import textwrap
+
+    flow = []  # (text, color, bold, is_heading)
+    for title, rows in _appendix_sections(d, res, v):
+        flow.append((title, P.INK_PRIMARY, True, True))
+        for text, color, bold in rows:
+            wrapped = textwrap.wrap(str(text), width=_APX_WRAP) or [""]
+            for j, line in enumerate(wrapped):
+                flow.append((("   " if j else "") + line, color, bold,
+                             False))
+        flow.append(("", P.INK_MUTED, False, False))
+
+    pages, page = [], []
+    for entry in flow:
+        if len(page) >= _APX_LINES_PER_PAGE:
+            pages.append(page)
+            page = []
+        page.append(entry)
+    if page:
+        pages.append(page)
+
+    figs = []
+    for pno, page in enumerate(pages, start=1):
+        fig = _new_page(dpi)
+        gs = fig.add_gridspec(2, 1, height_ratios=[0.62, 9.38],
+                              left=0.055, right=0.965, top=0.975,
+                              bottom=0.055, hspace=0.04)
+        ax = fig.add_subplot(gs[0])
+        suffix = f" ({pno}/{len(pages)})" if len(pages) > 1 else ""
+        _page_header(fig, ax, d, f"appendix{suffix}")
+        body = fig.add_subplot(gs[1])
+        body.set_axis_off()
+        step = 1.0 / _APX_LINES_PER_PAGE
+        y = 1.0
+        mono = ["DejaVu Sans Mono", "monospace"]  # ships with matplotlib
+        for text, color, bold, is_heading in page:
+            if is_heading:
+                body.text(0, y, text, fontsize=8.6, fontweight="bold",
+                          color=color, transform=body.transAxes, va="top")
+            elif text:
+                body.text(0, y, _tex(text), fontsize=6.9, color=color,
+                          fontweight="bold" if bold else "normal",
+                          fontfamily=mono, transform=body.transAxes,
+                          va="top")
+            y -= step
+        _finish(fig, d, "Appendix content is complete by construction — "
+                        "nothing on the previous pages was truncated into "
+                        "it.", None, dpi)
+        figs.append(fig)
+    return figs
+
+
+# ------------------------------------------------------------- assembly
+
+def render_report(d: DashboardData, res=None, v=None,
+                  open_triggers: Optional[Sequence[str]] = None,
+                  prior: Optional[dict] = None,
+                  dpi: int = DPI) -> List[Figure]:
+    """The six-section report (P1..P6) as a list of A4-portrait figures —
+    the single assembly every caller uses (design R3b)."""
+    figs = [
+        render_decision(d, res, v, open_triggers, prior, dpi=dpi),
+        render_expectations(d, res, v, dpi=dpi),
+        render_business(d, dpi=dpi),
+        render_quality(d, dpi=dpi),
+        render_capital(d, dpi=dpi),
+    ]
+    figs += render_appendix(d, res, v, dpi=dpi)
+    return figs

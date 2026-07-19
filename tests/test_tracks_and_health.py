@@ -3,9 +3,7 @@ import datetime as dt
 
 import pytest
 
-from forensic_viz.dashboard import (
-    render_dashboard, render_health_report, render_valuation,
-)
+from forensic_viz.dashboard import render_business, render_quality
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.export import export_pdf
 from forensic_viz.metrics import (
@@ -43,7 +41,7 @@ def test_track_override_changes_health_rendering(tmp_path, testco_facts):
     compute_altman(bank)
     assert all(z is None for z in bank.altman_z)  # suppressed for financials
     out = tmp_path / "bank_health.png"
-    render_health_report(bank, str(out))
+    render_quality(bank, str(out))
     assert out.exists()
 
     standard = _metrics(testco_facts, track="standard")
@@ -63,8 +61,8 @@ def test_adjustment_burden_fluff_filter(testco_facts):
 
 def test_pdf_export_bundles_pages(tmp_path, testco_facts):
     d = _metrics(testco_facts)
-    fig1 = render_dashboard(d)
-    fig2 = render_health_report(d)
+    fig1 = render_business(d)
+    fig2 = render_quality(d)
     out = tmp_path / "report.pdf"
     export_pdf([fig1, fig2, None], str(out))  # None page skipped
     blob = out.read_bytes()

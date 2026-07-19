@@ -1,7 +1,7 @@
 import datetime as dt
 
 from forensic_viz.dashboard import (
-    render_dashboard, render_health_report, render_valuation,
+    render_decision, render_expectations, render_quality, render_report,
 )
 from forensic_viz.edgar import parse_companyfacts
 from forensic_viz.metrics import (
@@ -26,28 +26,38 @@ def _testco_data(testco_facts, aapl_prices=None):
     return d
 
 
-def test_render_full_dashboard(tmp_path, testco_facts, aapl_prices):
-    out = tmp_path / "full.png"
-    fig = render_dashboard(_testco_data(testco_facts, aapl_prices), str(out))
+def test_render_decision_page(tmp_path, testco_facts, aapl_prices):
+    d = _testco_data(testco_facts, aapl_prices)
+    res = _valuation(d)
+    from forensic_viz.verdict import build_verdict
+    v = build_verdict(d, res._inputs, res, rating="Hold")
+    out = tmp_path / "p1.png"
+    fig = render_decision(d, res, v, out_path=str(out))
     assert out.exists() and out.stat().st_size > 50_000
-    assert len(fig.axes) >= 9  # header + price + drawdown + 6 panels
+    assert len(fig.axes) >= 6  # header, base quality, rating, field, ladder…
+    texts = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "Base quality" in texts
 
 
 def test_render_without_prices(tmp_path, testco_facts):
+    """v3 R3b: a price outage degrades to declared absence, all six
+    sections still render."""
     d = _testco_data(testco_facts)
     d.price_error = "simulated outage"
-    out = tmp_path / "noprice.png"
-    render_dashboard(d, str(out))
-    assert out.exists() and out.stat().st_size > 30_000
+    figs = render_report(d)
+    assert len(figs) >= 6
+    texts = " ".join(t.get_text() for fig in figs
+                     for ax in fig.axes for t in ax.texts)
+    assert "simulated outage" in texts   # the appendix declares it
 
 
-def test_render_health_report(tmp_path, testco_facts, aapl_prices):
+def test_render_quality_page(tmp_path, testco_facts, aapl_prices):
     d = _testco_data(testco_facts, aapl_prices)
     compute_altman(d)
-    out = tmp_path / "health.png"
-    fig = render_health_report(d, str(out))
+    out = tmp_path / "p4.png"
+    fig = render_quality(d, str(out))
     assert out.exists() and out.stat().st_size > 40_000
-    assert len(fig.axes) >= 7  # header + six health panels
+    assert len(fig.axes) >= 9  # header + eight quality panels
 
 
 def _valuation(d):
@@ -58,10 +68,12 @@ def _valuation(d):
                "Bull": CaseInputs(g0=0.09, g_term=0.03)}))
 
 
-def test_render_valuation_page(tmp_path, testco_facts, aapl_prices):
+def test_render_expectations_page(tmp_path, testco_facts, aapl_prices):
     d = _testco_data(testco_facts, aapl_prices)
     res = _valuation(d)
-    out = tmp_path / "val.png"
-    fig = render_valuation(d, res, str(out))
+    from forensic_viz.verdict import build_verdict
+    v = build_verdict(d, res._inputs, res)
+    out = tmp_path / "p2.png"
+    fig = render_expectations(d, res, v, out_path=str(out))
     assert out.exists() and out.stat().st_size > 30_000
-    assert len(fig.axes) >= 3  # header + field + table
+    assert len(fig.axes) >= 5  # header + bridge + table + sens + stress

@@ -1,12 +1,13 @@
-"""FIX-12d: sensitivity-grid math (pure, engine-checked), dense verdict &
-valuation pages, unified footer."""
+"""FIX-12d sensitivity-grid math (pure, engine-checked) + v3 R3b page
+density: P1 decision dashboard, P2 expectations, untruncated appendix,
+unified footer."""
 import datetime as dt
 
 import pytest
 
 from forensic_viz.dashboard import (
-    A4L_H, render_dashboard, render_health_report, render_unit_economics,
-    render_valuation, render_verdict, verdict_sensitivity,
+    A4P_H, render_appendix, render_decision, render_expectations,
+    render_report, verdict_sensitivity,
 )
 from forensic_viz.metrics import DashboardData
 from forensic_viz.valuation import (
@@ -109,45 +110,51 @@ def test_sensitivity_manual_is_none():
 
 # ------------------------------------------------------------- page renders
 
-def test_verdict_page_dense_with_and_without_triggers(tmp_path):
+def test_decision_page_dense_with_and_without_triggers(tmp_path):
     d = _data()
     d.terminal_risk = "A terminal risk."
     _, res, v = _dcf(d, rating="Buy")
-    fig = render_verdict(d, res, v, str(tmp_path / "v1.png"),
-                         open_triggers=["margin < 20% two quarters",
-                                        "FX exposure passes 30% of revenue"])
-    assert fig.get_size_inches()[1] == pytest.approx(A4L_H)
-    assert len(fig.axes) >= 5    # header, stress, sensitivity, assumptions, triggers
+    fig = render_decision(d, res, v,
+                          open_triggers=["margin < 20% two quarters",
+                                         "FX exposure passes 30% of revenue"],
+                          out_path=str(tmp_path / "p1.png"))
+    assert fig.get_size_inches()[1] == pytest.approx(A4P_H)
+    assert len(fig.axes) >= 6
     texts = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
     assert "margin < 20% two quarters" in texts
-    assert "Assumptions & bridge" in texts and "Sensitivity" in texts
-    fig2 = render_verdict(d, res, v)     # no triggers → honest empty state
+    assert "Gate:" in texts and "Entry-price ladder" in texts
+    fig2 = render_decision(d, res, v)    # no triggers → honest empty state
     texts2 = " ".join(t.get_text() for ax in fig2.axes for t in ax.texts)
     assert "No open triggers" in texts2
-    assert fig2.get_size_inches()[1] == pytest.approx(A4L_H)
 
 
-def test_valuation_page_warnings_callout():
+def test_expectations_page_bridge_and_tables():
     d = _data()
     _, res, v = _dcf(d)
-    assert res.warnings                  # this fixture carries caveats
-    fig = render_valuation(d, res)
-    assert fig.get_size_inches()[1] == pytest.approx(A4L_H)
-    assert len(fig.axes) == 4            # header, field, table, callout
+    fig = render_expectations(d, res, v)
+    assert fig.get_size_inches()[1] == pytest.approx(A4P_H)
     texts = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
-    assert "Warnings & assumptions" in texts and "⚠" in texts
+    assert "Expectations bridge" in texts
+    assert "Assumptions & bridge" in texts and "Sensitivity" in texts
+    # the killed duplication stays dead: the assumptions panel carries no
+    # per-case rows any more (its old "TV share" case column is gone; the
+    # case table above is the single carrier)
+    assert "TV share" not in texts
+    assert "TV % of EV" in texts
 
 
-def test_valuation_callout_caps_at_six_with_overflow_line():
+def test_appendix_carries_every_warning_untruncated():
     d = _data()
     _, res, v = _dcf(d)
     res.warnings = [f"warning number {i}" for i in range(9)]
     for c in res.cases:
         c.warnings.clear()
-    fig = render_valuation(d, res)
-    texts = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
-    assert "+3 more — see the CSV audit trail" in texts
-    assert "warning number 5" in texts and "warning number 6" not in texts
+    figs = render_appendix(d, res, v)
+    texts = " ".join(t.get_text() for fig in figs
+                     for ax in fig.axes for t in ax.texts)
+    for i in range(9):
+        assert f"warning number {i}" in texts
+    assert "more —" not in texts   # no overflow lines, ever (principle 5)
 
 
 # ------------------------------------------------------------ unified footer
@@ -155,11 +162,7 @@ def test_valuation_callout_caps_at_six_with_overflow_line():
 def test_every_page_has_exactly_one_advice_line():
     d = _data()
     _, res, v = _dcf(d, rating="Hold")
-    d2 = _data()                      # fundamentals pages: no price series
-    d2.price_dates, d2.price_closes = [], []
-    figs = [render_dashboard(d2), render_unit_economics(d2),
-            render_health_report(d2), render_valuation(d, res),
-            render_verdict(d, res, v, open_triggers=["t1"])]
+    figs = render_report(d, res, v, open_triggers=["t1"])
     for fig in figs:
         all_texts = [t.get_text() for t in fig.texts]
         all_texts += [t.get_text() for ax in fig.axes for t in ax.texts]

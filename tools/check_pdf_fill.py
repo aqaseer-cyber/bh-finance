@@ -4,9 +4,11 @@ its A4 sheet on the constrained ("binding") axis' complement.
 Usage:
     python tools/check_pdf_fill.py REPORT.pdf [figW,figH ...]
 
-Figure sizes default to the app's five pages (dashboard, unit economics,
-health, valuation, verdict) in order; pass explicit `W,H` pairs to check a
-different sequence. Exits non-zero when any page falls below 85%.
+v3 R3b: the report is A4 portrait THROUGHOUT (P1..P6, appendix pages
+included), so the default expectation is one portrait figure per PDF
+page, however many pages the appendix flowed onto; pass explicit `W,H`
+pairs to check a different sequence. Exits non-zero when any page falls
+below 85% or renders on the wrong sheet.
 """
 import sys
 from pathlib import Path
@@ -15,11 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pypdf import PdfReader  # noqa: E402
 
-from forensic_viz.dashboard import A4L_H, A4P_H, FIG_W  # noqa: E402
+from forensic_viz.dashboard import A4P_H, FIG_W  # noqa: E402
 from forensic_viz.export import page_size_for  # noqa: E402
 
-DEFAULT_SIZES = [(FIG_W, A4P_H), (FIG_W, A4L_H), (FIG_W, A4L_H),
-                 (FIG_W, A4L_H), (FIG_W, A4L_H)]
+PORTRAIT = (FIG_W, A4P_H)
 THRESHOLD = 0.85
 
 
@@ -32,6 +33,8 @@ def page_fill(fig_w: float, fig_h: float) -> float:
 
 def check(pdf_path: str, sizes) -> int:
     reader = PdfReader(pdf_path)
+    if sizes is None:  # R3b default: every page is one portrait figure
+        sizes = [PORTRAIT] * len(reader.pages)
     if len(reader.pages) != len(sizes):
         sizes = sizes[:len(reader.pages)]
     print(f"{'page':>4}  {'figure':>12}  {'A4 sheet':>10}  {'fill':>6}")
@@ -56,7 +59,7 @@ def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
-    sizes = DEFAULT_SIZES
+    sizes = None  # portrait per page (R3b)
     if len(sys.argv) > 2:
         sizes = [tuple(float(x) for x in a.split(","))
                  for a in sys.argv[2:]]

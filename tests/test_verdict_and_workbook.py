@@ -3,7 +3,7 @@ import datetime as dt
 
 import pytest
 
-from forensic_viz.dashboard import render_verdict
+from forensic_viz.dashboard import render_decision
 from forensic_viz.metrics import DashboardData
 from forensic_viz.valuation import CaseInputs, ValuationInputs, build_valuation
 from forensic_viz.verdict import build_verdict
@@ -85,14 +85,14 @@ def test_coherence_gate_optionality_exception():
     assert v.coherence.startswith("ok")
 
 
-def test_render_verdict_page(tmp_path):
+def test_render_decision_page(tmp_path):
     d = _data()
     inputs, res = _dcf_res(d)
     v = build_verdict(d, inputs, res, rating="Buy")
-    out = tmp_path / "verdict.png"
-    fig = render_verdict(d, res, v, str(out))
+    out = tmp_path / "p1.png"
+    fig = render_decision(d, res, v, out_path=str(out))
     assert out.exists() and out.stat().st_size > 25_000
-    assert len(fig.axes) >= 3
+    assert len(fig.axes) >= 6
 
 
 def test_shell_has_exactly_133_blue_input_cells():

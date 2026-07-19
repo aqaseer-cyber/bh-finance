@@ -46,6 +46,9 @@ def create_app(pipeline: Optional[Callable] = None,
                   redoc_url=None, openapi_url=None)
     app.state.runs = {}          # ticker -> DashboardData
     app.state.valuations = {}    # ticker -> (res, verdict)
+    # v3 R3b: the predecessor row captured at valuation time (P1's
+    # delta-vs-prior line) — ticker -> verdict_history row | None
+    app.state.prior_verdicts = {}
     run_pipeline = pipeline or _default_pipeline
 
     static_dir = Path(__file__).resolve().parent / "static"
@@ -161,6 +164,18 @@ def create_app(pipeline: Optional[Callable] = None,
         except ValuationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         app.state.valuations[d.ticker] = (res, verdict)
+        # v3 R3b: capture the predecessor BEFORE recording this run, then
+        # upsert — the web flow now feeds the verdict ledger the way the
+        # CLI always has (P1 delta + Watchlist freshness); never blocks
+        try:
+            from forensic_viz.ledger import Ledger
+            led = Ledger()
+            app.state.prior_verdicts[d.ticker] = next(
+                (h for h in reversed(led.history(d.ticker))
+                 if h.get("fv_avg") is not None), None)
+            led.upsert_verdict(d, res=res, verdict=verdict)
+        except Exception:
+            app.state.prior_verdicts.setdefault(d.ticker, None)
         # v3 R2: the verdict page's own sensitivity grid + open triggers
         # ride along (existing engine code, serialized verbatim)
         from forensic_viz.dashboard import verdict_sensitivity
@@ -291,21 +306,24 @@ def create_app(pipeline: Optional[Callable] = None,
             fill_workbook(d, str(path), res=res_v[0],
                           verdict=res_v[1])
         elif kind == "pdf":
-            from forensic_viz.dashboard import (
-                render_dashboard, render_health_report,
-                render_unit_economics, render_valuation, render_verdict,
-            )
+            # v3 R3b: the six-section report — one assembly call
+            from forensic_viz.dashboard import render_report
             from forensic_viz.export import export_pdf
-            figs = [render_dashboard(d), render_unit_economics(d),
-                    render_health_report(d)]
             held = app.state.valuations.get(d.ticker)
-            if held is not None:
-                res, verdict = held
-                figs.append(render_valuation(d, res))
-                figs.append(render_verdict(d, res, verdict))
+            res, verdict = held if held is not None else (None, None)
+            open_trigs = None
+            try:
+                from forensic_viz.ledger import Ledger
+                open_trigs = [t["trigger_text"] for t in
+                              Ledger().open_triggers(d.ticker)]
+            except Exception:
+                pass
+            prior = app.state.prior_verdicts.get(d.ticker)
             path = out_dir / f"{d.ticker}_{d.display_years}y_report_" \
                              f"{stamp}.pdf"
-            export_pdf(figs, str(path))
+            export_pdf(render_report(d, res, verdict,
+                                     open_triggers=open_trigs,
+                                     prior=prior), str(path))
         else:
             raise HTTPException(status_code=404,
                                 detail=f"unknown export kind {kind!r}")
