@@ -149,3 +149,45 @@ byte-identical, engine modules untouched. Owner-run — regenerate the
 MELI and PYPL reports and review against the section list; the MELI
 Decision Dashboard must show the base-quality challenge above the Buy;
 zero ellipses on extracted text.
+
+---
+
+# R3c — the workbook
+
+Sheets, in order, one format regime: **Cover · Financial Model ·
+Income Statement · Balance Sheet · Cash Flow · Segments · Audit**
+(statement sheets omitted-and-declared per a6 when unidentified;
+Segments omitted when no dimensional data; Audit always present).
+
+- **Cover** now opens with the DECISION, mirroring the report's P1
+  exactly (principle 2): rating, coherence gate, FV average / MoS /
+  stressed MoS / P₀ written as real numbers, the base-quality line
+  (red-keyed when the a1 gate challenges), then run identity (run_id ·
+  input hash · app version), provider set, and the three-artifact
+  checklist. No valuation attached → the Decision row says so.
+- **Financial Model** sheet slims down: the inline SEGMENTS block and
+  the DATA AUDIT block are gone (the Segments sheet and the new Audit
+  sheet are their homes), the XBRL-tags wall and the interim gap-fill
+  notes moved to Audit, and the footnote wall shrinks to the notes
+  that explain THIS sheet's cells (quarters/LTM/%-change semantics,
+  market block, LTM-basis provenance) plus one pointer line.
+- **Audit** (new): the report's P6 tables as real tables — provider
+  data audit (match/restated/divergent/rescuable, full), the complete
+  XBRL tag map, the gap-rescue & selection log (selection notes,
+  interim gap fills, statements note, price errors), segment
+  provenance (coverage, breaks, the FULL recast log — the old
+  "first-3 + ellipsis" truncation is dead), and the warnings register
+  (health notes + valuation/case warnings + verdict notes).
+- Principle 2 exercised: a test pins Cover `FV average` ==
+  `verdict.fv_avg` == the figure P1 prints; R3d turns this into the
+  hard cross-artifact abort.
+- Principle 5 now enforced in the workbook too: a test sweeps every
+  cell of every sheet for ellipses (it caught and killed a residual
+  one in the capex footnote).
+
+Gate status: offline — suite 344/0 (6 new in tests/test_r3c.py),
+smoke 10/10, goldens byte-identical, engine modules untouched
+(model_export/callers only). Owner-run — the MELI workbook shows all
+7 sheets; PYPL shows the declared-missing statement line if a6's
+fallback still can't identify its income statement; formats
+spot-checked; Cover FV vs the PDF P1 vs the shell.

@@ -241,7 +241,7 @@ def test_a4_export_prints_the_restated_status(tmp_path):
     d.audit_report = rep
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    ws = load_workbook(str(out))["Audit"]   # R3c: the audit table's home
     cells = [str(ws.cell(row=r, column=c).value or "")
              for r in range(1, ws.max_row + 1) for c in range(1, 7)]
     assert any("RESTATED (EDGAR carries the recast; provider carries "

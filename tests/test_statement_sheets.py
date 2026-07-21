@@ -231,13 +231,17 @@ def test_degrades_to_model_note_when_statements_missing(tmp_path):
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
     wb = load_workbook(str(out))
-    assert wb.sheetnames == ["Cover", "Financial Model"]  # no empty sheets
-    ws = wb["Financial Model"]
-    labels = [ws.cell(row=r, column=1).value
-              for r in range(1, ws.max_row + 1)]
-    note = next(str(v) for v in labels
-                if v and "As-filed statement sheets unavailable" in str(v))
-    assert "SEC_EDGAR_USER_AGENT" in note
+    assert wb.sheetnames == ["Cover", "Financial Model", "Audit"]  # no empty statement sheets
+    # v3 R3c: the absence is declared on the Cover (a6) and the reason
+    # lands verbatim in the Audit sheet's rescue log
+    cov = wb["Cover"]
+    rows = {str(cov.cell(row=r, column=1).value or ""):
+            str(cov.cell(row=r, column=2).value or "")
+            for r in range(1, cov.max_row + 1)}
+    assert "SEC_EDGAR_USER_AGENT" in rows["Statement sheets"]
+    aud = [str(wb["Audit"].cell(row=r, column=1).value or "")
+           for r in range(1, wb["Audit"].max_row + 1)]
+    assert any("SEC_EDGAR_USER_AGENT" in v for v in aud)
 
 
 def test_segments_sheet_blocks_ties_and_footnote(tmp_path):

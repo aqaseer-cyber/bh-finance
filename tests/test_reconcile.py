@@ -151,19 +151,24 @@ def test_export_carries_the_data_audit_block(tmp_path):
 
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    wb = load_workbook(str(out))
+    # v3 R3c: the audit table is a real table on the Audit sheet; the
+    # Model sheet keeps a one-line pointer
+    fm_a = [str(wb["Financial Model"].cell(row=r, column=1).value or "")
+            for r in range(1, wb["Financial Model"].max_row + 1)]
+    assert not any(v.startswith("DATA AUDIT") for v in fm_a)
+    assert any("Audit sheet carries" in v for v in fm_a)
+    ws = wb["Audit"]
     col_a = [str(ws.cell(row=r, column=1).value or "")
              for r in range(1, ws.max_row + 1)]
-    hdr = next(i + 1 for i, v in enumerate(col_a)
-               if v.startswith("DATA AUDIT"))
-    assert any("8 item-years" in v for v in col_a[hdr - 1:hdr + 2])
+    assert any("8 item-years" in v for v in col_a)
     rows = [[ws.cell(row=r, column=c).value for c in range(1, 7)]
-            for r in range(hdr, hdr + 6)]
+            for r in range(1, ws.max_row + 1)]
     flat = ["|".join(str(x) for x in row) for row in rows]
     assert any("Revenue|FY2024|$90M|$100M|FMP (aggregator)|DIVERGENT"
                in f for f in flat)
     assert any("RESCUABLE (EDGAR empty)" in f for f in flat)
-    assert any(v.startswith("DATA AUDIT: tolerance") for v in col_a)
+    assert any(v.startswith("Tolerance ±2%") for v in col_a)
 
 
 def test_export_without_audit_has_no_block(tmp_path):
@@ -182,7 +187,11 @@ def test_export_without_audit_has_no_block(tmp_path):
         parse_companyfacts(_facts_with_quarters(), "TESTCO"), d)
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
-    col_a = [str(ws.cell(row=r, column=1).value or "")
-             for r in range(1, ws.max_row + 1)]
-    assert not any(v.startswith("DATA AUDIT") for v in col_a)
+    wb = load_workbook(str(out))
+    for sheet in ("Financial Model", "Audit"):
+        col_a = [str(wb[sheet].cell(row=r, column=1).value or "")
+                 for r in range(1, wb[sheet].max_row + 1)]
+        if sheet == "Financial Model":
+            assert not any(v.startswith("DATA AUDIT") for v in col_a)
+        else:  # the absence is DECLARED on the Audit sheet
+            assert any("provider recheck off" in v for v in col_a)

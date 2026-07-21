@@ -319,24 +319,26 @@ def _data_with_segments():
     return d
 
 
-def test_segments_section_in_model_export(tmp_path):
+def test_segments_sheet_in_model_export(tmp_path):
+    """v3 R3c: the segment rows live on the Segments sheet (as-reported
+    spans + ties); the Model sheet keeps a one-line pointer."""
     d = _data_with_segments()
     out = tmp_path / "model.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    wb = load_workbook(str(out))
+    fm_labels = [str(wb["Financial Model"].cell(row=r, column=1).value or "")
+                 for r in range(1, wb["Financial Model"].max_row + 1)]
+    assert not any(l.startswith("SEGMENTS (as filed)") for l in fm_labels)
+    assert any(l.startswith("Segments: as-reported spans") for l in fm_labels)
+    ws = wb["Segments"]
     header = [c.value for c in ws[1]]
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
-    assert "SEGMENTS (as filed)" in labels
     assert "Revenue by geography" in labels
     assert "Revenue by product / service" in labels
     assert "Operating income by product / service" in labels
     br_row = labels.index("  Brazil") + 1
     fy25 = header.index("FY2025") + 1
     assert ws.cell(row=br_row, column=fy25).value == pytest.approx(1000.0)
-    # % change row under the Brazil segment line: FY2025 YoY
-    assert labels[br_row] == "   % change"
-    assert ws.cell(row=br_row + 1, column=fy25).value == pytest.approx(
-        1000e6 / 900e6 - 1)
 
 
 def test_workbook_phase2_segment_fill(tmp_path):
@@ -434,7 +436,7 @@ def test_incomplete_cross_table_flagged_by_tie_rows(tmp_path):
     d.segments = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "t")
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    ws = load_workbook(str(out))["Segments"]
     header = [c.value for c in ws[1]]
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     fy25 = header.index("FY2025") + 1
@@ -453,7 +455,7 @@ def test_tie_rows_show_zero_gap_when_members_are_complete(tmp_path):
     d = _data_with_segments()  # product members sum to 1900 = consolidated
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    ws = load_workbook(str(out))["Segments"]
     header = [c.value for c in ws[1]]
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     fy25 = header.index("FY2025") + 1
@@ -482,16 +484,15 @@ def test_partial_axis_suppresses_tie_rows_on_both_sheets(tmp_path):
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
     wb = load_workbook(str(out))
-    for sheet in ("Financial Model", "Segments"):
-        labels = [wb[sheet].cell(row=r, column=1).value
-                  for r in range(1, wb[sheet].max_row + 1)]
-        assert "   Σ members" not in labels, sheet          # no red gap row
-        assert "   vs consolidated (gap %)" not in labels, sheet
-        note = next((l for l in labels
-                     if l and "tie suppressed" in l), None)
-        assert note is not None, sheet
-        assert "partial disclosure axis" in note
-        assert "1 member(s)" in note and "0% of consolidated" in note
+    labels = [wb["Segments"].cell(row=r, column=1).value
+              for r in range(1, wb["Segments"].max_row + 1)]
+    assert "   Σ members" not in labels          # no red gap row
+    assert "   vs consolidated (gap %)" not in labels
+    note = next((l for l in labels
+                 if l and "tie suppressed" in l), None)
+    assert note is not None
+    assert "partial disclosure axis" in note
+    assert "1 member(s)" in note and "0% of consolidated" in note
 
 
 def test_two_member_axis_keeps_tie_rows_even_at_low_coverage(tmp_path):
@@ -511,7 +512,7 @@ def test_two_member_axis_keeps_tie_rows_even_at_low_coverage(tmp_path):
     d.segments = build_segment_data([("10-K a25 (FY2025)", "".join(parts))], "t")
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    ws = load_workbook(str(out))["Segments"]
     header = [c.value for c in ws[1]]
     labels = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     fy25 = header.index("FY2025") + 1
@@ -688,12 +689,11 @@ def test_audit_footnotes_carry_coverage_breaks_and_recasts(tmp_path):
     assert d.segments.breaks       # membership changed at the shared FY24
     out = tmp_path / "m.xlsx"
     export_financial_model(d, str(out))
-    ws = load_workbook(str(out))["Financial Model"]
+    ws = load_workbook(str(out))["Audit"]
     labels = [str(ws.cell(row=r, column=1).value or "")
               for r in range(1, ws.max_row + 1)]
     joined = " ".join(labels)
-    assert "Segment coverage: dimensional facts found in 2/2 instances" \
-        in joined
+    assert "coverage: dimensional facts found in 2/2 instances" in joined
     assert "Segment recast — series are not comparable across this " \
            "boundary" in joined
     assert "retired ['Marketplace']" in joined

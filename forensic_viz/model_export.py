@@ -340,8 +340,13 @@ def _statement_completeness_line(d: DashboardData) -> str:
             "sheets omitted")
 
 
-def export_financial_model(d: DashboardData, path: str) -> str:
-    """Write the consolidated three-statement model workbook; returns path."""
+def export_financial_model(d: DashboardData, path: str,
+                           res=None, verdict=None) -> str:
+    """Write THE workbook (v3 R3c): Cover · Financial Model · Income
+    Statement · Balance Sheet · Cash Flow · Segments · Audit — one format
+    regime. `res`/`verdict` are optional: when a valuation is attached the
+    Cover mirrors the report's P1 numbers (principle 2 — the R3d gate
+    asserts FV/MoS equality across all three artifacts)."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -380,6 +385,49 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     _c = cover.cell
     _c(row=1, column=1, value=f"{d.company} ({d.ticker})").font = \
         Font(bold=True, color=forest, size=16)
+
+    # v3 R3c: the Cover opens with the DECISION, mirroring the report's
+    # P1 numbers exactly (principle 2 — one run, three artifacts, zero
+    # divergence); run identity beneath it
+    from .anchors import assess_base_quality
+    from .runid import provider_set, run_identity
+
+    bad = P.DELTA_BAD.lstrip("#").upper()
+    rid, ihash = run_identity(d, res)
+    q = assess_base_quality(d)
+    decision_rows: List[tuple] = []  # (label, value, number_format|None, red)
+    if verdict is not None:
+        gate = verdict.coherence + (
+            "" if verdict.coherence.startswith("ok")
+            else f" — {verdict.coherence_detail}")
+        decision_rows += [
+            ("Rating", verdict.rating or "—", None, False),
+            ("Coherence gate", gate, None,
+             verdict.coherence.startswith("CHECK")),
+            ("FV average", verdict.fv_avg, '"$"#,##0.00', False),
+            ("MoS at P₀", verdict.mos, "+0.0%;-0.0%", (verdict.mos or 0) < 0),
+            ("Stressed MoS", verdict.stressed_mos, "+0.0%;-0.0%",
+             (verdict.stressed_mos or 0) < 0),
+            ("P₀", d.last_close, '"$"#,##0.00', False),
+        ]
+    else:
+        decision_rows.append((
+            "Decision", "no valuation attached to this run — run "
+            "Intrinsic value (shell or --value), then re-export", None,
+            False))
+    decision_rows.append((
+        "Base quality",
+        q.text if q.challenged else "unchallenged — no financial "
+        "signature, accruals and CFO/NI inside the gates (R3a a1)",
+        None, q.challenged))
+    decision_rows += [
+        ("Run", f"{rid} · inputs {ihash} · app {config.APP_VERSION}",
+         None, False),
+        ("Providers", provider_set(d), None, False),
+        ("Artifacts", "report (PDF) · model (this workbook) · forensic "
+                      "shell — one run, three artifacts; FV/MoS must "
+                      "agree across all three", None, False),
+    ]
     cover_rows = [
         ("Generated", d.generated.isoformat()),
         ("Fiscal window", (f"{fy_label(f.fy_ends[0])} – "
@@ -387,21 +435,34 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                            if f.fy_ends else "–")),
         ("Source", "SEC EDGAR XBRL, as filed — latest amendment wins; "
                    "prices " + (d.price_source or "unavailable")),
-        ("Contents", "Model (annual + quarterly + LTM) · "
+        ("Contents", "Cover · Model (annual + quarterly + LTM) · "
                      "Income Statement · Balance Sheet · Cash Flow · "
-                     "Segments — single format regime (FIX-12h)"),
+                     "Segments · Audit — single format regime (FIX-12h)"),
         # v3 R3a (a6): statement completeness declared on the Cover —
         # a sheet that could not be produced is named with the reason
         ("Statement sheets", _statement_completeness_line(d)),
-        ("Provenance", "every concept's XBRL tag audit is footnoted on "
-                       "the Model sheet; paid-provider data never "
-                       "enters this workbook"),
+        ("Provenance", "the Audit sheet carries the data audit, XBRL tag "
+                       "map, gap-rescue log, segment provenance and "
+                       "warnings register; paid-provider data never "
+                       "enters the model numbers"),
         ("", "Not investment advice."),
     ]
-    for k, (label, value) in enumerate(cover_rows, start=3):
+    k = 3
+    for label, value, numfmt, red in decision_rows:
+        _c(row=k, column=1, value=label).font = Font(
+            bold=True, color=forest, size=10)
+        cell = _c(row=k, column=2, value=value)
+        cell.font = Font(color=bad if red else ink, size=10,
+                         bold=label in ("Rating", "FV average"))
+        if numfmt and value is not None:
+            cell.number_format = numfmt
+        k += 1
+    k += 1  # a blank spacer row between decision and metadata
+    for label, value in cover_rows:
         _c(row=k, column=1, value=label).font = Font(
             bold=True, color=forest, size=10)
         _c(row=k, column=2, value=value).font = Font(color=ink, size=10)
+        k += 1
 
     ws = wb.create_sheet("Financial Model")
     ws.freeze_panes = "B2"
@@ -597,134 +658,12 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                 c.alignment = Alignment(horizontal="right")
         r += 1
 
-    # ------------------------------------------------- SEGMENTS (as filed)
+    # v3 R3c: the SEGMENTS rows live on the Segments sheet (as-reported
+    # spans + ties) and the provider recheck lives on the Audit sheet —
+    # the Model sheet no longer duplicates either
     seg = getattr(d, "segments", None)
     seg_lines = list(getattr(seg, "lines", None) or [])
-    any_synth_cell = False
-    if seg_lines:
-        ws.cell(row=r, column=1, value="SEGMENTS (as filed)")
-        for j in range(1, ltm_col + 1):
-            c = ws.cell(row=r, column=j)
-            c.fill = section_fill
-            c.font = Font(bold=True, color=forest, size=10)
-        r += 1
-
-        blocks: List[Tuple[Tuple[str, str], List]] = []
-        for ln in seg_lines:  # group into (measure, axis) blocks, in order
-            key = (ln.group, ln.axis)
-            if not blocks or blocks[-1][0] != key:
-                blocks.append((key, []))
-            blocks[-1][1].append(ln)
-        for (group, axis), lns in blocks:
-            rendered = []
-            for ln in lns:
-                ann = _annual_from_entries(ln.entries, fy_ends)
-                rowv = _flow_row(ln.entries, ann, fy_ends, q_ends)
-                if any(v is not None for v in
-                       list(rowv.ann) + list(rowv.q) + [rowv.ltm]):
-                    rendered.append((ln, rowv))
-            if not rendered:
-                continue
-            c = ws.cell(row=r, column=1, value=f"{group} by {axis}")
-            c.font = Font(bold=True, italic=True, color=forest, size=9)
-            r += 1
-            for ln, rowv in rendered:
-                spans = _annual_spans(ln.entries, fy_ends)
-                flags = ([sp is not None and sp in ln.synth for sp in spans]
-                         + [any(abs((e - qe).days) <= _SPAN_TOL
-                                for _, e in ln.synth) for qe in q_ends]
-                         + [bool(ln.synth)
-                            and any(e >= fy_ends[-1] for _, e in ln.synth)])
-                cells = list(rowv.ann) + list(rowv.q) + [rowv.ltm]
-                ws.cell(row=r, column=1, value=f"  {ln.member}")
-                ws.cell(row=r, column=1).font = Font(color=ink, size=10)
-                for j, (v, fl) in enumerate(zip(cells, flags), start=2):
-                    c = ws.cell(row=r, column=j)
-                    if v is not None:
-                        c.value = v / _MM
-                        c.number_format = fmt_mm
-                        if fl:
-                            any_synth_cell = True
-                    c.font = Font(color=ink, size=10, italic=fl)
-                    c.alignment = Alignment(horizontal="right")
-                    if j == ltm_col:
-                        c.fill = ltm_fill
-                r += 1
-                r = write_pct_row(r, rowv)
-            if group != "Revenue":
-                continue
-            # visible tie-out (house scale-tie doctrine): Σ of the members
-            # vs the consolidated statement, per column — a positive gap
-            # means hierarchical members double-count on this axis
-            cons = rows["revenue"]
-            cons_cells = list(cons.ann) + list(cons.q) + [cons.ltm]
-            sums: List[Optional[float]] = []
-            for i in range(len(cons_cells)):
-                vals = [(list(rv.ann) + list(rv.q) + [rv.ltm])[i]
-                        for _, rv in rendered]
-                vals = [v for v in vals if v is not None]
-                sums.append(sum(vals) if vals else None)
-            # FIX-14d: gate the tie on the latest column where members have
-            # values (annual preferred) — a deliberately partial axis (one
-            # member, sliver of revenue) would only wolf-cry a huge red gap
-            with_data = [i for i, sv in enumerate(sums) if sv is not None]
-            annual = [i for i in with_data if i < len(cons.ann)]
-            gate_i = max(annual) if annual else (
-                max(with_data) if with_data else None)
-            n_mem = 0 if gate_i is None else sum(
-                1 for _, rv in rendered
-                if (list(rv.ann) + list(rv.q) + [rv.ltm])[gate_i] is not None)
-            g_sigma = sums[gate_i] if gate_i is not None else None
-            g_total = cons_cells[gate_i] if gate_i is not None else None
-            if partial_axis_disclosure(n_mem, g_sigma, g_total):
-                r = _write_note_row(ws, r, _tie_note(n_mem, g_sigma, g_total))
-                continue
-            r = _write_check_row(ws, r, "   Σ members", sums, ltm_col)
-            r = _write_check_row(ws, r, "   vs consolidated (gap %)",
-                                 [_pct(sv, cv) for sv, cv
-                                  in zip(sums, cons_cells)], ltm_col,
-                                 pct_fmt=True,
-                                 tol=config.SEGMENT_TIE_TOL)  # FIX-10d
-
-    # ------------------------------------------------ DATA AUDIT (FIX-17c)
     rep = getattr(d, "audit_report", None)
-    if rep is not None and (rep.checked or rep.entries or rep.error):
-        from .reconcile import fmt_val
-        bad = P.DELTA_BAD.lstrip("#").upper()
-        ws.cell(row=r, column=1,
-                value="DATA AUDIT (provider recheck — EDGAR stays the "
-                      "displayed truth)")
-        for j in range(1, ltm_col + 1):
-            c = ws.cell(row=r, column=j)
-            c.fill = section_fill
-            c.font = Font(bold=True, color=forest, size=10)
-        r += 1
-        r = _write_note_row(ws, r, rep.summary())
-        if rep.entries:
-            for j, h in enumerate(("Item", "FY", "EDGAR", "Provider",
-                                   "Source", "Status"), start=1):
-                hc = ws.cell(row=r, column=j, value=h)
-                hc.font = Font(bold=True, color=forest, size=9)
-            r += 1
-            for e in rep.entries:
-                src = ("FMP (aggregator)" if e.source == "FMP"
-                       else "Finnhub as-reported (aggregator)")
-                status = ("DIVERGENT" if e.kind == "divergent"
-                          else "RESTATED (EDGAR carries the recast; "
-                               "provider carries the original)"
-                          if e.kind == "restated"
-                          else "RESCUABLE (EDGAR empty)")
-                color = bad if e.kind == "divergent" else muted
-                row_vals = (e.item, e.fy, fmt_val(e.ours, e.unit),
-                            fmt_val(e.theirs, e.unit), src, status)
-                for j, v in enumerate(row_vals, start=1):
-                    c = ws.cell(row=r, column=j, value=v)
-                    c.font = Font(color=color, size=9)
-                r += 1
-        else:
-            r = _write_note_row(
-                ws, r, "No divergences, no rescuable cells — every "
-                       "compared item-year matches within tolerance.")
 
     # ---------------------------------------------------------- footnotes
     notes = [
@@ -750,7 +689,8 @@ def export_financial_model(d: DashboardData, path: str) -> str:
         "the company's own SEC presentation. Derived rows: Gross Profit "
         "falls back to Revenue − Cost of Revenue; Income Before Taxes to "
         "Net Income + Tax Provision; Free Cash Flow = CFO − capex. Capex "
-        "and other 'Payments…' concepts are positive outflows as filed.",
+        "and the other 'PaymentsTo/PaymentsFor' concepts are positive "
+        "outflows as filed.",
         "Not investment advice.",
     ]
     if market_written:  # FIX-16b provenance for the market block
@@ -767,57 +707,13 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             + " Years before the price window are blank; ratios mask on "
               "non-positive denominators. CAGR/avg column: geometric CAGR "
               "for value rows, period average for multiples and yields."))
-    if rep is not None and (rep.checked or rep.entries or rep.error):
-        notes.insert(-1, (
-            "DATA AUDIT: tolerance ±2% (floor $2M); provider values never "
-            "replace EDGAR numbers on this sheet. Where EDGAR's own "
-            "filings carry more than one value for a span the row is "
-            "classed RESTATED (the filer recast the number; the provider "
-            "serves the original) — only rows EDGAR itself never changed "
-            "are DIVERGENT. A provider value of exactly 0 is treated as "
-            "absent. Filling rescuable cells into the series (with "
-            "recompute) is FIX-17c.2."))
+    # v3 R3c: the footnote wall shrinks to one-line pointers — the detail
+    # (data audit, tag map, rescue log, segment provenance, warnings)
+    # lives on the Audit sheet as real tables
     if seg_lines:
-        src = getattr(seg, "source", "") or "latest filings"
-        extra = getattr(seg, "status", "")
         notes.insert(-1, (
-            f"Segments: dimensional XBRL parsed from {src}; history depth "
-            "= as reported there (a 10-K carries 2–3 comparative years, "
-            "the 10-Q the current quarters + year-ago comparatives). "
-            "Members ordered by latest annual revenue. The 'Σ members' / "
-            "'vs consolidated (gap %)' rows tie each revenue block to the "
-            "consolidated statement — a positive gap beyond +2% signals "
-            "hierarchical (parent + child) members double-counting on that "
-            "axis; a negative gap means members the filer left untagged."
-            + (f" Note: {extra}." if extra else "")))
-        if any_synth_cell:
-            notes.insert(-1, (
-                "Italic segment cells were synthesized by summing the "
-                "two-axis disaggregation table (not directly filed); the "
-                "gap row shows how completely that table covers the "
-                "consolidated total."))
-        # FIX-10d: the audit trail rides in the footnotes
-        cov = list(getattr(seg, "coverage", None) or [])
-        if cov:
-            matched = sum(1 for _, n in cov if n > 0)
-            notes.insert(-1, (
-                f"Segment coverage: dimensional facts found in {matched}/"
-                f"{len(cov)} instances ({cov[0][0]} … {cov[-1][0]})."))
-        for b in getattr(seg, "breaks", None) or []:
-            notes.insert(-1, ("Segment recast — series are not comparable "
-                              "across this boundary: " + b))
-        recasts = list(getattr(seg, "recast_log", None) or [])
-        if recasts:
-            notes.insert(-1, (
-                f"{len(recasts)} restated segment value(s) across filings: "
-                + " | ".join(recasts[:3])
-                + (" | …" if len(recasts) > 3 else "")))
-        disc = [f"{ln.member} ({ln.group} by {ln.axis})" for ln in seg_lines
-                if getattr(ln, "discontinuous", False)]
-        if disc:
-            notes.insert(-1, (
-                "Discontinuous segment series (interior fiscal year missing "
-                "while axis peers report one): " + ", ".join(disc) + "."))
+            "Segments: as-reported spans + Σ/tie rows on the Segments "
+            "sheet; recasts, breaks and coverage on the Audit sheet."))
     else:
         why = getattr(seg, "status", "") if seg is not None else \
             "not fetched in this run"
@@ -825,6 +721,10 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             "Segments: no dimensional segment data in this workbook — "
             + (why or "it lives in the 10-K/10-Q XBRL instance (fetched "
                       "live, not in the companyfacts API)") + "."))
+    notes.insert(-1, (
+        "Provenance & audit: the Audit sheet carries the provider data "
+        "audit, the full XBRL tag map, the gap-rescue log and the "
+        "warnings register."))
     if is_tie_breached:
         notes.insert(-1, (
             "Income-statement basis check: Revenue − Cost of Revenue "
@@ -857,8 +757,6 @@ def export_financial_model(d: DashboardData, path: str) -> str:
                 "the newest quarter column: "
                 + ", ".join(f"{lbl} ({d.isoformat()})" for lbl, d in stale)
                 + "."))
-    for note in qdata.source_notes:
-        notes.insert(-1, "Interim gap-fill: " + note)
     tagged_pt, merged_pt = rows["pretax_income"], rows["=pretax"]
     if any(t is None and m is not None for t, m in zip(
             list(tagged_pt.ann) + list(tagged_pt.q) + [tagged_pt.ltm],
@@ -868,12 +766,8 @@ def export_financial_model(d: DashboardData, path: str) -> str:
             "derived as Net Income + Tax Provision; parent-attributable "
             "net income understates pretax income when minority interest "
             "is material."))
-    if not getattr(d, "statements", None):  # FIX-13d degradation path
-        why = getattr(d, "statements_note", "") or "not fetched in this run"
-        notes.insert(-1, f"As-filed statement sheets unavailable: {why}")
-    tag_bits = "; ".join(f"{k} = {v}" for k, v in sorted(f.tags_used.items()))
-    if tag_bits:
-        notes.append(f"XBRL tags: {tag_bits}")
+    # (statement completeness is declared on the Cover per a6; the full
+    # XBRL tag map is a real table on the Audit sheet — no more walls)
     r += 1
     for note in notes:
         c = ws.cell(row=r, column=1, value=note)
@@ -889,6 +783,7 @@ def export_financial_model(d: DashboardData, path: str) -> str:
     # per-axis Segments sheet; downstream extraction reads from here.
     _write_statement_sheets(wb, d)
     _write_segments_sheet(wb, d, qdata)
+    _write_audit_sheet(wb, d, qdata, res, verdict)
     wb.save(path)
     return path
 
@@ -1123,3 +1018,166 @@ def _write_segments_sheet(wb, d: DashboardData,
     ws.column_dimensions["A"].width = 36
     for j in range(2, len(spans) + 2):
         ws.column_dimensions[get_column_letter(j)].width = 13.5
+
+
+def _write_audit_sheet(wb, d: DashboardData, qdata, res=None,
+                       verdict=None) -> None:
+    """v3 R3c: the Audit sheet — the report's P6 tables as real tables
+    (data audit, XBRL tag map, gap-rescue log, segment provenance,
+    warnings register). Full content, untruncated by construction; the
+    Model sheet keeps one-line pointers here."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    ink = P.INK_PRIMARY.lstrip("#").upper()
+    forest = P.GUI_SIDEBAR_BG.lstrip("#").upper()
+    cream = P.SURFACE.lstrip("#").upper()
+    muted = P.INK_MUTED.lstrip("#").upper()
+    bad = P.DELTA_BAD.lstrip("#").upper()
+    section_fill = PatternFill("solid", fgColor="DFE9E1")
+
+    ws = wb.create_sheet("Audit")
+    ws.sheet_view.showGridLines = False
+    widths = {"A": 30, "B": 10, "C": 16, "D": 16, "E": 22, "F": 60}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+    r = 1
+
+    def section(title: str) -> None:
+        nonlocal r
+        c = ws.cell(row=r, column=1, value=title)
+        for j in range(1, 7):
+            ws.cell(row=r, column=j).fill = section_fill
+        c.font = Font(bold=True, color=forest, size=10)
+        r += 2 if r > 1 else 1
+
+    def line(text: str, color: str = None, col: int = 1,
+             bold: bool = False) -> None:
+        nonlocal r
+        c = ws.cell(row=r, column=col, value=text)
+        c.font = Font(color=color or muted, size=9, bold=bold)
+        r += 1
+
+    # ---- 1. provider data audit (moved from the Model sheet) ----------
+    section("DATA AUDIT — provider recheck (EDGAR stays the displayed "
+            "truth)")
+    rep = getattr(d, "audit_report", None)
+    if rep is None:
+        line("provider recheck off — no FMP/Finnhub keys configured for "
+             "this run")
+    else:
+        line(rep.summary(), color=ink, bold=True)
+        if rep.entries:
+            from .reconcile import fmt_val
+            for j, h in enumerate(("Item", "FY", "EDGAR", "Provider",
+                                   "Source", "Status"), start=1):
+                hc = ws.cell(row=r, column=j, value=h)
+                hc.font = Font(bold=True, color=forest, size=9)
+            r += 1
+            status = {"divergent": "DIVERGENT",
+                      "restated": "RESTATED (EDGAR carries the recast; "
+                                  "provider carries the original)",
+                      "rescuable": "RESCUABLE (EDGAR empty)"}
+            for e in rep.entries:
+                src = ("FMP (aggregator)" if e.source == "FMP"
+                       else "Finnhub as-reported (aggregator)")
+                vals = (e.item, e.fy, fmt_val(e.ours, e.unit),
+                        fmt_val(e.theirs, e.unit), src,
+                        status.get(e.kind, e.kind))
+                color = bad if e.kind == "divergent" else muted
+                for j, v in enumerate(vals, start=1):
+                    c = ws.cell(row=r, column=j, value=v)
+                    c.font = Font(color=color, size=9)
+                    c.alignment = Alignment(
+                        horizontal="right" if j in (3, 4) else "left")
+                r += 1
+        else:
+            line("every compared item-year matches within tolerance")
+        line("Tolerance ±2% (floor $2M); a provider value of exactly 0 is "
+             "treated as absent; provider values never replace EDGAR "
+             "numbers anywhere in this workbook.")
+    r += 1
+
+    # ---- 2. XBRL tag map ---------------------------------------------
+    section("XBRL TAG MAP — concept: winning tag (coverage; gap fills; "
+            "amendments)")
+    f = getattr(d, "fundamentals", None)
+    tags = getattr(f, "tags_used", None) or {}
+    if tags:
+        for concept in sorted(tags):
+            ws.cell(row=r, column=1, value=concept).font = Font(
+                color=ink, size=9)
+            c = ws.cell(row=r, column=2, value=str(tags[concept]))
+            c.font = Font(color=muted, size=9)
+            r += 1
+    else:
+        line("no tag audit available")
+    r += 1
+
+    # ---- 3. gap-rescue & selection log --------------------------------
+    section("GAP-RESCUE & SELECTION LOG")
+    wrote = False
+    for note in (getattr(f, "selection_notes", None) or []):
+        line(str(note), color=ink)
+        wrote = True
+    for note in (getattr(qdata, "source_notes", None) or []):
+        line("Interim gap-fill: " + str(note), color=ink)
+        wrote = True
+    if getattr(d, "statements_note", ""):
+        line(f"Statements: {d.statements_note}", color=ink)
+        wrote = True
+    if getattr(d, "price_error", ""):
+        line(f"Prices: {d.price_error}", color=bad)
+        wrote = True
+    if not wrote:
+        line("no substitutions or rescues this run")
+    r += 1
+
+    # ---- 4. segment provenance ----------------------------------------
+    section("SEGMENTS — STATUS AS DIAGNOSED")
+    seg = getattr(d, "segments", None)
+    if seg is None or not seg.lines:
+        line("no dimensional segment data parsed")
+    else:
+        line(f"source: {seg.source or 'latest filings'}", color=ink)
+        if seg.status:
+            line(f"status: {seg.status}", color=ink)
+        cov = list(seg.coverage or [])
+        if cov:
+            matched = sum(1 for _, n in cov if n > 0)
+            line(f"coverage: dimensional facts found in {matched}/"
+                 f"{len(cov)} instances", color=ink)
+            for label, n in cov:
+                line(f"  {label} — {n} facts")
+        for b in (seg.breaks or []):
+            line("Segment recast — series are not comparable across this "
+                 "boundary: " + str(b), color=bad)
+        for rc in (seg.recast_log or []):   # FULL log — never elided
+            line("restated segment value: " + str(rc), color=bad)
+        disc = [f"{ln.member} ({ln.group} by {ln.axis})"
+                for ln in seg.lines if getattr(ln, "discontinuous", False)]
+        if disc:
+            line("discontinuous series (interior fiscal year missing "
+                 "while axis peers report one): " + ", ".join(disc),
+                 color=bad)
+    r += 1
+
+    # ---- 5. warnings register ------------------------------------------
+    section("WARNINGS REGISTER")
+    wrote = False
+    for note in (getattr(d, "health_notes", None) or []):
+        line(str(note), color=ink)
+        wrote = True
+    if res is not None:
+        for w in res.warnings:
+            line(f"valuation: {w}", color=bad)
+            wrote = True
+        for c_ in res.cases:
+            for w in c_.warnings:
+                line(f"{c_.name}: {w}", color=bad)
+                wrote = True
+    if verdict is not None:
+        for note in verdict.notes:
+            line(f"verdict: {note}")
+            wrote = True
+    if not wrote:
+        line("no warnings this run")

@@ -294,8 +294,12 @@ def create_app(pipeline: Optional[Callable] = None,
         stamp = d.generated.isoformat()
         if kind == "model":
             from forensic_viz.model_export import export_financial_model
+            # v3 R3c: the Cover mirrors P1 when a valuation is attached
+            held = app.state.valuations.get(d.ticker)
+            res_v = held if held is not None else (None, None)
             path = out_dir / f"{d.ticker}_financial_model_{stamp}.xlsx"
-            export_financial_model(d, str(path))
+            export_financial_model(d, str(path), res=res_v[0],
+                                   verdict=res_v[1])
         elif kind == "fill":
             # the forensic shell fill — the run's third artifact, on
             # request (charter R3); res/verdict attach when computed

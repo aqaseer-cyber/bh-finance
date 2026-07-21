@@ -81,8 +81,11 @@ def test_mixed_basis_ltm_suppressed_with_footnote(tmp_path):
     # instants tagged only at FY-ends are older than the newest quarter
     assert "older than the newest quarter column" in joined
     assert "Retained Earnings (2025-12-31)" in joined
-    # gap-fill audit rides verbatim
-    assert any(lbl.startswith("Interim gap-fill: ") for lbl in labels)
+    # gap-fill audit rides verbatim — on the Audit sheet (R3c)
+    aud = load_workbook(str(out))["Audit"]
+    aud_labels = [str(aud.cell(row=r, column=1).value or "")
+                  for r in range(1, aud.max_row + 1)]
+    assert any(lbl.startswith("Interim gap-fill: ") for lbl in aud_labels)
 
 
 def test_both_fy_legs_combine():

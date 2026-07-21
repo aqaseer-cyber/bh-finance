@@ -363,12 +363,14 @@ def main(argv=None) -> int:
         except Exception:
             pass
 
-    # v3 R3: the workbook is the run's second artifact, always produced
+    # v3 R3: the workbook is the run's second artifact, always produced;
+    # R3c — the Cover mirrors the report's P1 when a valuation ran
     from .model_export import export_financial_model
     model_path = (args.model
                   or f"{data.ticker}_financial_model_{stamp}.xlsx")
-    export_financial_model(data, model_path)
-    print(f"wrote {model_path} (Cover · Model · IS · BS · CF · Segments)")
+    export_financial_model(data, model_path, res=res, verdict=verdict)
+    print(f"wrote {model_path} (Cover · Model · IS · BS · CF · "
+          "Segments · Audit)")
 
     if args.xlsx is not None:
         from .workbook import fill_workbook
