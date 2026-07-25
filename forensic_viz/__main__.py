@@ -299,8 +299,6 @@ def main(argv=None) -> int:
     if args.sbc_override is not None:
         data.sbc_override = args.sbc_override
 
-    from .dashboard import render_report
-    from .export import export_pdf
     from .valuation import ValuationError
     from .verdict import build_verdict
 
@@ -330,14 +328,28 @@ def main(argv=None) -> int:
     except Exception:
         pass
 
-    stamp = data.generated.isoformat()
-    years = data.display_years
-    out = args.out or f"{data.ticker}_{years}y_report_{stamp}.pdf"
-    if not out.lower().endswith(".pdf"):
-        out += ".pdf"
-    export_pdf(render_report(data, res, verdict, open_triggers=open_trigs,
-                             prior=prior, dpi=args.dpi), out)
-    print(f"wrote {out} (A4)")
+    # v3 R3d: one command, one run, all artifacts under one
+    # {TICKER}_{date}_{run_id} stem — report + model (+ shell when a
+    # valuation is attached) + the run-manifest receipt; the
+    # cross-artifact consistency contract aborts an inconsistent run
+    from .export import ConsistencyError, export_run
+    try:
+        manifest = export_run(
+            data, res=res, verdict=verdict, out_dir=".", dpi=args.dpi,
+            open_triggers=open_trigs, prior=prior,
+            report_path=args.out or None, model_path=args.model or None,
+            shell_path=args.xlsx or None)
+    except ConsistencyError as exc:
+        _report_error(str(exc))
+        return 3
+    for kind in ("report", "model", "shell"):
+        art = manifest["artifacts"].get(kind)
+        if art:
+            print(f"wrote {art['path']} ({kind})")
+    if args.xlsx is not None and "shell" not in manifest["artifacts"]:
+        print("note: shell fill skipped — it needs a valuation (--value)")
+    print(f"wrote {manifest['manifest_path']} (run manifest · "
+          f"run {manifest['run_id']} · inputs {manifest['input_hash']})")
 
     if data.price_error:
         print(f"note: price sources unavailable ({data.price_error}); "
@@ -362,26 +374,6 @@ def main(argv=None) -> int:
             print("  ledger updated (see --ledger)")
         except Exception:
             pass
-
-    # v3 R3: the workbook is the run's second artifact, always produced;
-    # R3c — the Cover mirrors the report's P1 when a valuation ran
-    from .model_export import export_financial_model
-    model_path = (args.model
-                  or f"{data.ticker}_financial_model_{stamp}.xlsx")
-    export_financial_model(data, model_path, res=res, verdict=verdict)
-    print(f"wrote {model_path} (Cover · Model · IS · BS · CF · "
-          "Segments · Audit)")
-
-    if args.xlsx is not None:
-        from .workbook import fill_workbook
-        xlsx_path = args.xlsx or f"{data.ticker}_forensic_model_{stamp}.xlsx"
-        report = fill_workbook(data, xlsx_path, res=res, verdict=verdict)
-        print(f"wrote {xlsx_path} ({report.filled} blue cells filled)")
-        for n in report.notes or []:
-            print(f"  ! {n}")
-        print("  analyst cells remaining (judgment stays with you):")
-        for sheet, cells, label, source in report.analyst_cells:
-            print(f"    {sheet}!{cells:<8} {label} -> {source}")
     return 0
 
 

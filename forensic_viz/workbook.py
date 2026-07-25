@@ -376,6 +376,20 @@ def fill_workbook(d: DashboardData, out_path: str, res=None, verdict=None,
             sentence += f"; named optionality: {verdict.optionality}"
         put("Phase5_Verdict", "A35", sentence)
 
+    # v3 R3d: the run-identity stamp — a Control-sheet comment carrying
+    # run_id · input hash · generated · app version (plus the verdict's
+    # FV/MoS so the cross-artifact consistency check can read this
+    # artifact back; export.assert_run_consistency parses it)
+    from .runid import run_identity
+    rid, ihash = run_identity(d, res)
+    stamp = (f"Run {rid} · inputs {ihash} · generated "
+             f"{d.generated.isoformat()} · app {config.APP_VERSION}")
+    if verdict is not None and verdict.fv_avg is not None:
+        stamp += f" · FV_avg {verdict.fv_avg!r}"
+        if verdict.mos is not None:
+            stamp += f" · MoS {verdict.mos!r}"
+    comments[("Control", "B7")] = stamp
+
     for (sheet, cell), value in writes.items():
         wb[sheet][cell] = value
     from openpyxl.comments import Comment

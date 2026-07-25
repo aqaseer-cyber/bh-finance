@@ -191,3 +191,40 @@ smoke 10/10, goldens byte-identical, engine modules untouched
 7 sheets; PYPL shows the declared-missing statement line if a6's
 fallback still can't identify its income statement; formats
 spot-checked; Cover FV vs the PDF P1 vs the shell.
+
+---
+
+# R3d — the shell, naming, and the consistency contract
+
+The export design's last slice; R3 is now feature-complete.
+
+- **Shell stamp** — `fill_workbook` stamps a Control!B7 comment with
+  `run_id · input hash · generated · app version` plus the verdict's
+  FV_avg/MoS (full precision), so the shell artifact can be read back
+  and checked like the others.
+- **Naming** — every artifact of a run shares one stem:
+  `{TICKER}_{YYYY-MM-DD}_{run_id}_{report|model|shell|manifest}`
+  (`runid.artifact_name`). The scattered per-feature patterns
+  (`_financial_model_`, `_forensic_model_`, `_{years}y_report_`) are
+  deleted from the CLI and every API endpoint. Explicit --out/--model/
+  --xlsx paths still win.
+- **The bundle** — `export.export_run` produces the report, the model,
+  the shell (when a valuation is attached — otherwise the manifest
+  DECLARES the omission), runs the consistency contract, and only then
+  writes the run-manifest JSON (paths · sha256 · bytes · providers ·
+  rating/FV/MoS · warnings count): an inconsistent run never gets a
+  receipt. CLI runs now go through it (one command → exactly four
+  files on a valued run); the web shell gains a "Run bundle" button
+  (`/api/export/run`).
+- **The abort** — `assert_run_consistency` reads the model Cover's
+  FV/MoS cells and the shell's stamp and compares both against the
+  verdict object (the report prints from that same object); any
+  disagreement beyond float round-trip raises ConsistencyError with
+  the diff. The design-gate test corrupts the model's FV (and,
+  separately, the shell's stamp) and expects the abort.
+
+Gate status: offline — suite 351/0 (7 new in tests/test_r3d.py),
+smoke 10/10 (paths now carry the unified stem), fill gate 100%,
+goldens byte-identical; engine scope: workbook.py touched only for
+the R3d-authorized stamp. Owner-run — one MELI command produces four
+files with matching run_ids; Run-bundle button in the shell.

@@ -46,6 +46,25 @@ def _valuation_inputs(res) -> Optional[dict]:
     }
 
 
+ARTIFACT_EXT = {"report": "pdf", "model": "xlsx", "shell": "xlsx",
+                "manifest": "json"}
+
+
+def artifact_stem(d, res=None) -> str:
+    """`{TICKER}_{YYYY-MM-DD}_{run_id}` — the one naming stem every
+    artifact of a run shares (design R3d; the scattered per-feature
+    filename patterns are dead)."""
+    rid, _ = run_identity(d, res)
+    return f"{d.ticker.upper()}_{d.generated.isoformat()}_{rid}"
+
+
+def artifact_name(d, res, kind: str) -> str:
+    """`{stem}_{report|model|shell|manifest}.{pdf|xlsx|json}`."""
+    if kind not in ARTIFACT_EXT:
+        raise ValueError(f"unknown artifact kind {kind!r}")
+    return f"{artifact_stem(d, res)}_{kind}.{ARTIFACT_EXT[kind]}"
+
+
 def run_identity(d, res=None) -> Tuple[str, str]:
     """(run_id, input_hash) — deterministic for identical inputs.
 

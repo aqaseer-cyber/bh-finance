@@ -291,30 +291,24 @@ def create_app(pipeline: Optional[Callable] = None,
         out_dir = Path(body.get("out_dir")
                        or (docs if docs.is_dir() else Path.cwd()))
         out_dir.mkdir(parents=True, exist_ok=True)
-        stamp = d.generated.isoformat()
+        # v3 R3d: every artifact of a run shares one
+        # {TICKER}_{date}_{run_id} stem — the scattered patterns are dead
+        from forensic_viz.runid import artifact_name
+        held = app.state.valuations.get(d.ticker)
+        res, verdict = held if held is not None else (None, None)
         if kind == "model":
             from forensic_viz.model_export import export_financial_model
             # v3 R3c: the Cover mirrors P1 when a valuation is attached
-            held = app.state.valuations.get(d.ticker)
-            res_v = held if held is not None else (None, None)
-            path = out_dir / f"{d.ticker}_financial_model_{stamp}.xlsx"
-            export_financial_model(d, str(path), res=res_v[0],
-                                   verdict=res_v[1])
+            path = out_dir / artifact_name(d, res, "model")
+            export_financial_model(d, str(path), res=res, verdict=verdict)
         elif kind == "fill":
-            # the forensic shell fill — the run's third artifact, on
-            # request (charter R3); res/verdict attach when computed
             from forensic_viz.workbook import fill_workbook
-            held = app.state.valuations.get(d.ticker)
-            res_v = held if held is not None else (None, None)
-            path = out_dir / f"{d.ticker}_forensic_model_{stamp}.xlsx"
-            fill_workbook(d, str(path), res=res_v[0],
-                          verdict=res_v[1])
+            path = out_dir / artifact_name(d, res, "shell")
+            fill_workbook(d, str(path), res=res, verdict=verdict)
         elif kind == "pdf":
             # v3 R3b: the six-section report — one assembly call
             from forensic_viz.dashboard import render_report
             from forensic_viz.export import export_pdf
-            held = app.state.valuations.get(d.ticker)
-            res, verdict = held if held is not None else (None, None)
             open_trigs = None
             try:
                 from forensic_viz.ledger import Ledger
@@ -323,11 +317,32 @@ def create_app(pipeline: Optional[Callable] = None,
             except Exception:
                 pass
             prior = app.state.prior_verdicts.get(d.ticker)
-            path = out_dir / f"{d.ticker}_{d.display_years}y_report_" \
-                             f"{stamp}.pdf"
+            path = out_dir / artifact_name(d, res, "report")
             export_pdf(render_report(d, res, verdict,
                                      open_triggers=open_trigs,
                                      prior=prior), str(path))
+        elif kind == "run":
+            # v3 R3d: the whole bundle — report + model (+ shell when a
+            # valuation is attached) + the run-manifest receipt, with
+            # the cross-artifact consistency contract enforced
+            from forensic_viz.export import ConsistencyError, export_run
+            open_trigs = None
+            try:
+                from forensic_viz.ledger import Ledger
+                open_trigs = [t["trigger_text"] for t in
+                              Ledger().open_triggers(d.ticker)]
+            except Exception:
+                pass
+            try:
+                manifest = export_run(
+                    d, res=res, verdict=verdict, out_dir=str(out_dir),
+                    open_triggers=open_trigs,
+                    prior=app.state.prior_verdicts.get(d.ticker))
+            except ConsistencyError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            return {"schema": SCHEMA_VERSION, "kind": "export_run",
+                    "data": {"path": manifest["manifest_path"],
+                             "manifest": manifest}}
         else:
             raise HTTPException(status_code=404,
                                 detail=f"unknown export kind {kind!r}")
