@@ -22,7 +22,7 @@ Mac, so the template is assembled by hand once.
 In Terminal, from the add-in folder:
 
 ```bash
-./build/inject-ribbon.sh ~/Desktop/LegalContractACG.dotm
+./installer/inject-ribbon.sh ~/Desktop/LegalContractACG.dotm
 ```
 
 Needs `unzip`, `zip` and `python3`, which macOS ships.

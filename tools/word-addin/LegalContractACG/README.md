@@ -18,7 +18,7 @@ LegalContractACG/
 ├── Formats/
 │   ├── LegalContractACG.ini   the format shipped with the add-in
 │   └── _TEMPLATE.ini          every key documented; copy it to make a new format
-├── build/
+├── installer/
 │   ├── Build-AddIn.ps1    Windows: build the .dotm and install it (one command)
 │   └── inject-ribbon.sh   Mac/Linux: add the ribbon to a .dotm saved from the VBA editor
 ├── docs/INSTALL-MAC.md
@@ -99,11 +99,11 @@ One-time preparation, needed only while building:
 Then, in PowerShell, from this folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build\Build-AddIn.ps1 -Install
+powershell -ExecutionPolicy Bypass -File .\installer\Build-AddIn.ps1 -Install
 ```
 
 The script starts Word invisibly, imports `src\*`, saves
-`build\out\LegalContractACG.dotm`, injects the ribbon, and copies:
+`installer\out\LegalContractACG.dotm`, injects the ribbon, and copies:
 
 | What | Where |
 |---|---|
@@ -135,7 +135,7 @@ or the tab does not appear:
    in `src\` one by one.
 2. Back in Word, **File → Save As** → type *Word Macro-Enabled Template
    (.dotm)* → name `LegalContractACG.dotm`.
-3. Run `build\inject-ribbon.sh` on it (Git Bash works), or add
+3. Run `installer\inject-ribbon.sh` on it (Git Bash works), or add
    `customUI/customUI14.xml` with the Office Custom UI Editor.
 4. Copy the `.dotm` to `%APPDATA%\Microsoft\Word\STARTUP\` and the `Formats`
    folder to `%APPDATA%\Microsoft\Word\STARTUP\LegalContractACG\Formats\`.
@@ -143,7 +143,7 @@ or the tab does not appear:
 ## Install — Mac
 
 See [docs/INSTALL-MAC.md](docs/INSTALL-MAC.md). Same VBA, imported through
-the VBA editor, ribbon injected with `build/inject-ribbon.sh`, template copied
+the VBA editor, ribbon injected with `installer/inject-ribbon.sh`, template copied
 to Word's startup folder.
 
 ## Using it
