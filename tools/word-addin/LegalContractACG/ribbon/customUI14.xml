@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="Ribbon_OnLoad">
+  <ribbon>
+    <tabs>
+      <tab id="tabLegalContractACG" label="Legal Contract ACG" insertAfterMso="TabHome">
+
+        <group id="grpApply" label="Apply Format">
+          <button id="btnApplyDefault"
+                  label="Legal Contract ACG"
+                  size="large"
+                  imageMso="FormatPainter"
+                  screentip="Apply the Legal Contract ACG format"
+                  supertip="Formats the whole active document in place: page setup, fonts, article / clause / sub-clause numbering, signature block, tables and the page footer. One Ctrl+Z undoes everything."
+                  onAction="Ribbon_ApplyDefault"/>
+          <dynamicMenu id="mnuFormats"
+                       label="Other Formats"
+                       size="large"
+                       imageMso="FileOpen"
+                       screentip="Apply another installed format"
+                       supertip="Lists every format profile (.ini) found in the formats folders. Drop a new profile into the folder and click Refresh to add a format."
+                       getContent="Ribbon_GetFormatsMenu"/>
+        </group>
+
+        <group id="grpMark" label="Mark Paragraph As">
+          <button id="btnMarkArticle" label="Article" imageMso="Numbering" screentip="Numbered article heading (1.)" onAction="Ribbon_MarkArticle"/>
+          <button id="btnMarkClause" label="Clause" imageMso="OutlineDemote" screentip="Numbered clause (1.1)" onAction="Ribbon_MarkClause"/>
+          <button id="btnMarkSubClause" label="Sub-clause" imageMso="OutlineDemote" screentip="Lettered sub-clause (a)" onAction="Ribbon_MarkSubClause"/>
+          <button id="btnMarkBody" label="Body" imageMso="ParagraphMarks" screentip="Plain body paragraph (no number)" onAction="Ribbon_MarkBody"/>
+          <menu id="mnuMarkMore" label="More" imageMso="OutlinePromote" itemSize="normal">
+            <button id="btnMarkTitle" label="Title" onAction="Ribbon_MarkTitle"/>
+            <button id="btnMarkSubtitle" label="Subtitle" onAction="Ribbon_MarkSubtitle"/>
+            <button id="btnMarkRecital" label="Party recital (1) ..." onAction="Ribbon_MarkRecital"/>
+            <button id="btnMarkHeading" label="Unnumbered heading" onAction="Ribbon_MarkHeading"/>
+            <button id="btnMarkQuote" label="Indented paragraph" onAction="Ribbon_MarkQuote"/>
+            <button id="btnMarkSignature" label="Signature line" onAction="Ribbon_MarkSignature"/>
+            <button id="btnMarkScheduleHeading" label="Schedule heading" onAction="Ribbon_MarkScheduleHeading"/>
+          </menu>
+        </group>
+
+        <group id="grpTools" label="Tools">
+          <button id="btnRefresh" label="Refresh" imageMso="Refresh" screentip="Re-read the formats folder" onAction="Ribbon_Refresh"/>
+          <button id="btnOpenFolder" label="Formats Folder" imageMso="FileOpen" screentip="Open the folder where format profiles live" onAction="Ribbon_OpenFolder"/>
+          <button id="btnAbout" label="About" imageMso="Info" screentip="Version, folders and the format last applied to this document" onAction="Ribbon_About"/>
+        </group>
+
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
