@@ -75,10 +75,18 @@ function Build-Template {
 
         $modules = Get-ChildItem -Path $srcDir -Include *.bas, *.cls -Recurse | Sort-Object Name
         if (-not $modules) { throw "No VBA sources found in $srcDir" }
+        # The VBA editor expects CRLF; normalise into a temp copy so a checkout
+        # with LF endings still imports cleanly.
+        $tmp = Join-Path $outDir 'tmp-src'
+        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
         foreach ($m in $modules) {
+            $text = (Get-Content -Raw -Path $m.FullName) -replace "`r`n", "`n" -replace "`n", "`r`n"
+            $copy = Join-Path $tmp $m.Name
+            [System.IO.File]::WriteAllText($copy, $text, (New-Object System.Text.UTF8Encoding($false)))
             Write-Host "    import $($m.Name)"
-            $null = $vbp.VBComponents.Import($m.FullName)
+            $null = $vbp.VBComponents.Import($copy)
         }
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
         $doc.SaveAs2($outFile, $wdFormatXMLTemplateMacroEnabled)
         $doc.Close($false)

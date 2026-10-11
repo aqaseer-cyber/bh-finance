@@ -60,9 +60,10 @@ Public Sub ApplyProfileToActiveDocument(ByVal profilePath As String)
     If prof.GetBool("Options", "ShowSummary", True) Then MsgBox msg, vbInformation, APP_NAME
     Exit Sub
 Fail:
+    msg = Err.Description
     Application.ScreenUpdating = True
     If undoStarted Then EndUndo
-    MsgBox "Formatting stopped with an error:" & vbCrLf & Err.Description & vbCrLf & vbCrLf & _
+    MsgBox "Formatting stopped with an error:" & vbCrLf & msg & vbCrLf & vbCrLf & _
            "Use Undo (Ctrl+Z) to revert the partial change.", vbCritical, APP_NAME
 End Sub
 
@@ -102,9 +103,11 @@ Public Sub MarkSelectionAs(ByVal k As ParaKind)
     If undoStarted Then EndUndo
     Exit Sub
 Fail:
+    Dim errMsg As String
+    errMsg = Err.Description
     Application.ScreenUpdating = True
     If undoStarted Then EndUndo
-    MsgBox "Could not mark the selection: " & Err.Description, vbCritical, APP_NAME
+    MsgBox "Could not mark the selection: " & errMsg, vbCritical, APP_NAME
 End Sub
 
 ' ---------------------------------------------------------------------------
@@ -396,18 +399,19 @@ End Function
 ' Main pass over the body
 ' ---------------------------------------------------------------------------
 Private Sub ClassifyAndApply(ByVal doc As Document, ByVal prof As clsProfile, ByRef st As ApplyStats)
-    Dim para As Paragraph, k As ParaKind, ctx As DocContext, seenTitle As Boolean
+    Dim para As Paragraph, k As ParaKind, ctx As DocContext, seenTitle As Boolean, lastKind As ParaKind
     Dim stripIt As Boolean, plen As Long
 
     ctx = dcFront
     seenTitle = False
+    lastKind = pkBody
     ' The paragraph count never changes during the walk: only characters
     ' inside paragraphs are deleted, so For Each is safe here.
     For Each para In doc.Content.Paragraphs
         If para.Range.Information(wdWithInTable) Then GoTo NextPara
         If para.Range.StoryType <> wdMainTextStory Then GoTo NextPara
         If IsContentControlOrField(para) Then GoTo NextPara
-        k = ClassifyParagraph(doc, para, prof, ctx, seenTitle, stripIt, plen)
+        k = ClassifyParagraph(doc, para, prof, ctx, seenTitle, lastKind, stripIt, plen)
         ApplyKindToParagraph doc, para, k, prof, stripIt, plen
         st.Counts(k) = st.Counts(k) + 1
         If stripIt Then st.Stripped = st.Stripped + 1
@@ -432,10 +436,15 @@ Public Sub ApplyKindToParagraph(ByVal doc As Document, ByVal para As Paragraph, 
     section = KindSection(k)
     styleName = KindStyleName(prof, k)
 
-    ' 1. remove typed prefix
+    ' 1. remove typed prefix (within the paragraph's own story: body, text box, header ...)
     If stripIt And plen > 0 Then
-        Set r = doc.Range(para.Range.Start, para.Range.Start + plen)
-        If Len(r.Text) = plen Then r.Delete
+        Set r = para.Range.Duplicate
+        r.End = r.Start + plen
+        If Len(r.Text) = plen Then
+            On Error Resume Next          ' locked content control: leave the number in place
+            r.Delete
+            On Error GoTo 0
+        End If
     End If
 
     ' 2. old Word numbering (bullets are kept on unnumbered kinds)
@@ -462,10 +471,16 @@ Public Sub ApplyKindToParagraph(ByVal doc As Document, ByVal para As Paragraph, 
 
     ' 4. flatten direct character formatting that fights the style, keep emphasis
     If prof.GetBool("Options", "ClearDirectFontFormatting", True) Then
+        ' Only touch what differs from the style (a mixed value reads as "" / 9999999),
+        ' so a clean paragraph keeps following the style when the style is edited later.
+        Dim wantFont As String, wantSize As Double, wantColor As Long
+        wantFont = prof.StyleStr(section, "Font", "Times New Roman")
+        wantSize = prof.StyleNum(section, "Size", 12)
+        wantColor = prof.StyleColor(section, "Color", wdColorAutomatic)
         With para.Range.Font
-            .Name = prof.StyleStr(section, "Font", "Times New Roman")
-            .Size = prof.StyleNum(section, "Size", 12)
-            .Color = prof.StyleColor(section, "Color", wdColorAutomatic)
+            If StrComp(.Name, wantFont, vbTextCompare) <> 0 Then .Name = wantFont
+            If .Size <> wantSize Then .Size = wantSize
+            If .Color <> wantColor Then .Color = wantColor
             If prof.GetBool("Options", "ClearHighlight", False) Then para.Range.HighlightColorIndex = wdNoHighlight
         End With
         If prof.StyleBool(section, "Bold", False) Then para.Range.Font.Bold = True
@@ -490,8 +505,11 @@ Private Sub BoldLeadIn(ByVal para As Paragraph, ByVal prof As clsProfile, ByVal 
     If para.Range.Font.Bold <> False Then Exit Sub         ' already has bold somewhere -> author's choice
     txt = ParaText(para)
     maxLen = CLng(prof.GetNum(section, "LeadInMaxLength", 70))
-    maxWords = CLng(prof.GetNum(section, "LeadInMaxWords", 7))
+    maxWords = CLng(prof.GetNum(section, "LeadInMaxWords", 5))
     stopChars = prof.GetStr(section, "LeadInStop", ".:")
+    ' a clause that simply starts with a sentence ("The Consultant shall ...") has no lead-in
+    If StartsWithAny(txt, prof.GetStr(section, "LeadInSkipStarts", _
+            "The|A|An|This|Each|No|Any|All|If|Where|In|On|For|Subject|Notwithstanding|Neither|Either|Nothing|Unless|Except|Within|During|Upon")) Then Exit Sub
     For i = 1 To Len(txt)
         If i > maxLen Then Exit Sub
         c = Mid$(txt, i, 1)
@@ -565,7 +583,7 @@ End Sub
 ' Tables
 ' ---------------------------------------------------------------------------
 Private Sub FormatTables(ByVal doc As Document, ByVal prof As clsProfile, ByRef st As ApplyStats)
-    Dim t As Table, c As Cell, rw As Row, firstRow As Boolean, shade As Long, p As Paragraph
+    Dim t As Table, c As Cell, shade As Long, p As Paragraph
     Dim textStyle As String, headStyle As String, bw As Double
     If Not prof.GetBool("Table", "Enabled", True) Then Exit Sub
     textStyle = KindStyleName(prof, pkTableText)
@@ -592,30 +610,39 @@ Private Sub FormatTables(ByVal doc As Document, ByVal prof As clsProfile, ByRef 
         t.RightPadding = prof.GetLen("Table", "CellPaddingRight", 5)
         On Error GoTo 0
 
-        firstRow = True
-        For Each rw In t.Rows
-            For Each c In rw.Cells
-                For Each p In c.Range.Paragraphs
-                    If firstRow And prof.GetBool("Table", "FirstRowIsHeader", True) Then
-                        ApplyKindToParagraph doc, p, pkTableHeading, prof, False, 0
-                    Else
-                        ApplyKindToParagraph doc, p, pkTableText, prof, False, 0
-                    End If
-                Next
-                If firstRow And prof.GetBool("Table", "FirstRowIsHeader", True) Then
-                    On Error Resume Next
-                    c.Shading.Texture = wdTextureNone
-                    c.Shading.BackgroundPatternColor = shade
-                    On Error GoTo 0
+        ' Header-row treatment: not for one-row tables or signature-block tables.
+        Dim headerRow As Boolean, firstRowText As String
+        headerRow = prof.GetBool("Table", "FirstRowIsHeader", True)
+        On Error Resume Next
+        If t.Rows.Count < 2 Then headerRow = False
+        firstRowText = ""
+        For Each c In t.Range.Cells
+            If c.RowIndex = 1 Then firstRowText = firstRowText & " " & CleanText(c.Range.Text)
+        Next
+        On Error GoTo 0
+        If ContainsAny(firstRowText, prof.GetStr("Table", "SignatureTableWords", "Signed|Signature|For and on behalf|For the|Name:|Witness")) Then headerRow = False
+
+        ' Walk cells through t.Range.Cells: Rows/Row.Cells fail on vertically merged cells.
+        For Each c In t.Range.Cells
+            For Each p In c.Range.Paragraphs
+                If headerRow And c.RowIndex = 1 Then
+                    ApplyKindToParagraph doc, p, pkTableHeading, prof, False, 0
+                Else
+                    ApplyKindToParagraph doc, p, pkTableText, prof, False, 0
                 End If
             Next
-            If firstRow And prof.GetBool("Table", "FirstRowIsHeader", True) Then
+            If headerRow And c.RowIndex = 1 Then
                 On Error Resume Next
-                rw.HeadingFormat = True
+                c.Shading.Texture = wdTextureNone
+                c.Shading.BackgroundPatternColor = shade
                 On Error GoTo 0
             End If
-            firstRow = False
         Next
+        If headerRow Then
+            On Error Resume Next
+            t.Rows(1).HeadingFormat = True
+            On Error GoTo 0
+        End If
         st.Tables = st.Tables + 1
     Next
 End Sub

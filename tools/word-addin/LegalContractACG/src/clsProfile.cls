@@ -54,10 +54,12 @@ End Property
 
 ' Prefix put in front of every style the engine creates, e.g. "ACG ".
 Public Property Get StylePrefix() As String
-    Dim p As String
+    Dim p As String, last As String
     p = GetStr("Format", "StylePrefix", "ACG")
-    ' values are trimmed on load, so re-add the separating space
-    If Len(p) > 0 And Right$(p, 1) <> " " Then p = p & " "
+    If Len(p) = 0 Then p = "ACG"      ' an empty prefix would hijack built-in styles (Title, Quote ...)
+    ' values are trimmed on load, so re-add a separating space after a word-like prefix
+    last = Right$(p, 1)
+    If (last >= "A" And last <= "Z") Or (last >= "a" And last <= "z") Or (last >= "0" And last <= "9") Then p = p & " "
     StylePrefix = p
 End Property
 
@@ -66,7 +68,7 @@ End Property
 ' ---------------------------------------------------------------------------
 Public Function Load(ByVal filePath As String) As Boolean
     Dim f As Integer, lineText As String, section As String
-    Dim p As Long, k As String, v As String, firstLine As Boolean
+    Dim p As Long, k As String, v As String
 
     Set mKeys = New Collection
     Set mSections = New Collection
@@ -75,18 +77,26 @@ Public Function Load(ByVal filePath As String) As Boolean
     section = "Format"
 
     On Error GoTo Fail
+    ' Read the whole file as bytes and split on any line ending (CRLF, LF or
+    ' CR): Line Input only understands CR/CRLF and would read an LF-only file
+    ' as a single line.
+    Dim whole As String, lines() As String, li As Long
     f = FreeFile
-    Open filePath For Input As #f
-    firstLine = True
-    Do While Not EOF(f)
-        Line Input #f, lineText
-        If firstLine Then
-            ' strip UTF-8 byte order mark if the file was saved with one
-            If Len(lineText) >= 3 Then
-                If Left$(lineText, 3) = Chr$(239) & Chr$(187) & Chr$(191) Then lineText = Mid$(lineText, 4)
-            End If
-            firstLine = False
-        End If
+    Open filePath For Binary Access Read As #f
+    If LOF(f) > 0 Then
+        whole = String$(LOF(f), 0)
+        Get #f, 1, whole
+    End If
+    Close #f
+    If Len(whole) >= 3 Then
+        ' strip UTF-8 byte order mark if the file was saved with one
+        If Left$(whole, 3) = Chr$(239) & Chr$(187) & Chr$(191) Then whole = Mid$(whole, 4)
+    End If
+    whole = Replace(whole, vbCrLf, vbLf)
+    whole = Replace(whole, vbCr, vbLf)
+    lines = Split(whole, vbLf)
+    For li = LBound(lines) To UBound(lines)
+        lineText = lines(li)
         lineText = Trim$(lineText)
         If Len(lineText) = 0 Then GoTo NextLine
         If Left$(lineText, 1) = ";" Or Left$(lineText, 1) = "#" Then GoTo NextLine
@@ -107,8 +117,7 @@ Public Function Load(ByVal filePath As String) As Boolean
             SetValue section, k, v
         End If
 NextLine:
-    Loop
-    Close #f
+    Next li
     mLoaded = True
     Load = True
     Exit Function

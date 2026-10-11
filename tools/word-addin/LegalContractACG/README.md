@@ -84,6 +84,14 @@ one Undo step.
 - Cross-references typed as text (`Clause 3.1`) are **not** renumbered. Check
   them after the numbering settles.
 - Numbering levels deeper than three (`1.1.1.1`) fall back to Sub-clause.
+- Article numbering continues into a Schedule. If a schedule has its own
+  `1.` / `2.` articles, right-click the first one → *Restart at 1* after
+  formatting.
+- A short line such as `1) The Consultant shall deliver the report` with no
+  full stop is read as an article heading. Mark it as Clause if that is wrong.
+- The VBA has been desk-checked but not executed in this environment. Run it
+  on `test/sample-draft.docx` before using it on a live contract and report
+  anything that misbehaves.
 - Bullets on body paragraphs are kept but not restyled.
 - Fields other than a TOC are treated as ordinary text.
 - Word Online cannot run VBA. Desktop Word 2016 or later on Windows or Mac.

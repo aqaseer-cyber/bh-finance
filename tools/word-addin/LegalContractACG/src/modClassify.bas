@@ -96,7 +96,12 @@ Public Function ParsePrefix(ByVal raw As String) As PrefixInfo
                                 End If
                                 If EndsPrefix(raw, j) Then
                                     r.Kind = pxSingleNumber
-                                    r.Length = SkipSpaces(raw, j) - 1
+                                    j = SkipSpaces(raw, j)
+                                    ' "CLAUSE 3 - DEFINITIONS" / "ARTICLE 3: TERM": swallow the separator too
+                                    If j <= n Then
+                                        If InStr("-:" & ChrW$(8211) & ChrW$(8212), Mid$(raw, j, 1)) > 0 Then j = SkipSpaces(raw, j + 1)
+                                    End If
+                                    r.Length = j - 1
                                     ParsePrefix = r
                                     Exit Function
                                 End If
@@ -213,29 +218,39 @@ End Function
 '   prefixLen      out: how many characters to delete
 ' ---------------------------------------------------------------------------
 Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph, ByVal prof As clsProfile, _
-                                  ByRef ctx As DocContext, ByRef seenTitle As Boolean, _
+                                  ByRef ctx As DocContext, ByRef seenTitle As Boolean, ByRef lastKind As ParaKind, _
                                   ByRef stripPrefix As Boolean, ByRef prefixLen As Long) As ParaKind
     Dim raw As String, txt As String, k As ParaKind, px As PrefixInfo
     Dim maxHeading As Long, rest As String, styleName As String
-    Dim inList As Boolean, listStr As String, listLvl As Long
+    Dim inList As Boolean, listStr As String, listLvl As Long, prevKind As ParaKind
 
     stripPrefix = False
     prefixLen = 0
     raw = ParaText(para)
     txt = CleanText(raw)
     maxHeading = CLng(prof.GetNum("Classify", "MaxHeadingLength", 80))
+    prevKind = lastKind
 
-    If Len(txt) = 0 Then ClassifyParagraph = pkBody: Exit Function
+    If Len(txt) = 0 Then ClassifyParagraph = pkBody: Exit Function    ' empty lines do not change lastKind
 
     ' ---- 1. existing styles -------------------------------------------
     styleName = para.Style.NameLocal
     k = KindFromExistingStyle(doc, prof, styleName)
     If k <> -1 Then
+        ' a Heading 1 that is really a schedule or signature heading must not be numbered
+        If k = pkArticle Then
+            If StartsWithAny(txt, prof.GetStr("Classify", "ScheduleWords", "SCHEDULE|ANNEX|ANNEXURE|APPENDIX|EXHIBIT|ATTACHMENT")) Then
+                k = pkScheduleHeading
+            ElseIf IsAllCaps(txt) And ContainsAny(txt, prof.GetStr("Classify", "SignatureHeadingWords", "SIGNATURE|SIGNED|EXECUTION|WITNESS|EXECUTED")) Then
+                k = pkHeading
+            End If
+        End If
         ' still let typed prefixes be removed for headings that carry them
         px = ParsePrefix(raw)
         If KindIsNumbered(k) And px.Kind <> pxNone Then stripPrefix = True: prefixLen = px.Length
         UpdateContext ctx, k, txt
         If k = pkTitle Then seenTitle = True
+        lastKind = k
         ClassifyParagraph = k
         Exit Function
     End If
@@ -257,11 +272,12 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
         ElseIf InStr(listStr, ".") > 0 And CountDigitGroups(listStr) >= 2 Then
             k = pkClause
         ElseIf listLvl = 1 Then
-            k = pkClause
+            If IsHeadingShape(txt, maxHeading) Then k = pkArticle Else k = pkClause
         Else
             k = pkSubClause
         End If
         UpdateContext ctx, k, txt
+        lastKind = k
         ClassifyParagraph = k
         Exit Function
     End If
@@ -275,7 +291,8 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
                 ClassifyParagraph = pkTitle
                 Exit Function
             End If
-        ElseIf IsSubtitleShape(txt, maxHeading) And px.Kind = pxNone And Not IsAllCaps(txt) Then
+        ElseIf (prevKind = pkTitle Or prevKind = pkSubtitle) And IsSubtitleShape(txt, maxHeading) And px.Kind = pxNone And Not IsAllCaps(txt) Then
+            lastKind = pkSubtitle
             ClassifyParagraph = pkSubtitle
             Exit Function
         End If
@@ -285,6 +302,7 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
     If StartsWithAny(txt, prof.GetStr("Classify", "ScheduleWords", "SCHEDULE|ANNEX|ANNEXURE|APPENDIX|EXHIBIT|ATTACHMENT")) _
        And Len(txt) <= maxHeading And (IsAllCaps(txt) Or Right$(txt, 1) <> ".") Then
         ctx = dcSchedule
+        lastKind = pkScheduleHeading
         ClassifyParagraph = pkScheduleHeading
         Exit Function
     End If
@@ -296,6 +314,8 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
             Case pxSingleNumber
                 If IsAllCaps(rest) And Len(rest) <= maxHeading Then
                     k = pkArticle
+                ElseIf IsHeadingShape(rest, maxHeading) Then
+                    k = pkArticle                    ' "1. Definitions" in title case
                 ElseIf ctx = dcFront And prof.GetBool("Classify", "FrontNumbersAreRecitals", True) Then
                     k = pkRecital: stripPrefix = False
                     GoTo Done
@@ -326,8 +346,11 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
     End If
 
     ' ---- 6. signature block ----------------------------------------------
-    If StartsWithAny(txt, prof.GetStr("Classify", "SignatureLabels", _
-            "Name:|Title:|Position:|Signature:|Signed:|Date:|Email|E-mail|Telephone|Tel:|Company stamp|Stamp:|Witness|For and on behalf|For the|By:|Designation:")) Then
+    ' Label lines ("Name:", "Title:") count anywhere when short; inside the
+    ' signature block everything short is a signature line (step 8).
+    If Len(txt) <= CLng(prof.GetNum("Classify", "MaxSignatureLabelLength", 70)) And _
+       StartsWithAny(txt, prof.GetStr("Classify", "SignatureLabels", _
+            "Name:|Title:|Position:|Signature:|Signed:|Date:|Email:|E-mail:|Telephone:|Tel:|Company stamp|Stamp:|Witness:|By:|Designation:")) Then
         k = pkSignature
         GoTo Done
     End If
@@ -343,8 +366,11 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
             k = pkBody                       ' "BETWEEN:" / "WHEREAS:"
         ElseIf ContainsAny(txt, prof.GetStr("Classify", "SignatureHeadingWords", "SIGNATURE|SIGNED|EXECUTION|WITNESS|EXECUTED")) Then
             k = pkHeading: ctx = dcSignature
-        ElseIf ctx = dcFront And StartsWithAny(txt, prof.GetStr("Classify", "FrontHeadingWords", "BACKGROUND|RECITALS|WHEREAS|PRELIMINARY|INTRODUCTION|PARTIES")) Then
+        ElseIf ctx = dcFront And StartsWithAny(txt, prof.GetStr("Classify", "FrontHeadingWords", _
+                "BACKGROUND|RECITALS|WHEREAS|PRELIMINARY|INTRODUCTION|PARTIES|BETWEEN|AND|NOW THEREFORE|NOW, THEREFORE|OPERATIVE PROVISIONS|IT IS AGREED")) Then
             k = pkHeading
+        ElseIf ctx = dcFront And WordCount(txt) <= CLng(prof.GetNum("Classify", "FrontHeadingMaxWords", 3)) Then
+            k = pkHeading                    ' "BETWEEN" / "AND" style connectors stay unnumbered
         Else
             k = pkArticle
         End If
@@ -375,7 +401,17 @@ Public Function ClassifyParagraph(ByVal doc As Document, ByVal para As Paragraph
 
 Done:
     UpdateContext ctx, k, txt
+    lastKind = k
     ClassifyParagraph = k
+End Function
+
+' Short line, no terminal full stop, few words: looks like a heading whatever its case.
+Public Function IsHeadingShape(ByVal txt As String, ByVal maxHeading As Long) As Boolean
+    If Len(txt) = 0 Or Len(txt) > maxHeading Then Exit Function
+    If Right$(txt, 1) = "." Or Right$(txt, 1) = ";" Or Right$(txt, 1) = "," Then Exit Function
+    If WordCount(txt) > 8 Then Exit Function
+    If Not IsUpperChar(Left$(txt, 1)) Then Exit Function
+    IsHeadingShape = True
 End Function
 
 Private Sub UpdateContext(ByRef ctx As DocContext, ByVal k As ParaKind, ByVal txt As String)

@@ -342,7 +342,7 @@ End Function
 Public Sub ShellOpenFolder(ByVal folder As String)
     On Error Resume Next
     #If Mac Then
-        MacScript "do shell script ""open " & Chr$(34) & Replace(folder, """", "\""") & Chr$(34) & """"
+        MacScript "do shell script ""open "" & quoted form of """ & folder & """"
     #Else
         Shell "explorer.exe """ & folder & """", vbNormalFocus
     #End If

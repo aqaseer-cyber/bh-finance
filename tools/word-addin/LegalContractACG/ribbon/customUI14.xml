@@ -22,11 +22,11 @@
         </group>
 
         <group id="grpMark" label="Mark Paragraph As">
-          <button id="btnMarkArticle" label="Article" imageMso="Numbering" screentip="Numbered article heading (1.)" onAction="Ribbon_MarkArticle"/>
+          <button id="btnMarkArticle" label="Article" imageMso="OutlinePromote" screentip="Numbered article heading (1.)" onAction="Ribbon_MarkArticle"/>
           <button id="btnMarkClause" label="Clause" imageMso="OutlineDemote" screentip="Numbered clause (1.1)" onAction="Ribbon_MarkClause"/>
           <button id="btnMarkSubClause" label="Sub-clause" imageMso="OutlineDemote" screentip="Lettered sub-clause (a)" onAction="Ribbon_MarkSubClause"/>
           <button id="btnMarkBody" label="Body" imageMso="ParagraphMarks" screentip="Plain body paragraph (no number)" onAction="Ribbon_MarkBody"/>
-          <menu id="mnuMarkMore" label="More" imageMso="OutlinePromote" itemSize="normal">
+          <menu id="mnuMarkMore" label="More" imageMso="OutlineDemoteToBodyText" itemSize="normal">
             <button id="btnMarkTitle" label="Title" onAction="Ribbon_MarkTitle"/>
             <button id="btnMarkSubtitle" label="Subtitle" onAction="Ribbon_MarkSubtitle"/>
             <button id="btnMarkRecital" label="Party recital (1) ..." onAction="Ribbon_MarkRecital"/>
@@ -40,7 +40,7 @@
         <group id="grpTools" label="Tools">
           <button id="btnRefresh" label="Refresh" imageMso="Refresh" screentip="Re-read the formats folder" onAction="Ribbon_Refresh"/>
           <button id="btnOpenFolder" label="Formats Folder" imageMso="FileOpen" screentip="Open the folder where format profiles live" onAction="Ribbon_OpenFolder"/>
-          <button id="btnAbout" label="About" imageMso="Info" screentip="Version, folders and the format last applied to this document" onAction="Ribbon_About"/>
+          <button id="btnAbout" label="About" imageMso="Help" screentip="Version, folders and the format last applied to this document" onAction="Ribbon_About"/>
         </group>
 
       </tab>
